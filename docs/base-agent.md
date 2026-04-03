@@ -1,77 +1,42 @@
 # BaseAgent — Specifica classe base
 
-Ogni agente del sistema eredita da `BaseAgent` definita in `agents/base.py`.
+Ogni agente del sistema eredita da `BaseAgent` definita in `src/agents/base.py`.
+Le dataclass, enum e modelli condivisi sono in `src/agents/models.py`.
 Questo documento specifica contratto, lifecycle e pattern da rispettare.
 
 ---
 
-## Struttura della classe
+## Struttura file
+
+```
+src/agents/
+├── base.py          ← Classe BaseAgent (ABC)
+├── models.py        ← ServiceType, TaskStatus, AgentTask, AgentResult, errori
+├── _sse.py          ← Helper _publish_sse(): pubblica eventi SSE su Redis per il frontend
+└── {nome}/
+    ├── agent.py     ← Classe concreta che eredita BaseAgent
+    └── tasks.py     ← Task Celery che istanzia l'agente
+```
+
+---
+
+## `agents/models.py` — modelli condivisi
+
+> **Definizione canonica di `ServiceType`, `TaskStatus`, `AgentTask`, `AgentResult`:**
+> vedi [`docs/data-models.md`](data-models.md) — sezioni corrispondenti.
+> Non duplicare qui.
+
+Import tipico negli agenti:
 
 ```python
-# agents/base.py
-from abc import ABC, abstractmethod
-from datetime import datetime
-from enum import StrEnum
-from typing import Annotated, Any
-from uuid import UUID
+from agents.models import (
+    ServiceType, TaskStatus,
+    AgentTask, AgentResult,
+    AgentToolError, GateNotApprovedError, TransientError,
+)
+```
 
-import structlog
-from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.ext.asyncio import AsyncSession
-
-log = structlog.get_logger()
-
-# get_db_session  --  from db.session import get_db_session
-# _mark_task_*    --  from tools.db_tools import (
-#                         _mark_task_running, _mark_task_blocked,
-#                         _mark_task_failed, _mark_task_completed,
-#                     )
-
-
-class ServiceType(StrEnum):
-    CONSULTING            = "consulting"
-    WEB_DESIGN            = "web_design"
-    DIGITAL_MAINTENANCE   = "digital_maintenance"
-
-
-class TaskStatus(StrEnum):
-    PENDING    = "pending"
-    RUNNING    = "running"
-    BLOCKED    = "blocked"
-    RETRYING   = "retrying"
-    COMPLETED  = "completed"
-    FAILED     = "failed"
-    CANCELLED  = "cancelled"
-
-
-class AgentTask(BaseModel):
-    model_config = ConfigDict(use_enum_values=True)
-
-    id: UUID
-    type: str
-    agent: str
-    payload: dict
-    deal_id: UUID | None = None
-    client_id: UUID | None = None
-    status: TaskStatus = TaskStatus.PENDING
-    blocked_reason: str | None = None
-    retry_count: int = 0
-    idempotency_key: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class AgentResult(BaseModel):
-    model_config = ConfigDict(use_enum_values=True)
-
-    task_id: UUID
-    success: bool
-    output: dict
-    error: str | None = None
-    artifacts: list[str] = Field(default_factory=list)
-    next_tasks: list[str] = Field(default_factory=list)
-    requires_human_gate: bool = False
-    gate_type: str | None = None  # "proposal_review" | "kickoff" | "delivery"
+Le tre classi di eccezione sono definite in `agents/models.py` e descritte di seguito.
 
 
 class AgentToolError(Exception):
@@ -87,6 +52,44 @@ class AgentToolError(Exception):
 class GateNotApprovedError(Exception):
     """Gate flag non approvato nel deal — bloccare il task."""
     pass
+
+
+class TransientError(Exception):
+    """
+    Errore temporaneo recuperabile — Celery riproverà automaticamente
+    (max 3 volte con backoff esponenziale, configurato in agents/worker.py).
+
+    Sollevare quando il fallimento è causato da indisponibilità momentanea
+    di un servizio esterno (DB, Redis, API), non da un errore logico.
+
+    Esempi:
+        raise TransientError("Connessione PostgreSQL persa")
+        raise TransientError("Google Maps API timeout")
+    """
+    pass
+```
+
+---
+
+## `agents/base.py` — classe base
+
+```python
+# src/agents/base.py
+from abc import ABC, abstractmethod
+from typing import Any
+
+import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from agents.models import AgentTask, AgentResult, AgentToolError, GateNotApprovedError
+from agents._sse import _publish_sse  # helper SSE: pubblica eventi real-time al frontend
+from db.session import get_db_session
+from tools.db_tools import (
+    _mark_task_running, _mark_task_blocked,
+    _mark_task_failed, _mark_task_completed,
+)
+
+log = structlog.get_logger()
 
 
 class BaseAgent(ABC):
@@ -106,19 +109,21 @@ class BaseAgent(ABC):
     async def run(self, task: AgentTask) -> AgentResult:
         """
         Entry point chiamato dal Celery worker.
-        Non fare override. Gestisce: logging, DB session, try/except.
+        Non fare override. Gestisce: logging, DB session, try/except, SSE events.
         """
+        run_id = task.payload.get("run_id", "")
         self.log.info("task.started", task_id=str(task.id), task_type=task.type)
 
         async with get_db_session() as db:
-            # Aggiorna task.status = running in DB
             await _mark_task_running(task.id, db)
+            await _publish_sse(run_id, "task_started", self.agent_name, {"task_type": task.type})
 
             try:
                 result = await self.execute(task, db)
             except GateNotApprovedError as e:
                 self.log.warning("task.gate_blocked", task_id=str(task.id), reason=str(e))
                 await _mark_task_blocked(task.id, str(e), db)
+                await _publish_sse(run_id, "task_blocked", self.agent_name, {"reason": str(e)})
                 return AgentResult(
                     task_id=task.id,
                     success=False,
@@ -129,17 +134,19 @@ class BaseAgent(ABC):
             except AgentToolError as e:
                 self.log.error("task.tool_error", task_id=str(task.id), error_code=e.code)
                 await _mark_task_failed(task.id, e.code, db)
+                await _publish_sse(run_id, "task_failed", self.agent_name, {"error_code": e.code})
                 return AgentResult(task_id=task.id, success=False, output={}, error=e.code)
             except Exception as e:
                 self.log.error("task.unexpected_error", task_id=str(task.id), error=str(e))
                 await _mark_task_failed(task.id, str(e), db)
                 raise  # ri-lancia per Celery retry
 
-        if result.success:
-            self.log.info("task.completed", task_id=str(task.id), output_keys=list(result.output.keys()))
-            await _mark_task_completed(task.id, result.output)
-        else:
-            self.log.warning("task.failed", task_id=str(task.id), error=result.error)
+            if result.success:
+                self.log.info("task.completed", task_id=str(task.id), output_keys=list(result.output.keys()))
+                await _mark_task_completed(task.id, result.output, db)
+                await _publish_sse(run_id, "task_completed", self.agent_name, {"output_keys": list(result.output.keys())})
+            else:
+                self.log.warning("task.failed", task_id=str(task.id), error=result.error)
 
         return result
 

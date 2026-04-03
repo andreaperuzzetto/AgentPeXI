@@ -1,6 +1,6 @@
 # Tools — Firme e contratti
 
-Ogni tool è un modulo Python in `tools/`. Gli agenti **non** chiamano mai
+Ogni tool è un modulo Python in `src/tools/`. Gli agenti **non** chiamano mai
 API esterne o DB direttamente: usano solo questi wrapper.
 
 ---
@@ -16,15 +16,56 @@ from tools.db_tools import (
     get_lead, update_lead, create_lead,
     get_deal, update_deal,
     get_client, create_client,
-    get_proposal, create_proposal, update_proposal,
+    get_proposal, get_latest_proposal, create_proposal, update_proposal,
     create_task, update_task, get_task_by_idempotency_key,
     create_service_delivery, update_service_delivery, get_service_deliveries_for_deal,
+    get_service_delivery,
     create_delivery_report,
     create_invoice, update_invoice,
     create_ticket, update_ticket,
     create_nps_record,
     log_email,
 )
+```
+
+### Internal task lifecycle (uso esclusivo di `BaseAgent`)
+
+Queste funzioni sono **private** — chiamate solo da `BaseAgent.run()`, mai dagli agenti concreti.
+
+```python
+# Import interno in agents/base.py
+from tools.db_tools import (
+    _mark_task_running,
+    _mark_task_blocked,
+    _mark_task_failed,
+    _mark_task_completed,
+)
+```
+
+```python
+async def _mark_task_running(task_id: UUID, db: AsyncSession) -> None
+    # Imposta tasks.status = 'running', tasks.started_at = now()
+
+async def _mark_task_blocked(
+    task_id: UUID,
+    blocked_reason: str,
+    db: AsyncSession,
+) -> None
+    # Imposta tasks.status = 'blocked', tasks.blocked_reason = blocked_reason
+
+async def _mark_task_failed(
+    task_id: UUID,
+    error: str,     # codice errore snake_case da catalogo in error-codes.md
+    db: AsyncSession,
+) -> None
+    # Imposta tasks.status = 'failed', tasks.error = error, tasks.completed_at = now()
+
+async def _mark_task_completed(
+    task_id: UUID,
+    output: dict,
+    db: AsyncSession,
+) -> None
+    # Imposta tasks.status = 'completed', tasks.output = output, tasks.completed_at = now()
 ```
 
 ### Leads
@@ -118,9 +159,10 @@ async def create_delivery_report(
     client_id: UUID,
     approved: bool,
     completeness_pct: float,
-    blocking_issues: list[str],
-    notes: list[str],
+    blocking_issues: list[dict],  # JSONB: [{"field": str, "description": str}, ...]
+    notes: list[dict],            # JSONB: [{"section": str, "note": str}, ...]
     report_path: str,
+    reviewer_agent: str,
     db: AsyncSession,
 ) -> DeliveryReport
 ```
@@ -172,7 +214,53 @@ async def log_email(
 
 ## `tools/file_store.py`
 
-Interazione con MinIO (compatibile S3). Usa `aiobotocore` o `miniopy-async`.
+Interazione con MinIO (compatibile S3). Usa **`aiobotocore`** (non `miniopy-async`).
+
+```python
+from tools.file_store import upload_file, download_file, get_presigned_url, file_exists, list_files
+```
+
+**Pattern aiobotocore interno** (non chiamare direttamente negli agenti):
+
+```python
+# src/tools/file_store.py — pattern interno
+import aiobotocore.session
+import os
+
+_BUCKET = os.environ["MINIO_BUCKET"]
+
+async def _get_client():
+    session = aiobotocore.session.get_session()
+    return session.create_client(
+        "s3",
+        endpoint_url=os.environ["MINIO_ENDPOINT"],
+        aws_access_key_id=os.environ["MINIO_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["MINIO_SECRET_KEY"],
+    )
+
+async def upload_bytes(data: bytes, object_key: str, content_type: str = "application/octet-stream") -> str:
+    async with await _get_client() as client:
+        await client.put_object(Bucket=_BUCKET, Key=object_key, Body=data, ContentType=content_type)
+    return object_key
+
+async def get_presigned_url(object_key: str, expires_in_seconds: int = 3600) -> str:
+    async with await _get_client() as client:
+        return await client.generate_presigned_url(
+            "get_object", Params={"Bucket": _BUCKET, "Key": object_key},
+            ExpiresIn=expires_in_seconds,
+        )
+```
+
+**Percorsi MinIO standard** (rispettare sempre):
+
+| Tipo file | Path |
+|-----------|------|
+| Proposte PDF | `proposals/{deal_id}/v{n}.pdf` |
+| Artefatti consulenza | `artifacts/consulting/{deal_id}/{type}_v{n}.{ext}` |
+| Artefatti web design | `artifacts/web_design/{deal_id}/{type}_v{n}.{ext}` |
+| Artefatti manutenzione | `artifacts/digital_maintenance/{deal_id}/{type}_v{n}.{ext}` |
+| Fatture | `invoices/{invoice_number}.pdf` |
+| Report consegna | `reports/{service_delivery_id}.pdf` |
 
 ```python
 from tools.file_store import upload_file, download_file, get_presigned_url, file_exists, list_files
@@ -251,41 +339,39 @@ async def geocode_address(address: str) -> tuple[float, float] | None
 
 ## `tools/gmail.py`
 
-Wrapper Gmail API via OAuth2. Usa `google-auth` + `googleapiclient`.
+Wrapper Python attorno al **Gmail MCP server** (`src/mcp_servers/gmail/server.py`).
+Il server è un processo stdio separato; questo modulo lo avvia una volta e fa da client.
+Non usare `google-api-python-client` direttamente — passare sempre da questo wrapper.
 
 ```python
-from tools.gmail import send_email, reply_to_thread, get_thread, list_unread
+from tools.gmail import send_email, read_thread, list_unread, search_emails
 ```
 
 ```python
 async def send_email(
-    to_address: str,
+    to: str,
     subject: str,
-    body_html: str,
-    body_text: str | None = None,
+    body: str,                  # HTML o plain text
+    thread_id: str | None = None,  # se presente, risponde al thread
 ) -> dict
     # Restituisce: {"message_id": str, "thread_id": str}
     # Mittente: GMAIL_SENDER_ADDRESS da env.
-    # PII: to_address non viene loggata — solo message_id.
+    # PII: to non viene loggato — solo message_id.
     # Eccezione: GmailSendError.
 
-async def reply_to_thread(
-    thread_id: str,
-    subject: str,
-    body_html: str,
-    body_text: str | None = None,
-) -> dict
-    # Risponde al thread esistente. Stesso schema di ritorno.
-
-async def get_thread(thread_id: str) -> dict
-    # Restituisce thread con messaggi. Campi:
-    # {"thread_id": str, "messages": [{"message_id", "from", "date", "snippet", "body_text"}]}
-    # "from" non loggarlo se contiene email — usare solo per elaborazione interna.
+async def read_thread(thread_id: str) -> dict
+    # Restituisce thread con messaggi:
+    # {"thread_id": str, "messages": [{"message_id", "from", "date", "snippet", "body"}]}
+    # "from" non loggarlo — usare solo per elaborazione interna.
 
 async def list_unread(max_results: int = 50) -> list[dict]
     # Lista email non lette in inbox. Ogni item:
     # {"message_id", "thread_id", "subject", "from", "date", "snippet"}
     # Usato dal Support Agent per rilevare nuovi ticket.
+
+async def search_emails(query: str) -> list[dict]
+    # Ricerca email con query Gmail (es. "from:cliente@example.com subject:proposta").
+    # Restituisce lista con stesso schema di list_unread.
 ```
 
 ---
@@ -371,6 +457,10 @@ VIEWPORT_MOBILE  = {"width": 390,  "height": 844}
 
 Tutti queste eccezioni estendono `AgentToolError(Exception)` definita in `tools/__init__.py`.
 Gli agenti devono catturare `AgentToolError` per gestire i fallback.
+
+```python
+from tools.db_tools import LeadAlreadyExistsError, MaxProposalVersionsError
+```
 
 ---
 

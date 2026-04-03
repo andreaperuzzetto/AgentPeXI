@@ -5,36 +5,30 @@ La dashboard è lo strumento interno dell'operatore — non è il portale client
 
 ---
 
-## Struttura pagine
+## Struttura pagine — MVP
+
+5 route MVP. Nessuna route aggiuntiva finché non espressamente richiesta.
 
 ```
 frontend/app/
-├── layout.tsx                  ← Root layout: dark theme, sidebar, nav
+├── layout.tsx                  ← Root layout: dark theme, font vars
 ├── page.tsx                    ← Redirect → /dashboard
 │
-├── dashboard/
-│   └── page.tsx                ← Overview pipeline: metriche, task in-flight
+├── login/
+│   └── page.tsx                ← Form email + password → POST /auth/token
 │
-├── leads/
-│   ├── page.tsx                ← Lista leads con filtri
-│   └── [id]/page.tsx           ← Dettaglio lead + trigger analisi
+├── dashboard/
+│   └── page.tsx                ← Overview pipeline: metriche, task in-flight, AgentActivityFeed
 │
 ├── deals/
-│   ├── page.tsx                ← Kanban/lista deals per status e service_type
 │   └── [id]/
-│       ├── page.tsx            ← Dettaglio deal
-│       ├── proposal/page.tsx   ← Review proposta → GATE 1
-│       └── delivery/page.tsx   ← Stato erogazione → GATE 2/3
-│
-├── clients/
-│   ├── page.tsx                ← Lista clienti attivi
-│   └── [id]/page.tsx           ← Dettaglio cliente + storico + NPS
+│       └── page.tsx            ← Dettaglio deal: proposta, gate, erogazione
 │
 ├── portal/                     ← Portale cliente (docs/portal.md)
-│   ├── [token]/page.tsx
-│   └── expired/page.tsx
+│   ├── [token]/page.tsx        ← GATE 1 (approvazione proposta) o GATE 3 (approvazione consegna)
+│   └── expired/page.tsx        ← Token scaduto o già usato
 │
-└── api/                        ← Next.js API routes (solo per SSE/streaming)
+└── api/                        ← Next.js API routes (solo SSE)
     └── events/route.ts         ← Server-Sent Events per aggiornamenti real-time
 ```
 
@@ -76,18 +70,45 @@ const colors = {
 }
 ```
 
-### Typography
+### Typography — `next/font`
 
-```css
-/* layout.tsx */
-body {
-  font-family: 'Inter', system-ui, sans-serif;  /* testo narrativo */
-}
+Caricamento font tramite `next/font` (zero layout-shift, self-hosted automatico).
 
-.mono {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  /* usato per: UUID, timestamp, status badge, codice, log output */
+```typescript
+// app/layout.tsx
+import { Inter } from "next/font/google"
+import localFont from "next/font/local"
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+})
+
+// JetBrains Mono Variable — file richiesto: public/fonts/JetBrainsMono[wght].woff2
+// Opzione 1 (npm): npm install @fontsource-variable/jetbrains-mono
+//   poi copia da node_modules/@fontsource-variable/jetbrains-mono/files/
+// Opzione 2 (manuale): scarica da https://www.jetbrains.com/lp/mono/
+//   → scegli "Variable font" → estrai JetBrainsMono[wght].woff2 → copia in public/fonts/
+const jetbrainsMono = localFont({
+  src: "../public/fonts/JetBrainsMono[wght].woff2",
+  variable: "--font-mono",
+})
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="it" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+      <body className="font-sans">{children}</body>
+    </html>
+  )
 }
+```
+
+```typescript
+// tailwind.config.ts
+fontFamily: {
+  sans: ["var(--font-inter)", "system-ui", "sans-serif"],
+  mono: ["var(--font-mono)", "monospace"],  // usato per UUID, timestamp, log
+},
 ```
 
 ### Status badge
@@ -168,18 +189,127 @@ export function RunStatusPanel({ runId }: { runId: string }) {
 
 ### Server-Sent Events per aggiornamenti live
 
+**Canale Redis:** `agentpexi:events:{run_id}` (un canale per run).
+
+**7 event type:**
+
+| `type` | Emesso da | Significato |
+|--------|-----------|-------------|
+| `task_started` | BaseAgent | Agente inizia task |
+| `task_completed` | BaseAgent | Agente completa task con successo |
+| `task_failed` | BaseAgent | Agente fallisce task |
+| `task_blocked` | BaseAgent | Agente bloccato (mancano dati o errore recuperabile) |
+| `gate_pending` | Orchestrator | Run in attesa di gate umano |
+| `gate_approved` | API gate endpoint | Gate approvato dall'operatore/cliente |
+| `run_completed` | Orchestrator | Run terminato (tutte le fasi completate) |
+
+**Hook di pubblicazione (lato Python):**
+
+| `type` | Pubblicato in | Quando |
+|--------|--------------|--------|
+| `task_started` | `BaseAgent.run()` | Prima di chiamare `execute()` |
+| `task_completed` | `BaseAgent.run()` | Dopo `execute()` con successo |
+| `task_failed` | `BaseAgent.run()` | In catch di `AgentToolError` / `Exception` |
+| `task_blocked` | `BaseAgent.run()` | In catch di `GateNotApprovedError` |
+| `gate_pending` | `orchestrator/nodes/gates.py` | `await_*` node al momento della pausa |
+| `gate_approved` | `api/routers/deals.py` | POST `gates/proposal-approve`, `kickoff-confirm`, `delivery-approve` |
+| `run_completed` | `orchestrator/graph.py` | Nodo terminale `END` node |
+
+```python
+# src/agents/base.py — funzione di supporto (chiamata da run())
+import redis.asyncio as aioredis
+import json
+import os
+
+async def _publish_sse(run_id: str, event_type: str, agent: str, data: dict) -> None:
+    """Pubblica un evento SSE sul canale Redis del run."""
+    r = aioredis.from_url(os.environ["REDIS_URL"])
+    payload = json.dumps({
+        "type":      event_type,
+        "run_id":    run_id,
+        "agent":     agent,
+        "timestamp": datetime.utcnow().isoformat(),
+        "data":      data,
+    }, default=str)
+    await r.publish(f"agentpexi:events:{run_id}", payload)
+    await r.aclose()
+```
+
+> `run_id` arriva come `task.payload["run_id"]` — l'Orchestrator lo inietta
+> in ogni payload prima del dispatch (in `orchestrator/nodes/delegate.py`).
+
+**Payload evento:**
+
+```typescript
+interface AgentPeXIEvent {
+  type: "task_started" | "task_completed" | "task_failed" | "task_blocked" |
+        "gate_pending" | "gate_approved" | "run_completed"
+  run_id: string
+  agent: string           // nome agente, es. "proposal"
+  timestamp: string       // ISO 8601
+  data: Record<string, unknown>  // payload specifico per type
+}
+```
+
 ```typescript
 // app/api/events/route.ts
+import Redis from "ioredis"
+
+export const dynamic = "force-dynamic"
+
 export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const runId = searchParams.get("run_id")
+  if (!runId) return new Response("run_id required", { status: 400 })
+
+  const channel = `agentpexi:events:${runId}`
+  // Crea subscriber dedicato (non condividere connessione globale)
+  const subscriber = new Redis(process.env.REDIS_URL!)
+
   const stream = new ReadableStream({
-    start(controller) {
-      // Connetti a Redis subscriber
-      // Invia eventi al client quando arrivano AgentResult
-    }
+    async start(controller) {
+      await subscriber.subscribe(channel)
+      subscriber.on("message", (_ch: string, message: string) => {
+        controller.enqueue(new TextEncoder().encode(`data: ${message}\n\n`))
+      })
+      request.signal.addEventListener("abort", () => {
+        subscriber.unsubscribe(channel)
+        subscriber.disconnect()
+        controller.close()
+      })
+    },
   })
+
   return new Response(stream, {
-    headers: { "Content-Type": "text/event-stream" }
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
   })
+}
+```
+
+**Uso lato client:**
+
+```typescript
+// components/pipeline/AgentActivityFeed.tsx
+"use client"
+import { useEffect, useState } from "react"
+
+export function AgentActivityFeed({ runId }: { runId: string }) {
+  const [events, setEvents] = useState<AgentPeXIEvent[]>([])
+
+  useEffect(() => {
+    const es = new EventSource(`/api/events?run_id=${runId}`)
+    es.onmessage = (e) => {
+      const event: AgentPeXIEvent = JSON.parse(e.data)
+      setEvents((prev) => [event, ...prev].slice(0, 50))
+    }
+    return () => es.close()
+  }, [runId])
+
+  // ...
 }
 ```
 

@@ -51,6 +51,7 @@ class AgentState(TypedDict):
     leads: list[dict]
     selected_lead: dict | None
     analysis: dict | None
+    discovery_payload: dict    # payload specifico per fase discovery, iniettato dall'API
 
     # Artefatti (mockup, presentazioni, schemi, roadmap)
     artifact_paths: list[str]
@@ -214,19 +215,27 @@ def build_graph() -> StateGraph:
     g.add_edge("dispatch_account_manager", "dispatch_billing")
     g.add_edge("dispatch_billing", END)
 
-    # ── Support (triggered separatamente da ticket in ingresso) ──────────────
-    # Il Support Agent è chiamato da /runs con type="post_sale" + action="support"
-    # Non fa parte del flusso main — ha il proprio sotto-grafo o viene dispatched
-    # direttamente dal webhook Gmail
+# ── Support (sotto-grafo LangGraph, triggered da POST /runs con type="support") ──
+    # Il Support Agent ha un proprio sotto-grafo separato dal main flow.
+    # Vedi sezione "Support subgraph" in fondo a questo documento.
 
     return g.compile(checkpointer=get_checkpointer())
 
 
 def get_checkpointer():
-    """Checkpointer Redis per persistere lo stato tra gate umani."""
-    from langgraph.checkpoint.redis import RedisCheckpointer
+    """
+    Checkpointer PostgreSQL per persistere lo stato LangGraph tra gate umani.
+    Usa il pacchetto `langgraph-checkpoint-postgres` (driver psycopg).
+
+    Le tabelle del checkpointer sono gestite internamente da LangGraph —
+    eseguire `checkpointer.setup()` alla prima partenza dell'app.
+    """
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
     import os
-    return RedisCheckpointer(os.environ["REDIS_URL"])
+    # Usa DATABASE_SYNC_URL ma con driver psycopg (non psycopg2)
+    # es. postgresql://agentpexi:changeme@localhost:5432/agentpexi
+    postgres_url = os.environ["DATABASE_SYNC_URL"]
+    return AsyncPostgresSaver.from_conn_string(postgres_url)
 ```
 
 ---
@@ -252,9 +261,17 @@ async def check_gate_kickoff(state: AgentState, db: AsyncSession) -> bool:
     return deal is not None and deal.kickoff_confirmed is True
 
 async def check_gate_delivery(state: AgentState, db: AsyncSession) -> bool:
-    """Verifica GATE 3: delivery_approved."""
+    """
+    Verifica GATE 3.
+    - web_design / digital_maintenance: controlla deal.delivery_approved
+    - consulting: controlla deal.consulting_approved
+    """
     deal = await get_deal(state["deal_id"], db)
-    return deal is not None and deal.delivery_approved is True
+    if deal is None:
+        return False
+    if deal.service_type == "consulting":
+        return deal.consulting_approved is True
+    return deal.delivery_approved is True
 ```
 
 ---
@@ -339,7 +356,19 @@ async def _poll_gates_async() -> None:
 async def _try_resume(run_id: str, deal_id: str, gate_type: str) -> None:
     async with get_db_session() as db:
         row = await db.execute(
-            f"SELECT {GATE_FLAG_MAP[gate_type]} FROM deals WHERE id = :deal_id",
+            "SELECT service_type FROM deals WHERE id = :deal_id",
+            {"deal_id": deal_id},
+        )
+        service_type = row.scalar_one_or_none()
+
+        # Per consulenza il GATE 3 usa consulting_approved invece di delivery_approved
+        if gate_type == "delivery" and service_type == "consulting":
+            flag_col = "consulting_approved"
+        else:
+            flag_col = GATE_FLAG_MAP.get(gate_type, "delivery_approved")
+
+        row = await db.execute(
+            f"SELECT {flag_col} FROM deals WHERE id = :deal_id",
             {"deal_id": deal_id},
         )
         approved = row.scalar_one_or_none()
@@ -387,6 +416,7 @@ import uuid
 def _dispatch(agent: str, task_type: str, payload: dict, state: AgentState) -> str:
     """Invia un task Celery e restituisce il task_id."""
     task_id = str(uuid.uuid4())
+    payload = {**payload, "run_id": state["run_id"]}
     task = AgentTask(
         id=task_id,
         type=task_type,
@@ -407,6 +437,41 @@ async def dispatch_scout(state: AgentState) -> AgentState:
     # Attende risultato via Redis pub/sub
     result = await _await_result(task_id)
     return {**state, "leads": result["output"]["leads"], "task_history": [...]}
+```
+
+---
+
+## `_await_result()` — attesa risultato asincrona
+
+Chiamata dall'Orchestrator dopo `celery_app.send_task()`. Blocca il nodo corrente
+finché il worker pubblica il risultato su Redis. **Non usare polling**: usa pub/sub.
+
+```python
+import asyncio
+import json
+import os
+import redis.asyncio as aioredis
+
+async def _await_result(task_id: str, timeout_seconds: int = 600) -> dict:
+    """
+    Attende il risultato di un task Celery pubblicato su Redis.
+    Chiamata SOLO dall'Orchestrator dopo celery_app.send_task().
+    Blocca finché il worker non pubblica su agent_results:{task_id}.
+    """
+    r = aioredis.from_url(os.environ["REDIS_URL"])
+    pubsub = r.pubsub()
+    await pubsub.subscribe(f"agent_results:{task_id}")
+
+    try:
+        deadline = asyncio.get_event_loop().time() + timeout_seconds
+        async for message in pubsub.listen():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError(f"Task {task_id} non ha risposto entro {timeout_seconds}s")
+            if message["type"] == "message":
+                return json.loads(message["data"])
+    finally:
+        await pubsub.unsubscribe(f"agent_results:{task_id}")
+        await r.aclose()
 ```
 
 ---
@@ -457,6 +522,59 @@ async def start_run(run_type: str, payload: dict) -> dict:
 
 ---
 
+## `router.decide_next_node()` — tabella decisionale
+
+La funzione `router.decide_next_node(state: AgentState)` è il cuore del routing.
+Restituisce una stringa chiave che corrisponde al nodo successivo nel grafo.
+
+```python
+# orchestrator/nodes/router.py
+def decide_next_node(state: AgentState) -> str:
+    """
+    Routing principale dall'entry point 'route_phase'.
+    Condizioni di priorità decrescente.
+    """
+    # 1. Stato di errore
+    if state.get("error"):
+        return "error"
+
+    # 2. In attesa di gate umano (run ripreso dal gate poller)
+    if state.get("awaiting_gate"):
+        gate = state.get("gate_type")
+        if gate == "proposal_review":
+            return "awaiting_gate"  # → nodo gate_proposal_review
+        if gate == "kickoff":
+            return "delivery"       # gate superato, avanza a delivery
+        if gate == "delivery":
+            return "post_sale"      # gate superato, avanza a post_sale
+
+    # 3. Routing per fase
+    phase = state.get("current_phase", "discovery")
+    if phase == "discovery":
+        return "discovery"
+    if phase == "proposal":
+        return "proposal"
+    if phase == "delivery":
+        return "delivery"
+    if phase == "post_sale":
+        return "post_sale"
+
+    return END
+```
+
+| Condizione | Ritorna | Nodo successivo |
+|-----------|---------|----------------|
+| `state.error` presente | `"error"` | `handle_error` |
+| `awaiting_gate=True`, gate=`"proposal_review"` | `"awaiting_gate"` | `gate_proposal_review` → attesa |
+| `awaiting_gate=True`, gate=`"kickoff"` | `"delivery"` | `dispatch_delivery_orch` |
+| `awaiting_gate=True`, gate=`"delivery"` | `"post_sale"` | `dispatch_account_manager` |
+| `current_phase="discovery"` | `"discovery"` | `dispatch_scout` |
+| `current_phase="proposal"` | `"proposal"` | `dispatch_design` |
+| `current_phase="delivery"` | `"delivery"` | `dispatch_delivery_orch` |
+| `current_phase="post_sale"` | `"post_sale"` | `dispatch_account_manager` |
+
+---
+
 ## Thread ID e isolamento run
 
 Ogni run ha un `run_id` (UUID) che funge da `thread_id` nel checkpointer LangGraph.
@@ -464,6 +582,82 @@ I canali Redis per i risultati Celery sono namespaced per `task_id` (non `run_id
 L'Orchestrator mantiene il mapping `task_id → run_id` in `AgentState.task_history`.
 
 Run paralleli su deal diversi non condividono stato — sono thread LangGraph separati.
+
+---
+
+## Support subgraph
+
+Il Support Agent non fa parte del main flow. Ha un proprio sotto-grafo LangGraph
+compilato separatamente, invocato da `POST /runs` con `type: "support"`.
+
+```python
+# orchestrator/graph.py
+def build_support_graph() -> StateGraph:
+    """Sotto-grafo per ticket di supporto."""
+    from orchestrator.state import AgentState
+
+    g = StateGraph(AgentState)
+    g.add_node("classify_ticket",  delegate.dispatch_support_classify)
+    g.add_node("respond_ticket",   delegate.dispatch_support_respond)
+    g.add_node("escalate_ticket",  delegate.dispatch_support_escalate)
+
+    g.set_entry_point("classify_ticket")
+
+    g.add_conditional_edges(
+        "classify_ticket",
+        router.after_support_classify,
+        {
+            "respond":   "respond_ticket",
+            "escalate":  "escalate_ticket",
+            "close":     END,
+        }
+    )
+    g.add_conditional_edges(
+        "respond_ticket",
+        router.after_support_respond,
+        {
+            "resolved":  END,
+            "escalate":  "escalate_ticket",
+        }
+    )
+    g.add_edge("escalate_ticket", END)
+
+    return g.compile(checkpointer=get_checkpointer())
+```
+
+**Payload `POST /runs` per ticket:**
+```json
+{
+  "type": "support",
+  "payload": {
+    "ticket_id": "uuid",
+    "client_id": "uuid",
+    "gmail_thread_id": "..."
+  }
+}
+```
+
+Il ticket è creato automaticamente dall'MCP Gmail server quando arriva
+un'email da un cliente conosciuto.
+
+---
+
+## Setup checkpointer (first run)
+
+```python
+# Da eseguire UNA SOLA VOLTA alla prima partenza, ad es. in api/main.py startup
+from orchestrator.graph import get_checkpointer
+import asyncio
+
+async def setup_checkpointer():
+    checkpointer = get_checkpointer()
+    await checkpointer.setup()  # crea tabelle LangGraph in PostgreSQL
+
+# api/main.py
+@app.on_event("startup")
+async def on_startup():
+    await setup_checkpointer()
+```
 
 ---
 

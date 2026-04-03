@@ -9,18 +9,20 @@ Il system prompt vive in `agents/{nome}/prompts/system.md` — letto a runtime, 
 
 ```python
 class BaseAgent(ABC):
-    model: str = "claude-sonnet-4-6"
-    max_tokens: int = 8192
+    # Attributo di classe obbligatorio in ogni sottoclasse
+    agent_name: str
+
+    def __init__(self) -> None:
+        self.log = structlog.get_logger().bind(agent=self.agent_name)
+
+    async def run(self, task: AgentTask) -> AgentResult:
+        """Entry point Celery. Non fare override — gestisce lifecycle, DB, try/except."""
+        ...  # implementazione in agents/base.py
 
     @abstractmethod
-    async def run(self, task: AgentTask) -> AgentResult: ...
-
-    async def validate_input(self, task: AgentTask) -> AgentResult | None:
-        """None = ok. AgentResult(success=False) = input non valido."""
-        return None
-
-    def get_tools(self) -> list[Tool]:
-        return []
+    async def execute(self, task: AgentTask, db: AsyncSession) -> AgentResult:
+        """Logica specifica dell'agente. Implementare in ogni sottoclasse."""
+        ...
 ```
 
 ## Esecuzione via Celery
@@ -49,16 +51,6 @@ Ogni agente accede **solo** alle tabelle elencate. Schema completo in `docs/db-s
 | Account Manager | `clients`, `deals`, `nps_records` | `nps_records`, `tasks`, `leads` (upsell) |
 | Billing Agent | `deals`, `invoices`, `clients` | `invoices`, `tasks` |
 | Support Agent | `tickets`, `clients`, workspace cliente/docs | `tickets`, `service_deliveries` (solo nuovi task), `tasks` |
-
----
-
-## Mappa agenti: vecchi vs nuovi
-
-| Vecchio agente (disattivato) | Nuovo agente | Funzione |
-|------------------------------|-------------|----------|
-| Dev Orchestrator | **Delivery Orchestrator** | Pianifica e traccia l'erogazione del servizio |
-| Code Team | **Document Generator** | Genera report, presentazioni, documenti di progetto |
-| QA Agent | **Delivery Tracker** | Traccia avanzamento, milestone, qualità deliverable |
 
 ---
 

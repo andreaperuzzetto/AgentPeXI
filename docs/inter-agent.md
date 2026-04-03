@@ -19,11 +19,24 @@ Il pattern adottato è un wrapper sync → async per ogni agente:
 
 ```python
 # agents/worker.py — worker centralizzato
+# src/agents/worker.py
 import asyncio
 from celery import Celery
-from agents.base import AgentTask, AgentResult
+from agents.models import AgentTask, AgentResult, TransientError
+import os
+
+REDIS_URL = os.environ["REDIS_URL"]
 
 app = Celery("agentpexi", broker=REDIS_URL, backend=REDIS_URL)
+app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    task_acks_late=True,           # ack dopo completamento task (non dopo ricezione)
+    worker_prefetch_multiplier=1,  # un task alla volta per worker (safe con acks_late)
+    task_time_limit=600,           # hard kill dopo 10 minuti
+    task_soft_time_limit=300,      # SIGTERM dopo 5 minuti (gestibile)
+)
 
 def _make_task(agent_name: str, agent_class):
     @app.task(
@@ -32,7 +45,6 @@ def _make_task(agent_name: str, agent_class):
         retry_backoff=True,       # 2s → 4s → 8s
         retry_backoff_max=60,
         max_retries=3,
-        time_limit=600,           # killed dopo 10 minuti
         bind=True,
     )
     def run(self, task_dict: dict) -> dict:
@@ -49,18 +61,18 @@ def _make_task(agent_name: str, agent_class):
     return run
 
 # Registra tutti gli agenti
-from agents.scout.agent import ScoutAgent
-from agents.analyst.agent import AnalystAgent
-from agents.lead_profiler.agent import LeadProfilerAgent
-from agents.design.agent import DesignAgent
-from agents.proposal.agent import ProposalAgent
-from agents.sales.agent import SalesAgent
-from agents.delivery_orchestrator.agent import DeliveryOrchestratorAgent
-from agents.doc_generator.agent import DocGeneratorAgent
-from agents.delivery_tracker.agent import DeliveryTrackerAgent
-from agents.account_manager.agent import AccountManagerAgent
-from agents.billing.agent import BillingAgent
-from agents.support.agent import SupportAgent
+from agents.scout.agent                   import ScoutAgent
+from agents.analyst.agent                 import AnalystAgent
+from agents.lead_profiler.agent           import LeadProfilerAgent
+from agents.design.agent                  import DesignAgent
+from agents.proposal.agent                import ProposalAgent
+from agents.sales.agent                   import SalesAgent
+from agents.delivery_orchestrator.agent   import DeliveryOrchestratorAgent
+from agents.doc_generator.agent           import DocGeneratorAgent
+from agents.delivery_tracker.agent        import DeliveryTrackerAgent
+from agents.account_manager.agent         import AccountManagerAgent
+from agents.billing.agent                 import BillingAgent
+from agents.support.agent                 import SupportAgent
 
 scout_task                = _make_task("scout",                  ScoutAgent)
 analyst_task              = _make_task("analyst",                AnalystAgent)

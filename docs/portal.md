@@ -1,7 +1,7 @@
 # Portale cliente
 
 Pagina Next.js che permette al cliente di visualizzare la proposta e approvarla o rifiutarla.
-È l'interfaccia del GATE 1 (approvazione proposta) e del GATE 3 (conferma consegna).
+È l'interfaccia del **GATE 1** (approvazione proposta) e del **GATE 3** (conferma consegna).
 
 Il portale mostra proposte contestuali al tipo di servizio:
 - **Consulenza:** roadmap operativa, piano workshop, deliverable previsti
@@ -17,7 +17,7 @@ Il portale è una route protetta dell'app Next.js principale, non un'app separat
 ```
 frontend/app/portal/
 ├── [token]/
-│   ├── page.tsx          ← Server Component: verifica JWT, carica dati
+│   ├── page.tsx          ← Server Component: verifica JWT, carica dati (GATE 1 o GATE 3)
 │   ├── ApproveButton.tsx ← Client Component: pulsante con confirm dialog
 │   └── RejectForm.tsx    ← Client Component: form rifiuto con note
 └── expired/
@@ -36,13 +36,17 @@ Quando il Sales Agent invia la proposta, genera un JWT firmato con `PORTAL_SECRE
 import jwt
 from datetime import datetime, timedelta
 
-def generate_portal_token(proposal_id: str, deal_id: str) -> str:
+def generate_portal_token(proposal_id: str, deal_id: str, gate: str = "proposal") -> str:
+    """
+    gate: "proposal" per GATE 1, "delivery" per GATE 3.
+    """
     payload = {
         "proposal_id": proposal_id,
         "deal_id": deal_id,
         "exp": datetime.utcnow() + timedelta(hours=72),
         "iat": datetime.utcnow(),
-        "type": "portal_access"
+        "type": "portal_access",
+        "gate": gate,              # "proposal" | "delivery"
     }
     return jwt.encode(payload, PORTAL_SECRET_KEY, algorithm="HS256")
 
@@ -90,13 +94,14 @@ export default async function PortalPage({
 
 La pagina mostra:
 
-- Logo e nome del business operatore
+- Logo e nome dell'operatore (Andrea Peruzzetto)
 - Nome del business cliente
-- PDF inline della proposta (iframe o react-pdf)
-- Sezione riassuntiva: soluzione proposta, pricing, timeline
-- Due pulsanti: **Approvo** e **Non approvo**
+- **GATE 1 (proposta):** PDF inline della proposta (iframe o react-pdf), riassunto soluzione/pricing/timeline, due pulsanti: **Approvo** e **Non approvo**
+- **GATE 3 (consegna):** link ai deliverable prodotti (PDF/HTML), riepilogo lavoro svolto, pulsante **Confermo la consegna**
 
-Design: minimal, mobile-first, niente dark mode (è rivolto al cliente finale).
+Il content cambia in base a `claims.gate` nel JWT.
+
+Design: minimal, mobile-first, niente dark mode (rivolto al cliente finale).
 Font: system font stack, niente JetBrains Mono.
 Lingua: italiano.
 
@@ -105,18 +110,8 @@ Lingua: italiano.
 ### 4 — Approvazione
 
 Il cliente clicca "Approvo". Appare un dialog di conferma.
-Alla conferma, il Client Component chiama:
-
-```
-POST /webhooks/portal/client-approve
-{ "proposal_id": "uuid", "token": "jwt" }
-```
-
-Il backend (vedi `docs/api.md`):
-1. Verifica JWT con `PORTAL_SECRET_KEY`
-2. Aggiorna DB
-3. Pubblica su Redis → Orchestrator riprende il run
-4. Risponde 200
+Alla conferma, l'approvazione viene registrata via webhook.
+Per il contratto tecnico dell'endpoint: vedi [`docs/api.md`](api.md) — sezione "Portal Webhooks".
 
 La pagina mostra messaggio di conferma: _"Perfetto! Verrete contattati entro 24 ore per definire i dettagli del servizio."_
 
@@ -125,12 +120,7 @@ La pagina mostra messaggio di conferma: _"Perfetto! Verrete contattati entro 24 
 ### 5 — Rifiuto
 
 Il cliente clicca "Non approvo". Appare un form con campo note opzionale.
-Alla conferma, chiama:
-
-```
-POST /webhooks/portal/client-reject
-{ "proposal_id": "uuid", "token": "jwt", "notes": "..." }
-```
+Alla conferma, il rifiuto viene inviato via webhook (vedi [`docs/api.md`](api.md) — sezione "Portal Webhooks").
 
 La pagina mostra: _"Grazie per il feedback. Potrete ricontattarci in qualsiasi momento."_
 
@@ -143,6 +133,27 @@ Redirect a `/portal/expired` che mostra: _"Questo link è scaduto. Contattaci pe
 
 ---
 
+## GATE 3 — Approvazione consegna
+
+Quando il Delivery Orchestrator completa tutti i deliverable, il sistema
+(Delivery Tracker) invia al cliente un link portale GATE 3.
+
+**Generazione token GATE 3 (Delivery Tracker):**
+```python
+# Recuperare la proposta più recente per ottenere l'ID corretto
+proposal = await get_latest_proposal(deal_id, db)   # da tools.db_tools
+delivery_token = generate_portal_token(
+    proposal_id=str(proposal.id),
+    deal_id=str(deal_id),
+    gate="delivery",
+)
+delivery_url = f"{BASE_URL}/portal/{delivery_token}"
+```
+
+Per il contratto tecnico dell'endpoint di approvazione consegna: vedi [`docs/api.md`](api.md) — sezione "Portal Webhooks".
+
+---
+
 ## Sicurezza
 
 - Il JWT viene verificato **solo lato server** (Server Component o API route). Mai lato client.
@@ -151,6 +162,7 @@ Redirect a `/portal/expired` che mostra: _"Questo link è scaduto. Contattaci pe
 - Una volta usato (risposta ricevuta), il token non è più accettato (`already_responded`).
 - Il portale non richiede login — il link è il meccanismo di autenticazione.
 - Nessuna informazione sensibile è esposta nella pagina prima della verifica JWT.
+- Il campo `gate` nel JWT ("proposal" | "delivery") determina quale contenuto mostrare.
 
 ---
 
@@ -160,14 +172,3 @@ Redirect a `/portal/expired` che mostra: _"Questo link è scaduto. Contattaci pe
 PORTAL_SECRET_KEY=      # firma JWT portale (diverso da SECRET_KEY)
 BASE_URL=               # es. http://localhost:3000
 ```
-
----
-
-## Estensione futura — GATE 3 (approvazione consegna)
-
-Lo stesso meccanismo si applica al GATE 3: il sistema invia al cliente
-un link `/portal/{token}` che mostra il risultato dell'erogazione del servizio
-(report finale, mockup approvati, piano di manutenzione) e permette di approvare la consegna.
-
-Il token GATE 3 usa `type: "delivery_access"` nel payload JWT.
-Il webhook corrispondente è `POST /webhooks/portal/delivery-approve`.

@@ -161,33 +161,29 @@ python -c "from weasyprint import HTML; HTML(string='<h1>OK</h1>').write_pdf('/t
 
 ## Celery + async su macOS
 
-Celery non supporta `async def` task nativamente. Pattern adottato in AgentPeXI:
+Celery non supporta `async def` task nativamente.
+Il pattern adottato è un **worker centralizzato** in `agents/worker.py`
+(non un worker per agente) con wrapper sync → async:
 
 ```python
-# agents/{nome}/worker.py — ogni agente ha il proprio worker sync
-import asyncio
-from celery import Celery
-
-app = Celery("agentpexi", broker=REDIS_URL)
-
-@app.task(name="agents.scout.run", max_retries=3)
-def run_scout(task_dict: dict) -> dict:
-    # Wrapper sync → async
-    return asyncio.run(_run_async(task_dict))
-
-async def _run_async(task_dict: dict) -> dict:
-    agent = ScoutAgent()
+# src/agents/worker.py — NON creare workers separati per agente
+@app.task(name="agents.scout.run", bind=True, autoretry_for=(TransientError,), ...)
+def run(self, task_dict: dict) -> dict:
     task = AgentTask(**task_dict)
-    result = await agent.run(task)
+    agent = ScoutAgent()
+    result: AgentResult = asyncio.run(agent.run(task))
+    asyncio.run(_publish_result(result))  # loop separato — intenzionale su macOS ARM
     return result.model_dump()
 ```
 
 > **Non usare** `celery[gevent]` o `celery[eventlet]` — hanno problemi su macOS ARM.
 > `asyncio.run()` è la soluzione corretta e stabile.
+> Per lo schema completo del worker con tutti gli agenti: vedi [`docs/inter-agent.md`](inter-agent.md).
 
 Avvio worker Celery in sviluppo:
 ```bash
 celery -A agents.worker worker --loglevel=info --concurrency=4
+celery -A agents.worker beat --loglevel=info          # scheduler per task periodici
 ```
 
 ---
@@ -197,6 +193,62 @@ celery -A agents.worker worker --loglevel=info --concurrency=4
 ```bash
 cp .env.example .env
 ```
+
+Contenuto completo di `.env.example` (tutte le variabili richieste):
+
+```bash
+# ── Database ──────────────────────────────────────────────────────────────────
+DATABASE_URL=postgresql+asyncpg://agentpexi:agentpexi@localhost:5432/agentpexi
+DATABASE_SYNC_URL=postgresql://agentpexi:agentpexi@localhost:5432/agentpexi
+# DATABASE_URL usa asyncpg (driver async, FastAPI + agenti)
+# DATABASE_SYNC_URL usa psycopg2 (driver sync, Alembic + LangGraph checkpointer)
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+REDIS_URL=redis://localhost:6379/0
+
+# ── MinIO ─────────────────────────────────────────────────────────────────────
+MINIO_ENDPOINT=http://localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=agentpexi
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+SECRET_KEY=cambia-questa-stringa-in-produzione          # JWT operatore + cifratura PII
+OPERATOR_EMAIL=andrea@example.com
+OPERATOR_PASSWORD_HASH=                                  # genera con: python -c "from passlib.context import CryptContext; print(CryptContext(['bcrypt']).hash('TUA_PASSWORD'))"
+ENVIRONMENT=development                                  # "development" | "production"
+OPERATOR_NAME=Andrea Bianchi
+
+# ── Portale cliente ───────────────────────────────────────────────────────────
+PORTAL_SECRET_KEY=cambia-questa-altra-stringa            # diverso da SECRET_KEY
+BASE_URL=http://localhost:3000
+
+# ── Gmail OAuth2 ──────────────────────────────────────────────────────────────
+GMAIL_CLIENT_ID=
+GMAIL_CLIENT_SECRET=
+GMAIL_ACCESS_TOKEN=
+GMAIL_REFRESH_TOKEN=
+GMAIL_SENDER_ADDRESS=andrea@example.com
+
+# ── API esterne ───────────────────────────────────────────────────────────────
+ANTHROPIC_API_KEY=
+GOOGLE_MAPS_API_KEY=
+REGISTRO_IMPRESE_API_KEY=                                # opzionale — senza: enrichment_level="basic"
+OPENCORPORATES_API_TOKEN=                                # opzionale — senza: usa tier free (10 req/m)
+
+# ── Fatture in Cloud ──────────────────────────────────────────────────────────
+FATTURE_IN_CLOUD_ACCESS_TOKEN=
+FATTURE_IN_CLOUD_COMPANY_ID=
+
+# ── Runtime ───────────────────────────────────────────────────────────────────
+CLIENT_WORKSPACE_ROOT=/tmp/agentpexi/workspaces          # path locale workspace clienti
+```
+
+> **Note:**
+> - `SECRET_KEY` è usato sia per i JWT operatore che come chiave di cifratura AES-256 per i campi PII nel DB. Deve essere una stringa casuale di almeno 32 caratteri.
+> - `PORTAL_SECRET_KEY` è distinto da `SECRET_KEY` — compromettere l'uno non compromette l'altro.
+> - Gmail: ottenere `GMAIL_ACCESS_TOKEN` e `GMAIL_REFRESH_TOKEN` tramite il flusso OAuth2 Google Cloud Console (scope: `gmail.send`, `gmail.readonly`).
+> - `DATABASE_SYNC_URL` e `DATABASE_URL` puntano allo stesso DB ma con driver diversi — entrambi necessari.
 
 Compilare almeno:
 - `ANTHROPIC_API_KEY`
@@ -230,9 +282,13 @@ docker-compose up -d
 source .venv/bin/activate
 uvicorn api.main:app --reload --port 8000
 
-# Terminale 3 — Celery worker
+# Terminale 3a — Celery worker
 source .venv/bin/activate
 celery -A agents.worker worker --loglevel=info --concurrency=4
+
+# Terminale 3b — Celery beat (scheduler task periodici)
+source .venv/bin/activate
+celery -A agents.worker beat --loglevel=info
 
 # Terminale 4 — Orchestrator LangGraph
 source .venv/bin/activate

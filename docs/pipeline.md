@@ -15,13 +15,7 @@ Scout → Market Analyst → Lead Profiler. Nessun gate umano.
 - Gap rilevato (`service_gap_detected = true`): varia in base al servizio potenziale
 - Nessun record `deals` con stesso `google_place_id`
 
-**Gap per tipologia di servizio:**
-
-| Servizio | Segnali di gap |
-|----------|---------------|
-| Consulenza | Inefficienze operative, crescita rapida senza supporto, mancanza competenze interne |
-| Web Design | Sito obsoleto/assente, nessuna presenza online, brand image poco curata |
-| Manutenzione Digitale | Sistemi software datati, problemi di performance, necessità aggiornamenti frequenti |
+**Gap per tipologia di servizio:** vedi [`docs/service-types.md`](service-types.md) — colonna "Segnali di gap" per ciascun servizio.
 
 **Fallback no-leads:** espandere raggio `+5km` × 3 iterazioni max.
 Se ancora nessun lead: `status = "blocked"`, `blocked_reason = "no_qualified_leads_in_zone"`.
@@ -86,6 +80,10 @@ Verificare `deal.delivery_approved = true` prima di chiudere il deal come conseg
 ---
 
 ## Fase 04 — Post-Sale (autonoma con escalation)
+
+Dopo la consegna delle credenziali di onboarding al cliente, l'Account Manager
+imposta `deal.status = "active"` (transizione da `"delivered"`). Da questo momento
+il deal è in gestione attiva: NPS survey, upsell, supporto continuativo.
 
 Il supporto post-vendita è orientato al servizio offerto:
 - Richieste di assistenza e aggiornamenti

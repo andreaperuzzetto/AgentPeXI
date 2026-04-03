@@ -164,9 +164,16 @@ CREATE TABLE deals (
     kickoff_confirmed_at    TIMESTAMPTZ,
 
     -- GATE 3 — Consegna approvata dall'operatore
-    -- Per consulenza: leggere come "consulting_approved"
+    -- deal.service_type = 'web_design' | 'digital_maintenance'
     delivery_approved       BOOLEAN NOT NULL DEFAULT FALSE,
     delivery_approved_at    TIMESTAMPTZ,
+    delivery_rejection_count    INTEGER NOT NULL DEFAULT 0,
+    delivery_rejection_notes    TEXT,
+
+    -- GATE 3 (variante consulenza) — approvazione del progetto consulting
+    -- deal.service_type = 'consulting'
+    consulting_approved     BOOLEAN NOT NULL DEFAULT FALSE,
+    consulting_approved_at  TIMESTAMPTZ,
 
     -- Billing
     total_price_eur         INTEGER,            -- in centesimi
@@ -510,12 +517,13 @@ CREATE TABLE delivery_reports (
     client_id           UUID NOT NULL REFERENCES clients(id),
 
     approved            BOOLEAN NOT NULL,
-    completeness_pct    NUMERIC(5, 2),      -- % completamento deliverable
-    blocking_issues     TEXT[],
-    notes               TEXT[],
+    completeness_pct    NUMERIC(5, 2),      -- % completamento deliverable (0.00-100.00)
+    blocking_issues     JSONB NOT NULL DEFAULT '[]',  -- [{"issue": "...", "severity": "blocker"}]
+    notes               JSONB NOT NULL DEFAULT '[]',  -- note non bloccanti (list of strings)
+    reviewer_agent      TEXT NOT NULL,      -- agente che ha prodotto il report ("delivery_tracker")
 
     -- Path del report completo su MinIO
-    report_path         TEXT,               -- "clients/{client_id}/delivery/{service_delivery_id}.md"
+    report_path         TEXT,               -- "clients/{client_id}/reports/{service_delivery_id}.md"
 
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -549,6 +557,7 @@ CREATE TABLE runs (
 
     started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at    TIMESTAMPTZ,
+    error           TEXT,               -- messaggio di errore se status = 'failed'
 
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -559,10 +568,14 @@ CREATE INDEX idx_runs_deal_id ON runs(deal_id);
 CREATE INDEX idx_runs_status  ON runs(status);
 ```
 
-> Il `run_id` coincide con il `thread_id` del Redis checkpointer LangGraph.
+> Il `run_id` coincide con il `thread_id` del **PostgreSQL checkpointer** LangGraph
+> (pacchetto `langgraph-checkpoint-postgres`). Il checkpointer gestisce le proprie
+> tabelle internamente (non documentate qui — create da `checkpointer.setup()`).
+>
 > Il gate poller interroga `WHERE status = 'awaiting_gate'` ogni 30 s, verifica il
 > flag nel deal corrispondente (`proposal_human_approved`, `kickoff_confirmed`,
-> `delivery_approved`), e riprende il run chiamando:
+> `delivery_approved` o `consulting_approved` in base a `service_type`), e riprende
+> il run chiamando:
 > `graph.invoke(None, config={"configurable": {"thread_id": run_id}})`.
 
 ---

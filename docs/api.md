@@ -22,6 +22,9 @@ HTTP status codes usati: `200`, `201`, `400`, `401`, `403`, `404`, `409`, `422`,
 
 ## Auth
 
+**Credenziali operatore:** `OPERATOR_EMAIL` e `OPERATOR_PASSWORD_HASH` (bcrypt) da `.env`.
+Non esiste una tabella `users` — un solo operatore, credenziali in env.
+
 ```
 POST /auth/token
 ```
@@ -298,13 +301,15 @@ Il Gate Poller (Celery Beat) rileverà il flag e riprende il run.
 POST /deals/{deal_id}/gates/delivery-approve
 ```
 
-Imposta `delivery_approved = true`, `delivery_approved_at = now()`.
-Per i deal di tipo `consulting`, il gate si comporta come `consulting_approved`.
-Il Gate Poller (Celery Beat) rileverà il flag e completa il run.
+Behavior in base al `service_type` del deal:
+- `web_design` / `digital_maintenance`: imposta `delivery_approved = true`, `delivery_approved_at = now()`
+- `consulting`: imposta `consulting_approved = true`, `consulting_approved_at = now()`
+
+Il Gate Poller (Celery Beat) rileverà il flag corretto e completerà il run.
 
 **Response 200:**
 ```json
-{ "deal_id": "uuid", "gate": "delivery", "approved": true, "approved_at": "..." }
+{ "deal_id": "uuid", "gate": "delivery", "approved": true, "approved_at": "2025-01-01T12:00:00Z" }
 ```
 
 ---
@@ -322,7 +327,7 @@ Non sblocca il Gate Poller — il nodo delivery tracker viene rilasciato dalla p
 
 **Response 200:**
 ```json
-{ "deal_id": "uuid", "gate": "delivery", "approved": true, "approved_at": "..." }
+{ "deal_id": "uuid", "gate": "delivery", "approved": false, "rejection_count": 1, "notes": "Il sito non corrisponde..." }
 ```
 
 ---
@@ -486,6 +491,81 @@ GET /stats/pipeline
   "deals_delivered": 18,
   "revenue_delivered_eur": 145000,
   "revenue_pipeline_eur": 78000
+}
+```
+
+---
+
+## Clients — NPS Survey — `/clients/{client_id}/nps-survey`
+
+```
+GET /clients/{client_id}/nps-survey
+```
+
+Genera un link portale con JWT di tipo `"nps"` (scadenza 30 giorni).
+Salva il token su `nps_records.survey_token`. Usato dal template email `{{nps_url}}`.
+
+**Response 200:**
+```json
+{ "survey_url": "https://.../portal/nps/{token}" }
+```
+
+---
+
+## `POST /runs` — payload per tipo
+
+Oltre a `"discovery"`, i seguenti tipi richiedono payload specifici:
+
+### `type="proposal"` — rigenerazione proposta
+
+```json
+{
+  "type": "proposal",
+  "payload": {
+    "deal_id": "uuid",
+    "service_type": "web_design",
+    "rejection_notes": null
+  }
+}
+```
+
+`rejection_notes` è `null` per una prima generazione, stringa per rigenera dopo rifiuto.
+
+### `type="delivery"` — avvio/ripresa erogazione
+
+```json
+{
+  "type": "delivery",
+  "payload": {
+    "deal_id": "uuid",
+    "client_id": "uuid"
+  }
+}
+```
+
+### `type="post_sale"` — avvio post-sale
+
+```json
+{
+  "type": "post_sale",
+  "payload": {
+    "deal_id": "uuid",
+    "client_id": "uuid"
+  }
+}
+```
+
+### `type="support"` — avvio ticket support (da gmail_poller)
+
+```json
+{
+  "type": "support",
+  "payload": {
+    "ticket_id": "uuid",
+    "client_id": "uuid",
+    "action": "classify",
+    "email_thread_id": "gmail_thread_id"
+  }
 }
 ```
 

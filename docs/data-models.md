@@ -1,6 +1,6 @@
 # Schemi dati
 
-Tipi condivisi tra tutti gli agenti. Definiti in `agents/base.py`.
+Tipi condivisi tra tutti gli agenti. Definiti in `src/agents/models.py`.
 
 ## ServiceType
 
@@ -27,8 +27,9 @@ class TaskStatus(StrEnum):
 ## AgentTask
 
 ```python
-@dataclass
-class AgentTask:
+class AgentTask(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
     id: UUID
     type: str            # "scout.discover" | "proposal.generate" | ecc.
     agent: str           # "scout" | "proposal" | ecc.
@@ -39,21 +40,22 @@ class AgentTask:
     blocked_reason: str | None = None   # obbligatorio se BLOCKED
     retry_count: int = 0
     idempotency_key: str | None = None  # f"{task.id}:{operation_name}"
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 ```
 
 ## AgentResult
 
 ```python
-@dataclass
-class AgentResult:
+class AgentResult(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
     task_id: UUID
     success: bool
     output: dict
     error: str | None = None
-    artifacts: list[str] = field(default_factory=list)   # path MinIO
-    next_tasks: list[str] = field(default_factory=list)  # tipi task successivi
+    artifacts: list[str] = Field(default_factory=list)   # path MinIO
+    next_tasks: list[str] = Field(default_factory=list)  # tipi task successivi
     requires_human_gate: bool = False
     gate_type: str | None = None  # "proposal_review" | "kickoff" | "delivery"
 ```
@@ -84,7 +86,8 @@ class DealStatus(StrEnum):
 # Gate flags — l'Orchestrator li verifica in checkpoint.py prima di ogni fase
 deal.proposal_human_approved: bool   # GATE 1
 deal.kickoff_confirmed: bool         # GATE 2
-deal.delivery_approved: bool         # GATE 3 (per consulenza: consulting_approved)
+deal.delivery_approved: bool         # GATE 3 web_design e digital_maintenance
+deal.consulting_approved: bool       # GATE 3 per service_type = consulting
 
 # Tipo servizio
 deal.service_type: ServiceType       # "consulting" | "web_design" | "digital_maintenance"
@@ -93,37 +96,22 @@ deal.service_type: ServiceType       # "consulting" | "web_design" | "digital_ma
 deal.proposal_approved_at: datetime | None
 deal.kickoff_confirmed_at: datetime | None
 deal.delivery_approved_at: datetime | None
+deal.consulting_approved_at: datetime | None
 
 # Iterazione proposta
 deal.proposal_rejection_count: int          # max 5, poi escalation manuale
 deal.proposal_rejection_notes: str | None
+
+# Iterazione consegna
+deal.delivery_rejection_count: int          # incrementato ad ogni rifiuto consegna
+deal.delivery_rejection_notes: str | None
 ```
+
+> **Nota:** Usare sempre `deal.consulting_approved` per il servizio consulenza —
+> mai leggere `delivery_approved` per questo service_type.
 
 ## AgentState (LangGraph)
 
-```python
-class AgentState(TypedDict):
-    run_id: str
-    deal_id: str | None
-    client_id: str | None
-    service_type: str | None     # "consulting" | "web_design" | "digital_maintenance"
-    current_phase: str           # "discovery" | "proposal" | "delivery" | "post_sale"
-    current_agent: str
-    messages: Annotated[list, add_messages]
-    task_history: list[dict]
-    # Accumulatori per fase
-    leads: list[dict]
-    selected_lead: dict | None
-    analysis: dict | None
-    artifact_paths: list[str]    # mockup, presentazioni, schemi, roadmap
-    proposal_path: str | None
-    # Delivery tracking
-    delivery_milestones: list[dict]   # milestone per servizio
-    delivery_progress_pct: int | None
-    # Gate
-    awaiting_gate: bool
-    gate_type: str | None
-    # Errori
-    error: str | None
-    retry_count: int
-```
+> **Fonte canonica:** la definizione completa e aggiornata di `AgentState` è in
+> [`docs/orchestrator.md`](orchestrator.md) — sezione "AgentState".
+> Non duplicare qui per evitare disallineamenti.

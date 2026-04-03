@@ -1,0 +1,7 @@
+{
+  "type": "module",
+  "description": "AgentPeXI render scripts (Puppeteer bridge)",
+  "dependencies": {
+    "puppeteer": "^22.0.0"
+  }
+}

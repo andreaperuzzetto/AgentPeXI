@@ -88,11 +88,14 @@ opencorporates:
 ateco:
   # Dataset pubblico ISTAT — scaricato localmente all'avvio
   local_json_path: "config/data/ateco_codes.json"
-  source_url: "https://www.istat.it/classificazione/ateco-2025/"
+  source_url: "https://www.istat.it/classificazione/ateco-2007/"  # ATECO 2007 (in uso)
   notes: >
-    Il file config/data/ateco_codes.json va scaricato una volta sola
-    (vedi docs/setup-macos.md). Il Lead Profiler lo carica in memoria
-    per la classificazione senza chiamate HTTP.
+    Il file config/data/ateco_codes.json utilizza la classificazione ATECO 2007,
+    che rimane lo standard di riferimento per il Registro Imprese italiano.
+    L'aggiornamento ad ATECO 2025 è una migrazione futura — non usare la URL 2025
+    finché il Registro Imprese non adotta il nuovo schema.
+    Il file va scaricato una volta sola (vedi docs/setup-macos.md).
+    Il Lead Profiler lo carica in memoria per la classificazione senza chiamate HTTP.
 
 # ── Fatture in Cloud ─────────────────────────────────────────────────────────
 fatture_in_cloud:

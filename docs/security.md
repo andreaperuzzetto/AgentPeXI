@@ -14,8 +14,8 @@ Ogni cliente ha uno schema PostgreSQL dedicato e un path MinIO separato.
 
 I Code Agent non hanno mai visibilità su dati di altri clienti.
 Il workspace è accessibile solo durante task con quel `client_id` nel payload.
-**Nota:** nel nuovo modello i Code Agent sono disattivati; Document Generator e
-Delivery Tracker operano con le stesse regole di isolamento.
+**Nota:** Document Generator e Delivery Tracker operano con le stesse
+regole di isolamento dei vecchi Code Agent (ora disattivati).
 
 ---
 
@@ -50,8 +50,8 @@ async def create_client_schema(client_id: UUID, db: AsyncSession) -> None:
 import os
 from pathlib import Path
 
-def init_client_workspace(client_id: UUID, service_type: str) -> Path:
-    workspace = Path(f"/workspace/clients/{client_id}")
+def init_client_workspace(client_id, service_type: str) -> Path:
+    workspace = Path(os.environ["CLIENT_WORKSPACE_ROOT"]) / str(client_id)
     # Sottocartelle variano in base al servizio
     common_dirs = ["docs", "deliverables"]
     service_dirs = {
@@ -76,7 +76,7 @@ Il file_store.py usa il prefix `clients/{client_id}/` automaticamente.
 
 ## Connessione a schema cliente
 
-I Code Agent e il QA Agent usano una connessione dedicata allo schema del cliente:
+Document Generator e Delivery Tracker usano una connessione dedicata allo schema del cliente:
 
 ```python
 # tools/db_tools.py
@@ -97,13 +97,52 @@ def get_client_engine(client_id: UUID):
 
 ## Autenticazione
 
-| Endpoint | JWT firmato con | Scadenza |
-|---------|----------------|----------|
-| Dashboard operatore (`/api/*`) | `SECRET_KEY` | 24h |
-| Portale cliente (`/portal/*`) | `PORTAL_SECRET_KEY` | 72h |
-| Webhook portale (`/webhooks/*`) | `PORTAL_SECRET_KEY` | verifica token dal payload |
+**Operatore unico.** Non esiste tabella `users`. Le credenziali sono in env:
+- `OPERATOR_EMAIL` — indirizzo email operatore
+- `OPERATOR_PASSWORD_HASH` — hash bcrypt della password (`passlib[bcrypt]`)
 
-Le due chiavi devono essere diverse. Compromettere `SECRET_KEY` non compromette il portale cliente.
+Il JWT viene restituito come **httpOnly cookie** (non nel body) per prevenire XSS.
+Il frontend lo invia automaticamente in ogni richiesta grazie al cookie.
+
+```python
+# api/auth.py
+from passlib.context import CryptContext
+from jose import jwt
+import os
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain: str) -> bool:
+    return pwd_context.verify(plain, os.environ["OPERATOR_PASSWORD_HASH"])
+
+def create_access_token(email: str) -> str:
+    return jwt.encode(
+        {"sub": email, "exp": datetime.utcnow() + timedelta(hours=24)},
+        os.environ["SECRET_KEY"],
+        algorithm="HS256",
+    )
+```
+
+```python
+# api/routers/auth.py — risposta con httpOnly cookie
+from fastapi.responses import JSONResponse
+
+@router.post("/auth/token")
+async def login(form: LoginForm):
+    if form.email != os.environ["OPERATOR_EMAIL"] or not verify_password(form.password):
+        raise HTTPException(status_code=401, detail="Credenziali non valide")
+    token = create_access_token(form.email)
+    response = JSONResponse({"status": "ok"})
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=os.environ.get("ENVIRONMENT") == "production",
+        samesite="lax",
+        max_age=86400,
+    )
+    return response
+```
 
 ---
 
@@ -122,9 +161,27 @@ log.info("proposal.sent", client_id=str(client.id), deal_id=str(deal.id))
 
 ### Campi cifrati a riposo
 
-Le seguenti colonne DB sono cifrate con AES-256 prima del salvataggio
-(implementare con `sqlalchemy-utils` o `cryptography`):
+Le seguenti colonne DB sono cifrate con AES-256 usando `sqlalchemy-utils EncryptedType`
+(già presente in `requirements.txt`). La chiave di cifratura è `SECRET_KEY` da env.
 
+```python
+# src/db/models/client.py (esempio)
+from sqlalchemy_utils import EncryptedType
+from sqlalchemy_utils.types.encrypted.encrypted_type import AesEngine
+import os
+
+# Chiave letta una sola volta all'avvio
+_ENCRYPTION_KEY = os.environ["SECRET_KEY"]
+
+class Client(Base):
+    # ...
+    contact_email = Column(EncryptedType(String, _ENCRYPTION_KEY, AesEngine, "pkcs5"))
+    contact_phone = Column(EncryptedType(String, _ENCRYPTION_KEY, AesEngine, "pkcs5"))
+    contact_name  = Column(EncryptedType(String, _ENCRYPTION_KEY, AesEngine, "pkcs5"))
+    vat_number    = Column(EncryptedType(String, _ENCRYPTION_KEY, AesEngine, "pkcs5"))
+```
+
+**Colonne cifrate:**
 - `clients.contact_email`
 - `clients.contact_phone`
 - `clients.contact_name`

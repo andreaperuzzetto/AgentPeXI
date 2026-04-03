@@ -5,14 +5,15 @@
 | Layer | Tecnologia | Versione |
 |-------|-----------|---------|
 | Orchestrazione | LangGraph + Anthropic API | 0.2 |
+| LangGraph checkpointer | PostgreSQL (`langgraph-checkpoint-postgres`) | 2.x |
 | Backend API | FastAPI + asyncio | 0.115 |
 | Frontend | Next.js App Router + Tailwind | 14 |
 | Database | PostgreSQL + pgvector | 16 |
 | Cache + queue | Redis + Celery | 7 |
 | Object storage | MinIO (S3-compat) | locale |
-| Render artefatti | Puppeteer headless | 22 |
+| Render artefatti | Puppeteer headless (`scripts/render.js`) | 22 |
 | PDF | WeasyPrint + Jinja2 | 62 |
-| Email | Gmail API via MCP | — |
+| Email | Gmail API — MCP server custom stdio (`src/mcp_servers/gmail/server.py`) | — |
 | Mappe | Google Maps Places + Geocoding | — |
 | Runtime | Python 3.12, Node.js 20 | — |
 | Container | Docker Compose | solo dev |

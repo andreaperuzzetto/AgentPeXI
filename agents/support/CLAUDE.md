@@ -2,6 +2,22 @@
 
 > Le regole globali in `../../CLAUDE.md` hanno sempre precedenza.
 
+## Trigger
+
+Il Support Agent viene avviato da un task Celery Beat periodico (`agents/gmail_poller.py`,
+ogni 5 minuti) che:
+1. Chiama `tools/gmail.py → list_unread()` per leggere le email non lette.
+2. Identifica le email provenienti da clienti noti confrontando il mittente con
+   `email_log.gmail_thread_id` e `clients.email` nel DB.
+3. Per ogni email da cliente noto senza ticket già aperto sullo stesso thread:
+   - Crea un nuovo `ticket` in DB (`tickets.status = "open"`).
+   - Avvia `POST /runs` con `type="support"` e `payload={"ticket_id": ..., "client_id": ...}`.
+
+Il poller **non avvia** il Support Agent per email da mittenti non riconosciuti
+(non presenti in `clients`) — queste vengono ignorate silenziosamente.
+
+---
+
 ## Responsabilità
 
 Gestisce i ticket di supporto post-erogazione: classifica la richiesta,
