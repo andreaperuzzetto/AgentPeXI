@@ -137,7 +137,7 @@ const statusConfig = {
 ```
 components/ui/
 ├── StatusBadge.tsx     ← badge colorato per TaskStatus e DealStatus
-├── AgentTag.tsx        ← pill con nome agente ("Scout", "QA Agent", ...)
+├── AgentTag.tsx        ← pill con nome agente ("Scout", "Document Generator", ...)
 ├── GateButton.tsx      ← pulsante approvazione gate (con confirm dialog)
 ├── Timeline.tsx        ← lista verticale eventi pipeline
 ├── MetricCard.tsx      ← card numero grande + label (dashboard)

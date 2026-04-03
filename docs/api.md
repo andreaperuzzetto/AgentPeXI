@@ -36,10 +36,14 @@ POST /auth/token
 
 **Response 200:**
 ```json
-{ "access_token": "eyJ...", "token_type": "bearer", "expires_in": 86400 }
+{ "status": "ok" }
 ```
 
-Tutti gli altri endpoint richiedono `Authorization: Bearer {token}`.
+Il token JWT è impostato come **httpOnly cookie** (`access_token`, `max_age=86400`, `samesite=lax`).
+Il browser lo invia automaticamente a ogni richiesta successiva.
+Per client non-browser passare il token nell'header `Cookie: access_token={token}`.
+
+Tutti gli altri endpoint richiedono autenticazione via cookie `access_token`.
 
 ---
 
@@ -442,6 +446,37 @@ POST /webhooks/portal/client-reject
 **Logica:** aggiorna `deal.status = "lost"`, salva note, notifica Orchestrator.
 
 **Response 200:** `{ "message": "Grazie per il feedback." }`
+
+---
+
+### Conferma consegna dal cliente via portale (GATE 3)
+
+```
+POST /webhooks/portal/client-delivery-confirm
+```
+
+**Header:** `Authorization: Bearer {portal_jwt}`
+
+**Request:**
+```json
+{
+  "proposal_id": "uuid",
+  "token": "jwt_token_gate3"
+}
+```
+
+**Logica:**
+1. Verifica JWT con `PORTAL_SECRET_KEY` — controlla `gate == "delivery"`
+2. Verifica scadenza (72h da `proposal.portal_link_expires`)
+3. In base a `deal.service_type`:
+   - `web_design` / `digital_maintenance`: imposta `deal.delivery_approved = true`, `deal.delivery_approved_at = now()`
+   - `consulting`: imposta `deal.consulting_approved = true`, `deal.consulting_approved_at = now()`
+4. Notifica Orchestrator via Redis
+
+**Response 200:** `{ "message": "Consegna confermata. Grazie per aver scelto i nostri servizi." }`
+**Response 400:** `{ "error": "token_expired" }` se JWT scaduto.
+**Response 400:** `{ "error": "invalid_gate" }` se il token non è di tipo `delivery`.
+**Response 409:** `{ "error": "already_confirmed" }` se già confermato.
 
 ---
 

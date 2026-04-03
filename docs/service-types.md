@@ -175,12 +175,12 @@ service_deliveries = [
     {"type": "workshop",   "title": "Workshop operativo #1",           "milestone_name": None,               "depends_on": ["report"]},
     {"type": "workshop",   "title": "Workshop operativo #2",           "milestone_name": None,               "depends_on": ["workshop_1"]},
     {"type": "process_schema", "title": "Schema processi AS-IS/TO-BE", "milestone_name": None,               "depends_on": ["workshop_2"]},
-    {"type": "roadmap",    "title": "Roadmap operativa finale",        "milestone_name": "consulting_approved","depends_on": ["process_schema"]},
+    {"type": "roadmap",    "title": "Roadmap operativa finale",        "milestone_name": None,               "depends_on": ["process_schema"]},
     {"type": "presentation","title": "Presentazione risultati",        "milestone_name": "consulting_approved","depends_on": ["roadmap"]},
 ]
 ```
 
-Gate 3 si chiama `consulting_approved` — verificato in `checkpoint.py` come `deal.delivery_approved`.
+Gate 3 si chiama `consulting_approved` — verificato in `checkpoint.py` come `deal.consulting_approved`.
 
 ### Web Design — decomposizione standard
 
@@ -275,7 +275,7 @@ Adatta il tono e il contenuto dell'onboarding al servizio ricevuto.
 | `digital_maintenance` | 30/60/10 se una tantum; mensile se canone | `invoice.milestone = "monthly"` se `pricing.billing_model = "monthly"` |
 
 **Milestone mapping:**
-- `consulting`: deposit=kickoff_confirmed, delivery=delivery_approved (=consulting_approved)
+- `consulting`: deposit=kickoff_confirmed, delivery=consulting_approved
 - `web_design`: deposit=kickoff_confirmed, delivery=delivery_approved
 - `digital_maintenance` canone: primo invoice= kickoff_confirmed, poi mensile il 1° del mese
 

@@ -436,7 +436,7 @@ CREATE TABLE invoices (
     milestone       TEXT NOT NULL,      -- "deposit"|"delivery"|"trailing"|"monthly"|"custom"
                                         -- Milestone per servizio:
                                         -- Consulenza: "deposit" (kickoff), "delivery" (consulting_approved)
-                                        -- Web Design: "deposit" (kickoff), "delivery" (mockup finale approvato)
+                                        -- Web Design: "deposit" (kickoff), "delivery" (delivery_approved)
                                         -- Manutenzione: "deposit" (kickoff), "monthly" (cicli ricorrenti)
 
     -- Importi (in centesimi EUR)
@@ -607,7 +607,7 @@ engine = create_async_engine(
     connect_args={"options": f"-csearch_path=client_{client_id_clean}"}
 )
 
-# I Code Agent usano SEMPRE questo engine quando lavorano su un progetto cliente
+# Document Generator e Delivery Tracker usano SEMPRE questo engine quando lavorano su un progetto cliente
 # Mai usare il motore dell'applicazione principale (schema public)
 ```
 

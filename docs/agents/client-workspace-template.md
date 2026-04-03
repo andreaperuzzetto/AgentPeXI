@@ -1,6 +1,6 @@
 # Progetto {CLIENT_NAME} — CLAUDE.md
 
-> Generato automaticamente dal Proposal Agent al kickoff confermato.
+> Generato automaticamente dal Delivery Orchestrator al kickoff confermato.
 > Le regole di sicurezza in `../../../../CLAUDE.md` hanno sempre precedenza su questo file.
 
 ## Cliente

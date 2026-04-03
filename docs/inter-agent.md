@@ -143,15 +143,9 @@ def dispatch_task(task: AgentTask) -> None:
 
 ## Idempotenza
 
-Ogni scrittura su DB o API esterna che può essere ritentata deve usare:
-
-```python
-idempotency_key = f"{task.id}:{operation_name}"
-# es. "550e8400-...:send_proposal_email"
-```
-
-Salvare su `tasks.idempotency_key` (colonna `UNIQUE`) prima di eseguire l'operazione.
-Se il task viene ritentato e la chiave esiste già → l'operazione è già avvenuta, skip.
+Pattern canonico documentato in [`docs/base-agent.md` → Pattern idempotenza](base-agent.md).
+Ogni operazione esterna ritentabile deve scrivere `idempotency_key = f"{task.id}:{operation_name}"`
+su `tasks.idempotency_key` (colonna `UNIQUE`) prima di eseguire.
 
 ---
 

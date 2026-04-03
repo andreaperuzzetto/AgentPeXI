@@ -255,12 +255,12 @@ async def get_presigned_url(object_key: str, expires_in_seconds: int = 3600) -> 
 
 | Tipo file | Path |
 |-----------|------|
-| Proposte PDF | `proposals/{deal_id}/v{n}.pdf` |
-| Artefatti consulenza | `artifacts/consulting/{deal_id}/{type}_v{n}.{ext}` |
-| Artefatti web design | `artifacts/web_design/{deal_id}/{type}_v{n}.{ext}` |
-| Artefatti manutenzione | `artifacts/digital_maintenance/{deal_id}/{type}_v{n}.{ext}` |
+| Proposte PDF | `clients/{deal_id}/proposals/v{n}.pdf` |
+| Artefatti consulenza | `clients/{deal_id}/artifacts/consulting/{type}_v{n}.{ext}` |
+| Artefatti web design | `clients/{deal_id}/artifacts/web_design/{type}_v{n}.{ext}` |
+| Artefatti manutenzione | `clients/{deal_id}/artifacts/digital_maintenance/{type}_v{n}.{ext}` |
 | Fatture | `invoices/{invoice_number}.pdf` |
-| Report consegna | `reports/{service_delivery_id}.pdf` |
+| Report consegna | `clients/{client_id}/reports/{service_delivery_id}.pdf` |
 
 ```python
 from tools.file_store import upload_file, download_file, get_presigned_url, file_exists, list_files
@@ -446,7 +446,7 @@ VIEWPORT_MOBILE  = {"width": 390,  "height": 844}
 |-----------|--------|--------|
 | `LeadAlreadyExistsError` | db_tools | Insert lead con google_place_id duplicato |
 | `MaxProposalVersionsError` | db_tools | Tentativo versione > 5 |
-| `GateNotApprovedError` | db_tools (+ agenti) | Gate flag False nel deal |
+| `GateNotApprovedError` | agents/models | Gate flag False nel deal |
 | `FileUploadError` | file_store | Errore MinIO upload |
 | `FileNotFoundError` | file_store | object_key inesistente |
 | `MapsAPIError` | google_maps | Errore API o quota esaurita |
@@ -455,7 +455,7 @@ VIEWPORT_MOBILE  = {"width": 390,  "height": 844}
 | `RenderTimeoutError` | mockup_renderer | Puppeteer > 60s |
 | `RenderError` | mockup_renderer | Errore generico Puppeteer |
 
-Tutti queste eccezioni estendono `AgentToolError(Exception)` definita in `tools/__init__.py`.
+Tutti queste eccezioni estendono `AgentToolError(Exception)` definita in `agents/models.py`.
 Gli agenti devono catturare `AgentToolError` per gestire i fallback.
 
 ```python
@@ -472,25 +472,8 @@ from tools.db_tools import LeadAlreadyExistsError, MaxProposalVersionsError
 from db.session import get_db_session
 ```
 
-Context manager asincrono che apre una sessione SQLAlchemy e fa commit / rollback
-automatici. Usato dentro `BaseAgent.run()` — gli agenti **non** devono crearne di proprie.
-
-```python
-from contextlib import asynccontextmanager
-from sqlalchemy.ext.asyncio import AsyncSession
-
-@asynccontextmanager
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionFactory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-```
-
-`AsyncSessionFactory` è configurata in `db/session.py` con l'URL da `DATABASE_URL` env.
+Context manager asincrono — implementazione completa in [`docs/db-internals.md`](db-internals.md).
+Usato dentro `BaseAgent.run()` — gli agenti **non** devono crearne di proprie.
 
 ### `tools.db_tools` — Helper task status
 
@@ -504,32 +487,4 @@ from tools.db_tools import (
 ```
 
 Usati esclusivamente da `BaseAgent.run()` — non chiamarli direttamente negli agenti.
-
-```python
-async def _mark_task_running(
-    task_id: UUID,
-    db: AsyncSession,
-) -> None
-    # tasks.status = "running", tasks.started_at = now()
-
-async def _mark_task_blocked(
-    task_id: UUID,
-    reason: str,
-    db: AsyncSession,
-) -> None
-    # tasks.status = "blocked", tasks.blocked_reason = reason
-
-async def _mark_task_failed(
-    task_id: UUID,
-    error_code: str,      # codice dal catalogo docs/error-codes.md
-    db: AsyncSession,
-) -> None
-    # tasks.status = "failed", tasks.error = error_code
-
-async def _mark_task_completed(
-    task_id: UUID,
-    output: dict,
-    db: AsyncSession,
-) -> None
-    # tasks.status = "completed", tasks.output = output, tasks.completed_at = now()
-```
+Firme complete nella sezione [`tools/db_tools.py` → Internal task lifecycle](#toolsdb_toolspy) in cima a questo documento.

@@ -12,10 +12,9 @@ Ogni cliente ha uno schema PostgreSQL dedicato e un path MinIO separato.
 | Path MinIO | `clients/{client_id}/` | `clients/550e8400-.../mockups/` |
 | Workspace locale | `/workspace/clients/{client_id}/` | solo in sviluppo |
 
-I Code Agent non hanno mai visibilità su dati di altri clienti.
+Document Generator e Delivery Tracker non hanno mai visibilità su dati di altri clienti.
 Il workspace è accessibile solo durante task con quel `client_id` nel payload.
-**Nota:** Document Generator e Delivery Tracker operano con le stesse
-regole di isolamento dei vecchi Code Agent (ora disattivati).
+**Nota:** operano con le stesse regole di isolamento dei vecchi Code Agent (ora disattivati).
 
 ---
 
@@ -63,7 +62,7 @@ def init_client_workspace(client_id, service_type: str) -> Path:
         (workspace / subdir).mkdir(parents=True, exist_ok=True)
 
     # Crea CLAUDE.md del progetto (template in docs/agents/client-workspace-template.md)
-    # Il contenuto viene generato dal Proposal Agent con i dati del deal
+    # Il contenuto viene generato dal Delivery Orchestrator con i dati del deal
     return workspace
 ```
 
@@ -90,7 +89,7 @@ def get_client_engine(client_id: UUID):
     )
 
 # Usare SEMPRE questo engine per operazioni su dati cliente
-# Mai usare il motore principale (schema public) nei Code Agent
+# Mai usare il motore principale (schema public) in Document Generator e Delivery Tracker
 ```
 
 ---

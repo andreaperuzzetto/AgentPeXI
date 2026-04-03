@@ -44,13 +44,13 @@ Ogni agente accede **solo** alle tabelle elencate. Schema completo in `docs/db-s
 | Lead Profiler | `leads` | `leads` (campi enriched), `tasks` |
 | Design Agent | `deals`, `leads` | `tasks`, MinIO artefatti (mockup/presentazioni/schemi) |
 | Proposal Agent | `deals`, `leads`, `clients` | `proposals`, `tasks`, MinIO PDF |
-| Sales Agent | `deals`, `proposals`, `clients` | `deals.status`, `email_log`, `tasks` |
+| Sales Agent | `deals`, `proposals`, `clients` | `clients` (crea a kickoff), `deals.status`, `email_log`, `tasks` |
 | Delivery Orchestrator | `deals`, `service_deliveries` | `service_deliveries`, `tasks` |
 | Document Generator | workspace cliente, `service_deliveries` | workspace cliente, `service_deliveries.status`, `tasks` |
 | Delivery Tracker | `service_deliveries`, workspace cliente | `delivery_reports`, `service_deliveries.status`, `tasks` |
 | Account Manager | `clients`, `deals`, `nps_records` | `nps_records`, `tasks`, `leads` (upsell) |
 | Billing Agent | `deals`, `invoices`, `clients` | `invoices`, `tasks` |
-| Support Agent | `tickets`, `clients`, workspace cliente/docs | `tickets`, `service_deliveries` (solo nuovi task), `tasks` |
+| Support Agent | `tickets`, `clients`, workspace cliente/deliverables | `tickets`, `service_deliveries` (solo nuovi task intervento), `tasks` |
 
 ---
 
