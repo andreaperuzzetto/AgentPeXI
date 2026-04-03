@@ -1,0 +1,445 @@
+# API REST — Contratto completo
+
+FastAPI 0.115. Base URL: `http://localhost:8000` (dev).
+Autenticazione: Bearer JWT firmato con `SECRET_KEY` (env).
+Tutte le risposte in JSON. Errori seguono lo schema standard.
+
+---
+
+## Schema errore standard
+
+```json
+{
+  "error": "deal_not_found",
+  "message": "Deal 550e8400 non trovato",
+  "detail": {}
+}
+```
+
+HTTP status codes usati: `200`, `201`, `400`, `401`, `403`, `404`, `409`, `422`, `500`.
+
+---
+
+## Auth
+
+```
+POST /auth/token
+```
+
+**Request:**
+```json
+{ "email": "andrea@example.com", "password": "..." }
+```
+
+**Response 200:**
+```json
+{ "access_token": "eyJ...", "token_type": "bearer", "expires_in": 86400 }
+```
+
+Tutti gli altri endpoint richiedono `Authorization: Bearer {token}`.
+
+---
+
+## Health
+
+```
+GET /health
+```
+**Response 200:** `{ "status": "ok", "version": "0.1.0" }`
+
+Nessuna autenticazione richiesta. Usato da Docker health check.
+
+---
+
+## Orchestrator — `/runs`
+
+### Avvia un nuovo run
+
+```
+POST /runs
+```
+
+**Request:**
+```json
+{
+  "type": "discovery",
+  "payload": {
+    "zone": "Treviso, Italia",
+    "sector": "horeca",
+    "radius_km": 10,
+    "max_results": 20
+  }
+}
+```
+
+`type` può essere: `"discovery"` | `"proposal"` | `"development"` | `"post_sale"`.
+
+**Response 201:**
+```json
+{
+  "run_id": "uuid",
+  "status": "started",
+  "created_at": "2025-01-01T10:00:00Z"
+}
+```
+
+---
+
+### Stato di un run
+
+```
+GET /runs/{run_id}
+```
+
+**Response 200:**
+```json
+{
+  "run_id": "uuid",
+  "status": "running",
+  "current_phase": "discovery",
+  "current_agent": "scout",
+  "task_history": [
+    {
+      "task_id": "uuid",
+      "type": "scout.discover",
+      "status": "completed",
+      "started_at": "...",
+      "completed_at": "..."
+    }
+  ],
+  "awaiting_gate": false,
+  "gate_type": null,
+  "error": null
+}
+```
+
+---
+
+### Cancella un run
+
+```
+POST /runs/{run_id}/cancel
+```
+
+**Response 200:** `{ "run_id": "uuid", "status": "cancelled" }`
+
+---
+
+## Leads — `/leads`
+
+### Lista leads
+
+```
+GET /leads?sector=horeca&qualified=true&page=1&per_page=20
+```
+
+Query params opzionali: `sector`, `qualified`, `status`, `city`, `page`, `per_page`.
+
+**Response 200:**
+```json
+{
+  "items": [ { ...lead } ],
+  "total": 145,
+  "page": 1,
+  "per_page": 20
+}
+```
+
+---
+
+### Dettaglio lead
+
+```
+GET /leads/{lead_id}
+```
+
+**Response 200:** oggetto lead completo (senza campi cifrati — solo `client_id` se presente).
+
+---
+
+## Deals — `/deals`
+
+### Lista deals
+
+```
+GET /deals?status=proposal_ready&page=1&per_page=20
+```
+
+**Response 200:**
+```json
+{
+  "items": [ { ...deal } ],
+  "total": 12,
+  "page": 1,
+  "per_page": 20
+}
+```
+
+---
+
+### Dettaglio deal
+
+```
+GET /deals/{deal_id}
+```
+
+**Response 200:** oggetto deal completo con gate flags, status, timestamps.
+
+---
+
+### Aggiorna status deal
+
+```
+PATCH /deals/{deal_id}/status
+```
+
+**Request:** `{ "status": "lost", "notes": "Cliente non interessato" }`
+
+**Response 200:** deal aggiornato.
+
+---
+
+### GATE 1 — Approva proposta (operatore)
+
+```
+POST /deals/{deal_id}/gates/proposal-approve
+```
+
+Imposta `proposal_human_approved = true`, `proposal_approved_at = now()`.
+Notifica l'Orchestrator via Redis per riprendere il run in attesa.
+
+**Response 200:**
+```json
+{
+  "deal_id": "uuid",
+  "gate": "proposal_review",
+  "approved": true,
+  "approved_at": "2025-01-01T11:00:00Z"
+}
+```
+
+---
+
+### GATE 1 — Rifiuta proposta (operatore — richiede iterazione)
+
+```
+POST /deals/{deal_id}/gates/proposal-reject
+```
+
+**Request:** `{ "notes": "Cambiare il pricing, troppo alto per il settore" }`
+
+Incrementa `proposal_rejection_count`, salva `proposal_rejection_notes`.
+Notifica l'Orchestrator per rilancio Design + Proposal Agent.
+
+**Response 200:**
+```json
+{
+  "deal_id": "uuid",
+  "gate": "proposal_review",
+  "approved": false,
+  "rejection_count": 2,
+  "notes": "Cambiare il pricing..."
+}
+```
+
+---
+
+### GATE 2 — Conferma kickoff sviluppo (operatore)
+
+```
+POST /deals/{deal_id}/gates/kickoff-confirm
+```
+
+Imposta `kickoff_confirmed = true`, `kickoff_confirmed_at = now()`.
+Notifica l'Orchestrator per avvio Dev Orchestrator Agent.
+
+**Response 200:**
+```json
+{ "deal_id": "uuid", "gate": "kickoff", "confirmed": true, "confirmed_at": "..." }
+```
+
+---
+
+### GATE 3 — Approva deploy (operatore)
+
+```
+POST /deals/{deal_id}/gates/deploy-approve
+```
+
+Imposta `deploy_approved = true`, `deploy_approved_at = now()`.
+Notifica l'Orchestrator per avvio procedura di deploy.
+
+**Response 200:**
+```json
+{ "deal_id": "uuid", "gate": "deploy", "approved": true, "approved_at": "..." }
+```
+
+---
+
+## Clients — `/clients`
+
+### Lista clienti
+
+```
+GET /clients?page=1&per_page=20
+```
+
+**Response 200:** paginato, senza campi PII cifrati (solo `id`, `business_name`, `city`, `status`).
+
+---
+
+### Dettaglio cliente
+
+```
+GET /clients/{client_id}
+```
+
+**Response 200:** oggetto client completo (campi PII solo se richiesti con scope `admin`).
+
+---
+
+## Proposals — `/proposals`
+
+### Lista proposte per deal
+
+```
+GET /proposals?deal_id={deal_id}
+```
+
+**Response 200:**
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "deal_id": "uuid",
+      "version": 1,
+      "pdf_path": "clients/.../proposals/v1.pdf",
+      "pdf_download_url": "https://...",    // presigned URL MinIO, 1h
+      "sent_at": "...",
+      "client_response": "approved"
+    }
+  ]
+}
+```
+
+---
+
+### Download PDF proposta
+
+```
+GET /proposals/{proposal_id}/download
+```
+
+**Response 302:** redirect a presigned URL MinIO (scadenza 1h).
+
+---
+
+## Webhooks — `/webhooks`
+
+Endpoint chiamati dal portale cliente. Autenticati con `PORTAL_SECRET_KEY` (diverso da `SECRET_KEY`).
+
+### Approvazione cliente via portale
+
+```
+POST /webhooks/portal/client-approve
+```
+
+**Header:** `Authorization: Bearer {portal_jwt}`
+
+**Request:**
+```json
+{
+  "proposal_id": "uuid",
+  "token": "jwt_token_dal_link_email"
+}
+```
+
+**Logica:**
+1. Verifica JWT con `PORTAL_SECRET_KEY`
+2. Verifica scadenza (72h da `proposal.portal_link_expires`)
+3. Aggiorna `proposal.client_response = "approved"`, `proposal.client_response_at`
+4. Aggiorna `deal.status = "client_approved"`
+5. Notifica Orchestrator via Redis
+
+**Response 200:** `{ "message": "Proposta approvata. Verrete contattati per il kickoff." }`
+**Response 400:** `{ "error": "token_expired" }` se JWT scaduto.
+**Response 409:** `{ "error": "already_responded" }` se già risposta presente.
+
+---
+
+### Rifiuto cliente via portale
+
+```
+POST /webhooks/portal/client-reject
+```
+
+**Request:**
+```json
+{
+  "proposal_id": "uuid",
+  "token": "jwt_token",
+  "notes": "Non siamo pronti ora, richiamatemi tra 6 mesi"
+}
+```
+
+**Logica:** aggiorna `deal.status = "lost"`, salva note, notifica Orchestrator.
+
+**Response 200:** `{ "message": "Grazie per il feedback." }`
+
+---
+
+## Tasks — `/tasks`
+
+### Lista task (per debug e monitoring)
+
+```
+GET /tasks?deal_id={deal_id}&agent=scout&status=failed&page=1&per_page=50
+```
+
+**Response 200:** paginato.
+
+---
+
+### Dettaglio task
+
+```
+GET /tasks/{task_id}
+```
+
+**Response 200:** oggetto task completo con `payload`, `output`, `error`.
+
+---
+
+## Dashboard stats — `/stats`
+
+### Overview pipeline
+
+```
+GET /stats/pipeline
+```
+
+**Response 200:**
+```json
+{
+  "leads_total": 340,
+  "leads_qualified": 87,
+  "deals_active": 12,
+  "deals_awaiting_gate": 3,
+  "deals_in_development": 4,
+  "deals_delivered": 18,
+  "revenue_delivered_eur": 145000,
+  "revenue_pipeline_eur": 78000
+}
+```
+
+---
+
+## Note implementative
+
+- Paginazione: sempre `page` (1-based) + `per_page` (max 100).
+- Ordering: default `created_at DESC`. Parametro `sort` opzionale: `created_at_asc`, `score_desc`.
+- Tutti i timestamp in risposta: ISO 8601 UTC con suffisso `Z`.
+- UUID sempre come stringa lowercase con trattini.
+- Importi monetari: **sempre in centesimi** (integer), mai float.
+- Campi PII: mai esposti in risposta senza scope esplicito. Usare sempre `client_id`.
