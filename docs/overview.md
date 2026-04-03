@@ -38,17 +38,27 @@ Ogni agente accede **solo** alle tabelle elencate. Schema completo in `docs/db-s
 | Agente | Legge | Scrive |
 |--------|-------|--------|
 | Scout | `config/sectors.yaml` | `leads`, `tasks` |
-| Market Analyst | `leads` | `leads` (score, analysis, business_model), `tasks` |
+| Market Analyst | `leads` | `leads` (score, analysis, suggested_service_type), `tasks` |
 | Lead Profiler | `leads` | `leads` (campi enriched), `tasks` |
-| Design Agent | `deals`, `leads` | `tasks`, MinIO mockups |
+| Design Agent | `deals`, `leads` | `tasks`, MinIO artefatti (mockup/presentazioni/schemi) |
 | Proposal Agent | `deals`, `leads`, `clients` | `proposals`, `tasks`, MinIO PDF |
 | Sales Agent | `deals`, `proposals`, `clients` | `deals.status`, `email_log`, `tasks` |
-| Dev Orchestrator | `deals` | `dev_tasks`, `tasks` |
-| Code Agent Team | workspace cliente, `dev_tasks` | workspace cliente, `dev_tasks.status`, `tasks` |
-| QA Agent | workspace cliente, `dev_tasks` | `qa_reports`, `dev_tasks.status`, `tasks` |
+| Delivery Orchestrator | `deals`, `service_deliveries` | `service_deliveries`, `tasks` |
+| Document Generator | workspace cliente, `service_deliveries` | workspace cliente, `service_deliveries.status`, `tasks` |
+| Delivery Tracker | `service_deliveries`, workspace cliente | `delivery_reports`, `service_deliveries.status`, `tasks` |
 | Account Manager | `clients`, `deals`, `nps_records` | `nps_records`, `tasks`, `leads` (upsell) |
 | Billing Agent | `deals`, `invoices`, `clients` | `invoices`, `tasks` |
-| Support Agent | `tickets`, `clients`, workspace cliente/docs | `tickets`, `dev_tasks` (solo fix), `tasks` |
+| Support Agent | `tickets`, `clients`, workspace cliente/docs | `tickets`, `service_deliveries` (solo nuovi task), `tasks` |
+
+---
+
+## Mappa agenti: vecchi vs nuovi
+
+| Vecchio agente (disattivato) | Nuovo agente | Funzione |
+|------------------------------|-------------|----------|
+| Dev Orchestrator | **Delivery Orchestrator** | Pianifica e traccia l'erogazione del servizio |
+| Code Team | **Document Generator** | Genera report, presentazioni, documenti di progetto |
+| QA Agent | **Delivery Tracker** | Traccia avanzamento, milestone, qualità deliverable |
 
 ---
 
@@ -65,9 +75,9 @@ agents/
 ├── design/CLAUDE.md
 ├── proposal/CLAUDE.md
 ├── sales/CLAUDE.md
-├── dev_orchestrator/CLAUDE.md
-├── code_team/CLAUDE.md
-├── qa/CLAUDE.md
+├── delivery_orchestrator/CLAUDE.md      ← sostituisce dev_orchestrator
+├── doc_generator/CLAUDE.md              ← sostituisce code_team
+├── delivery_tracker/CLAUDE.md           ← sostituisce qa
 ├── account_manager/CLAUDE.md
 ├── billing/CLAUDE.md
 └── support/CLAUDE.md
