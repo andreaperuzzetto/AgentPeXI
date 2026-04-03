@@ -4,9 +4,18 @@
 
 ## Responsabilità
 
-Genera mockup UI contestuali al business model identificato dall'Analyst.
-Produce HTML/React, li renderizza via Puppeteer in PNG e PDF, e salva
-gli artefatti su MinIO. Non interagisce col cliente.
+Genera artefatti visivi contestuali al tipo di servizio e al settore del business.
+La tipologia di artefatti cambia in base al `service_type` del deal.
+Renderizza via Puppeteer in PNG e PDF, salva gli artefatti su MinIO.
+Non interagisce col cliente.
+
+## Artefatti per tipo di servizio
+
+| Servizio | Artefatti prodotti |
+|----------|-------------------|
+| **Consulenza** | Presentazioni visive, strutture workshop, schemi di processi, roadmap operative |
+| **Web Design** | Mockup UI (landing, pagine interne, responsive desktop/mobile) |
+| **Manutenzione Digitale** | Schemi architetturali, piani di aggiornamento, dashboard di monitoraggio |
 
 ## Tool disponibili
 
@@ -19,13 +28,18 @@ gli artefatti su MinIO. Non interagisce col cliente.
 ```python
 {
     "deal_id": str,
-    "business_model": str,          # "saas_booking" | "ecommerce" | "crm" | ...
+    "service_type": str,            # "consulting" | "web_design" | "digital_maintenance"
     "business_name": str,
     "sector": str,
     "brand_colors": list[str] | None,  # hex rilevati dal Lead Profiler
-    "mockup_pages": list[str]          # ["landing", "booking", "dashboard"]
+    "artifact_pages": list[str]        # varia per servizio (vedi sotto)
 }
 ```
+
+**`artifact_pages` per servizio:**
+- Consulenza: `["roadmap", "workshop_structure", "process_schema", "presentation"]`
+- Web Design: `["landing", "about", "services", "contact"]`
+- Manutenzione: `["architecture", "update_plan", "monitoring_dashboard"]`
 
 ## Output atteso (AgentResult.output)
 
@@ -39,13 +53,13 @@ gli artefatti su MinIO. Non interagisce col cliente.
 
 ## Flusso di generazione
 
-1. Seleziona template base da `config/templates/mockups/{business_model}/`
+1. Seleziona template base da `config/templates/artifacts/{service_type}/`
 2. Usa Claude (`claude-sonnet-4-6`) per personalizzare il codice HTML
-   con nome business, colori brand, copy contestuale
-3. Scrive HTML in `/tmp/{deal_id}/mockup_{page}.html`
+   con nome business, colori brand, copy contestuale al servizio
+3. Scrive HTML in `/tmp/{deal_id}/artifact_{page}.html`
 4. Puppeteer renderizza: viewport 1440×900 (desktop) e 390×844 (mobile)
 5. Esporta PNG (2× DPR) e PDF (A4, margini 0)
-6. Upload su MinIO: `clients/{deal_id}/mockups/{page}_{device}.png`
+6. Upload su MinIO: `clients/{deal_id}/artifacts/{page}_{device}.png`
 
 ## Vincoli
 
@@ -59,7 +73,7 @@ gli artefatti su MinIO. Non interagisce col cliente.
 | Op. | Tabella / risorsa |
 |-----|------------------|
 | Legge | `deals`, `leads` |
-| Scrive | `tasks`, MinIO `clients/{deal_id}/mockups/` |
+| Scrive | `tasks`, MinIO `clients/{deal_id}/artifacts/` |
 
 ## Test
 
