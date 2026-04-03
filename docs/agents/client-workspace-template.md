@@ -7,32 +7,48 @@
 
 - **ID:** `{CLIENT_ID}`
 - **Settore:** `{SECTOR}`
+- **Tipo servizio:** `{SERVICE_TYPE}` (consulenza | web_design | digital_maintenance)
 - **SLA risposta:** `{SLA_HOURS}h lavorative`
 - **Referente:** consultare CRM (non loggare dati di contatto)
 
-## Stack concordato
+## Servizio concordato
 
-```
-{AGREED_STACK}
-```
+Tipo: `{SERVICE_TYPE}`
 
-## Feature approvate
+### Deliverable approvati
 
-<!-- Scope definito nella proposta approvata. Non aggiungere feature non elencate. -->
+<!-- Scope definito nella proposta approvata. Non aggiungere deliverable non elencati. -->
 
-- [ ] {FEATURE_1} — spec in `specs/{feature_1_slug}.md`
-- [ ] {FEATURE_2} — spec in `specs/{feature_2_slug}.md`
+- [ ] {DELIVERABLE_1} — descrizione in `deliverables/{deliverable_1_slug}.md`
+- [ ] {DELIVERABLE_2} — descrizione in `deliverables/{deliverable_2_slug}.md`
+
+### Milestone
+
+| # | Milestone | Deliverable associati | Gate |
+|---|-----------|----------------------|------|
+| 1 | {MILESTONE_1} | {DELIVERABLE_LIST_1} | — |
+| 2 | {MILESTONE_2} | {DELIVERABLE_LIST_2} | `delivery_approved` |
 
 ## Criteri di accettazione
 
 {ACCEPTANCE_CRITERIA}
 
-## Branch e deploy
+## Struttura workspace
 
-- Branch produzione: `main`
-- Hosting: `{HOSTING_PLATFORM}`
-- Env vars: vedi `.env.example` in questa directory (mai valori reali nel file)
-- Deploy: richiede `deal.deploy_approved = true` nel DB principale (GATE 3)
+```
+/workspace/clients/{CLIENT_ID}/
+├── CLAUDE.md              ← questo file
+├── deliverables/          ← artefatti prodotti dal Document Generator
+│   ├── {deliverable_1_slug}/
+│   └── {deliverable_2_slug}/
+├── proposals/             ← proposta commerciale approvata
+└── reports/               ← report Delivery Tracker
+```
+
+## Consegna
+
+- Approvazione finale: richiede `deal.delivery_approved = true` nel DB principale (GATE 3)
+- Artefatti finali in MinIO: `clients/{CLIENT_ID}/deliverables/`
 
 ## Note specifiche del progetto
 

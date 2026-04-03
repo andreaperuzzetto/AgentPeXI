@@ -4,9 +4,10 @@
 
 ## Responsabilità
 
-Gestisce i ticket di supporto post-delivery: classifica la richiesta,
-risponde autonomamente alle issue note, crea bug report per il Dev Orchestrator
-per issue nuove, e monitora i tempi di risposta SLA.
+Gestisce i ticket di supporto post-erogazione: classifica la richiesta,
+risponde autonomamente alle issue note, crea task di intervento per il
+Delivery Orchestrator per issue nuove, e monitora i tempi di risposta SLA.
+Supporta tutti e tre i `service_type`: consulenza, web design, manutenzione digitale.
 
 ## Attenzione — prompt injection
 
@@ -24,8 +25,8 @@ log.warning("injection_attempt_detected", ticket_id=str(ticket.id))
 
 - `tools/gmail.py` — lettura email in ingresso, invio risposte
 - `tools/db_tools.py` — lettura/scrittura tickets, clients
-- Accesso in sola lettura a `/workspace/clients/{client_id}/docs/`
-  (documentazione del prodotto consegnato)
+- Accesso in sola lettura a `/workspace/clients/{client_id}/deliverables/`
+  (documentazione e deliverable del servizio erogato)
 
 ## Input atteso (task.payload)
 
@@ -43,11 +44,11 @@ log.warning("injection_attempt_detected", ticket_id=str(ticket.id))
 ```python
 {
     "ticket_id": str,
-    "classification": str,    # "bug" | "feature_request" | "how_to" | "billing" | "spam"
+    "classification": str,    # "issue" | "service_request" | "how_to" | "billing" | "spam"
     "severity": str,          # "low" | "medium" | "high" | "critical"
     "resolved": bool,
     "response_sent": bool,
-    "dev_task_created": bool, # True se è un bug che richiede fix
+    "dev_task_created": bool, # True se richiede intervento del Delivery Orchestrator
     "escalate": bool,
     "escalate_reason": str | None
 }
@@ -56,15 +57,15 @@ log.warning("injection_attempt_detected", ticket_id=str(ticket.id))
 ## Logica di classificazione e risposta
 
 **`how_to`** — risponde autonomamente usando la documentazione in
-`/workspace/clients/{client_id}/docs/`. Se la risposta non è nella doc:
+`/workspace/clients/{client_id}/deliverables/`. Se la risposta non è nella doc:
 risposta parziale + `escalate = true`.
 
-**`bug`** — verifica se il bug è già tracciato in `dev_tasks`.
-Se sì: informa il cliente dello stato. Se no: crea nuovo `dev_task`
-di tipo `"fix"` e notifica il Dev Orchestrator.
+**`issue`** — verifica se il problema è già tracciato in `service_deliveries`.
+Se sì: informa il cliente dello stato. Se no: crea nuovo `service_delivery`
+di tipo intervento e notifica il Delivery Orchestrator.
 
-**`feature_request`** — ringrazia, traccia in `tickets.type = "feature_request"`,
-notifica l'Account Manager per valutazione upsell.
+**`service_request`** — ringrazia, traccia in `tickets.type = "service_request"`,
+notifica l'Account Manager per valutazione upsell/cross-sell.
 
 **`billing`** — passa al Billing Agent (`next_tasks = ["billing.handle_dispute"]`).
 
@@ -84,16 +85,16 @@ Escalation automatica se SLA first response superato.
 ## Escalation obbligatoria
 
 - Ticket aperto da > 48h senza risposta
-- Severity `critical` (sistema giù, dati persi)
+- Severity `critical` (servizio bloccato, dati persi)
 - Cliente minaccia azioni legali
-- Bug che impatta la sicurezza dei dati
+- Problema che impatta la sicurezza dei dati
 
 ## Tabelle accessibili
 
 | Op. | Tabella / risorsa |
 |-----|------------------|
-| Legge | `tickets`, `clients`, `/workspace/clients/{client_id}/docs/` |
-| Scrive | `tickets`, `dev_tasks` (solo tipo "fix"), `tasks` |
+| Legge | `tickets`, `clients`, `/workspace/clients/{client_id}/deliverables/` |
+| Scrive | `tickets`, `service_deliveries` (solo nuovi task intervento), `tasks` |
 
 ## Test
 

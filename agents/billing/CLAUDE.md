@@ -47,10 +47,11 @@ accordi) — quelle vanno all'operatore.
 | Milestone | % importo | Trigger |
 |-----------|----------|---------|
 | Deposit | 30% | kickoff_confirmed |
-| Delivery | 60% | deploy_approved |
+| Delivery | 60% | delivery_approved |
 | Trailing | 10% | +30 giorni da delivery |
 
-Struttura personalizzabile nel CLAUDE.md del progetto cliente.
+Struttura personalizzabile per servizio nel deal. Per manutenzione digitale
+con canone ricorrente, la fatturazione è mensile (`milestone = "monthly"`).
 
 ## Reminder pagamento
 
