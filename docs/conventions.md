@@ -40,6 +40,5 @@ log.info("email.sent", to="user@example.com")            # VIETATO
 ## Git
 
 - Branch: `feat/`, `fix/`, `agent/`, `infra/`
-- Code Agent: `client/{client_id}/feat/{slug}` — mai su `main`
+- Workspace cliente: `client/{client_id}/deliverable/{slug}`
 - Conventional commits: `feat:`, `fix:`, `chore:`, `test:`, `docs:`
-- PR + review QA Agent obbligatoria prima del merge

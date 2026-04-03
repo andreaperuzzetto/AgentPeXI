@@ -48,11 +48,29 @@ def _make_task(agent_name: str, agent_class):
 # Registra tutti gli agenti
 from agents.scout.agent import ScoutAgent
 from agents.analyst.agent import AnalystAgent
-# ... tutti gli altri
+from agents.lead_profiler.agent import LeadProfilerAgent
+from agents.design.agent import DesignAgent
+from agents.proposal.agent import ProposalAgent
+from agents.sales.agent import SalesAgent
+from agents.delivery_orchestrator.agent import DeliveryOrchestratorAgent
+from agents.doc_generator.agent import DocGeneratorAgent
+from agents.delivery_tracker.agent import DeliveryTrackerAgent
+from agents.account_manager.agent import AccountManagerAgent
+from agents.billing.agent import BillingAgent
+from agents.support.agent import SupportAgent
 
-scout_task      = _make_task("scout",    ScoutAgent)
-analyst_task    = _make_task("analyst",  AnalystAgent)
-# ...
+scout_task                = _make_task("scout",                  ScoutAgent)
+analyst_task              = _make_task("analyst",                AnalystAgent)
+lead_profiler_task        = _make_task("lead_profiler",          LeadProfilerAgent)
+design_task               = _make_task("design",                 DesignAgent)
+proposal_task             = _make_task("proposal",               ProposalAgent)
+sales_task                = _make_task("sales",                  SalesAgent)
+delivery_orchestrator_task= _make_task("delivery_orchestrator",  DeliveryOrchestratorAgent)
+doc_generator_task        = _make_task("doc_generator",          DocGeneratorAgent)
+delivery_tracker_task     = _make_task("delivery_tracker",       DeliveryTrackerAgent)
+account_manager_task      = _make_task("account_manager",        AccountManagerAgent)
+billing_task              = _make_task("billing",                BillingAgent)
+support_task              = _make_task("support",                SupportAgent)
 ```
 
 > **Non usare** `async def` nel task Celery — i task non verranno mai eseguiti.

@@ -8,6 +8,8 @@ Invia la proposta al cliente via email, gestisce il follow-up e traccia
 le interazioni nel CRM. Gestisce autonomamente fino a 2 round di negoziazione
 su modifiche minor. Non invia MAI senza GATE 1 approvato.
 
+La proposta riguarda uno dei tre servizi: consulenza, web design o manutenzione digitale.
+
 ## GATE 1 — controllo obbligatorio prima di qualsiasi invio
 
 ```python
@@ -64,7 +66,7 @@ Lingua: **italiano** (tutte le comunicazioni verso il cliente).
 Il Sales Agent gestisce autonomamente **fino a 2 round** su:
 - Riduzione prezzo ≤ 15%
 - Variazioni di timeline ≤ 2 settimane
-- Aggiunta/rimozione di feature minor (non nel core scope)
+- Aggiunta/rimozione di deliverable minor (non nel core scope del servizio)
 
 Oltre: `status = "blocked"`, `blocked_reason = "negotiation_requires_human"`.
 

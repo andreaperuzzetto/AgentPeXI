@@ -50,15 +50,17 @@ CREATE TABLE leads (
 
     -- Classificazione
     sector                  TEXT NOT NULL,       -- chiave da config/sectors.yaml
-    website_exists          BOOLEAN DEFAULT FALSE,
-    digitalization_gap_detected BOOLEAN DEFAULT FALSE,
+    service_gap_detected    BOOLEAN DEFAULT FALSE,  -- gap generico rilevato
+
+    -- Servizio potenziale identificato
+    suggested_service_type  TEXT,                -- "consulting"|"web_design"|"digital_maintenance"
+    gap_signals             JSONB,              -- segnali di gap specifici per servizio
 
     -- Scoring (scritto da Market Analyst)
-    lead_score              INTEGER,             -- 0-100
+    lead_score              INTEGER,             -- 0-100, soglia universale >= 65
     qualified               BOOLEAN,
     disqualify_reason       TEXT,
     gap_summary             TEXT,               -- max 3 frasi
-    business_model          TEXT,               -- "saas_booking"|"ecommerce"|"crm"|...
     estimated_value_eur     INTEGER,
 
     -- Enrichment (scritto da Lead Profiler)
@@ -86,6 +88,7 @@ CREATE INDEX idx_leads_sector         ON leads(sector);
 CREATE INDEX idx_leads_status         ON leads(status);
 CREATE INDEX idx_leads_qualified      ON leads(qualified);
 CREATE INDEX idx_leads_lead_score     ON leads(lead_score DESC);
+CREATE INDEX idx_leads_service_type   ON leads(suggested_service_type);
 CREATE INDEX idx_leads_embedding      ON leads USING ivfflat (embedding vector_cosine_ops);
 ```
 
@@ -143,8 +146,10 @@ CREATE TABLE deals (
     status      TEXT NOT NULL DEFAULT 'lead_identified',
                 -- Valori: vedere DealStatus in docs/data-models.md
 
+    -- Tipo servizio
+    service_type    TEXT NOT NULL,           -- "consulting"|"web_design"|"digital_maintenance"
+
     sector                  TEXT NOT NULL,
-    business_model          TEXT,
     estimated_value_eur     INTEGER,
 
     -- GATE 1 — Approvazione proposta dall'operatore
@@ -154,13 +159,14 @@ CREATE TABLE deals (
     proposal_rejection_count    INTEGER NOT NULL DEFAULT 0,
     proposal_rejection_notes    TEXT,
 
-    -- GATE 2 — Kickoff sviluppo confermato dall'operatore
+    -- GATE 2 — Kickoff erogazione confermato dall'operatore
     kickoff_confirmed       BOOLEAN NOT NULL DEFAULT FALSE,
     kickoff_confirmed_at    TIMESTAMPTZ,
 
-    -- GATE 3 — Deploy approvato dall'operatore
-    deploy_approved         BOOLEAN NOT NULL DEFAULT FALSE,
-    deploy_approved_at      TIMESTAMPTZ,
+    -- GATE 3 — Consegna approvata dall'operatore
+    -- Per consulenza: leggere come "consulting_approved"
+    delivery_approved       BOOLEAN NOT NULL DEFAULT FALSE,
+    delivery_approved_at    TIMESTAMPTZ,
 
     -- Billing
     total_price_eur         INTEGER,            -- in centesimi
@@ -176,9 +182,10 @@ CREATE TABLE deals (
     deleted_at  TIMESTAMPTZ
 );
 
-CREATE INDEX idx_deals_lead_id    ON deals(lead_id);
-CREATE INDEX idx_deals_client_id  ON deals(client_id);
-CREATE INDEX idx_deals_status     ON deals(status);
+CREATE INDEX idx_deals_lead_id      ON deals(lead_id);
+CREATE INDEX idx_deals_client_id    ON deals(client_id);
+CREATE INDEX idx_deals_status       ON deals(status);
+CREATE INDEX idx_deals_service_type ON deals(service_type);
 ```
 
 ---
@@ -199,13 +206,14 @@ CREATE TABLE proposals (
     -- Contenuto strutturato (per regenerazione e audit)
     gap_summary         TEXT,
     solution_summary    TEXT,
-    features_json       JSONB,          -- lista feature proposte
-    pricing_json        JSONB,          -- opzioni di prezzo
+    service_type        TEXT NOT NULL,  -- "consulting"|"web_design"|"digital_maintenance"
+    deliverables_json   JSONB,          -- lista deliverable proposti per servizio
+    pricing_json        JSONB,          -- opzioni di prezzo (per progetto)
     timeline_weeks      INTEGER,
     roi_summary         TEXT,
 
-    -- Mockup collegati
-    mockup_paths        TEXT[],         -- array path MinIO
+    -- Artefatti collegati (mockup, presentazioni, schemi, roadmap)
+    artifact_paths      TEXT[],         -- array path MinIO
 
     -- Invio
     sent_at             TIMESTAMPTZ,
@@ -268,41 +276,50 @@ CREATE INDEX idx_tasks_idem_key  ON tasks(idempotency_key) WHERE idempotency_key
 
 ---
 
-### `dev_tasks`
+### `service_deliveries`
 
-Task di sviluppo creati dal Dev Orchestrator e assegnati ai Code Agent.
+Task di erogazione creati dal Delivery Orchestrator.
+Sostituisce la vecchia tabella `dev_tasks` orientata allo sviluppo software.
 
 ```sql
-CREATE TABLE dev_tasks (
+CREATE TABLE service_deliveries (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     deal_id     UUID NOT NULL REFERENCES deals(id),
     client_id   UUID NOT NULL REFERENCES clients(id),
 
-    type        TEXT NOT NULL,          -- "db"|"api"|"frontend"|"infra"|"test"|"fix"
-    feature     TEXT NOT NULL,          -- slug della feature
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL,
-    spec_path   TEXT,                   -- path MinIO del file di spec
+    service_type    TEXT NOT NULL,      -- "consulting"|"web_design"|"digital_maintenance"
+    type            TEXT NOT NULL,      -- tipo deliverable (vedi sotto)
+    title           TEXT NOT NULL,
+    description     TEXT NOT NULL,
+
+    -- Tipi per servizio:
+    -- Consulenza: "report"|"workshop"|"roadmap"|"process_schema"|"presentation"
+    -- Web Design: "wireframe"|"mockup"|"page"|"branding"|"responsive_check"
+    -- Manutenzione: "update_cycle"|"performance_audit"|"security_patch"|"monitoring_setup"
 
     status      TEXT NOT NULL DEFAULT 'pending',
-                -- "pending"|"in_progress"|"review"|"approved"|"merged"|"failed"
+                -- "pending"|"in_progress"|"review"|"approved"|"completed"|"failed"
+
+    -- Milestone di riferimento
+    milestone_name  TEXT,              -- es. "consulting_approved", "mockup_finale", "primo_ciclo"
+    milestone_due   DATE,
 
     -- Dipendenze (ordinamento di esecuzione)
-    depends_on  UUID[],                 -- array di dev_task id
+    depends_on  UUID[],                 -- array di service_delivery id
+
+    -- Artefatti generati
+    artifact_paths  TEXT[],            -- path MinIO dei documenti/file prodotti
 
     -- Esecuzione
-    branch      TEXT,
-    pr_url      TEXT,
-    assigned_at TIMESTAMPTZ,
-    completed_at TIMESTAMPTZ,
+    assigned_at     TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
 
-    -- Review QA
-    qa_approved         BOOLEAN,
-    qa_approved_at      TIMESTAMPTZ,
-    qa_blocking_issues  TEXT[],
-    qa_warnings         TEXT[],
+    -- Review operatore
+    operator_approved       BOOLEAN,
+    operator_approved_at    TIMESTAMPTZ,
+    operator_notes          TEXT,
 
-    -- Iterazioni (se QA blocca)
+    -- Iterazioni (se operatore rifiuta)
     rejection_count     INTEGER NOT NULL DEFAULT 0,
     rejection_notes     TEXT,
 
@@ -311,9 +328,10 @@ CREATE TABLE dev_tasks (
     deleted_at  TIMESTAMPTZ
 );
 
-CREATE INDEX idx_dev_tasks_deal_id   ON dev_tasks(deal_id);
-CREATE INDEX idx_dev_tasks_client_id ON dev_tasks(client_id);
-CREATE INDEX idx_dev_tasks_status    ON dev_tasks(status);
+CREATE INDEX idx_svc_deliveries_deal_id      ON service_deliveries(deal_id);
+CREATE INDEX idx_svc_deliveries_client_id    ON service_deliveries(client_id);
+CREATE INDEX idx_svc_deliveries_status       ON service_deliveries(status);
+CREATE INDEX idx_svc_deliveries_service_type ON service_deliveries(service_type);
 ```
 
 ---
@@ -363,7 +381,7 @@ CREATE TABLE tickets (
     deal_id     UUID REFERENCES deals(id),
 
     -- Classificazione
-    type        TEXT,                   -- "bug"|"feature_request"|"how_to"|"billing"|"spam"
+    type        TEXT,                   -- "service_request"|"update_request"|"how_to"|"billing"|"spam"
     severity    TEXT,                   -- "low"|"medium"|"high"|"critical"
     status      TEXT NOT NULL DEFAULT 'open',
                 -- "open"|"in_progress"|"waiting_client"|"resolved"|"closed"
@@ -376,8 +394,8 @@ CREATE TABLE tickets (
     first_response_at   TIMESTAMPTZ,    -- per SLA tracking
     resolved_at         TIMESTAMPTZ,
 
-    -- Collegamento a fix
-    dev_task_id UUID REFERENCES dev_tasks(id),
+    -- Collegamento a delivery
+    service_delivery_id UUID REFERENCES service_deliveries(id),
 
     -- Escalation
     escalated       BOOLEAN NOT NULL DEFAULT FALSE,
@@ -409,6 +427,10 @@ CREATE TABLE invoices (
     -- Identificazione
     invoice_number  TEXT UNIQUE,        -- es. "2025-001"
     milestone       TEXT NOT NULL,      -- "deposit"|"delivery"|"trailing"|"monthly"|"custom"
+                                        -- Milestone per servizio:
+                                        -- Consulenza: "deposit" (kickoff), "delivery" (consulting_approved)
+                                        -- Web Design: "deposit" (kickoff), "delivery" (mockup finale approvato)
+                                        -- Manutenzione: "deposit" (kickoff), "monthly" (cicli ricorrenti)
 
     -- Importi (in centesimi EUR)
     amount_cents    INTEGER NOT NULL,
@@ -477,30 +499,30 @@ CREATE INDEX idx_nps_client_id ON nps_records(client_id);
 
 ---
 
-### `qa_reports`
+### `delivery_reports`
 
-Report prodotti dal QA Agent dopo ogni review di una PR.
+Report prodotti dal Delivery Tracker dopo ogni review di un deliverable.
 
 ```sql
-CREATE TABLE qa_reports (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    dev_task_id     UUID NOT NULL REFERENCES dev_tasks(id),
-    client_id       UUID NOT NULL REFERENCES clients(id),
+CREATE TABLE delivery_reports (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_delivery_id UUID NOT NULL REFERENCES service_deliveries(id),
+    client_id           UUID NOT NULL REFERENCES clients(id),
 
-    approved        BOOLEAN NOT NULL,
-    coverage_pct    NUMERIC(5, 2),
-    blocking_issues TEXT[],
-    warnings        TEXT[],
+    approved            BOOLEAN NOT NULL,
+    completeness_pct    NUMERIC(5, 2),      -- % completamento deliverable
+    blocking_issues     TEXT[],
+    notes               TEXT[],
 
     -- Path del report completo su MinIO
-    report_path     TEXT,               -- "clients/{client_id}/qa/{dev_task_id}.md"
+    report_path         TEXT,               -- "clients/{client_id}/delivery/{service_delivery_id}.md"
 
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at  TIMESTAMPTZ
 );
 
-CREATE INDEX idx_qa_reports_dev_task_id ON qa_reports(dev_task_id);
+CREATE INDEX idx_delivery_reports_svc_id ON delivery_reports(service_delivery_id);
 ```
 
 ---
@@ -518,8 +540,8 @@ Eseguita automaticamente dal Sales Agent quando `deal.status → client_approved
 CREATE SCHEMA IF NOT EXISTS client_{id_senza_trattini};
 
 -- Tabelle minime presenti in ogni schema cliente:
--- Dipendono dal progetto consegnato.
--- Claude Code le genera da zero per ogni cliente in base alle spec.
+-- Dipendono dal servizio erogato.
+-- Gli agenti le generano in base al service_type del deal.
 -- Non condividono struttura con lo schema public.
 ```
 

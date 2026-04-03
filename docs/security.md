@@ -14,6 +14,8 @@ Ogni cliente ha uno schema PostgreSQL dedicato e un path MinIO separato.
 
 I Code Agent non hanno mai visibilità su dati di altri clienti.
 Il workspace è accessibile solo durante task con quel `client_id` nel payload.
+**Nota:** nel nuovo modello i Code Agent sono disattivati; Document Generator e
+Delivery Tracker operano con le stesse regole di isolamento.
 
 ---
 
@@ -48,9 +50,16 @@ async def create_client_schema(client_id: UUID, db: AsyncSession) -> None:
 import os
 from pathlib import Path
 
-def init_client_workspace(client_id: UUID) -> Path:
+def init_client_workspace(client_id: UUID, service_type: str) -> Path:
     workspace = Path(f"/workspace/clients/{client_id}")
-    for subdir in ["src", "specs", "mockups", "docs"]:
+    # Sottocartelle variano in base al servizio
+    common_dirs = ["docs", "deliverables"]
+    service_dirs = {
+        "consulting": ["reports", "workshops", "roadmaps"],
+        "web_design": ["mockups", "assets", "pages"],
+        "digital_maintenance": ["audits", "updates", "monitoring"],
+    }
+    for subdir in common_dirs + service_dirs.get(service_type, []):
         (workspace / subdir).mkdir(parents=True, exist_ok=True)
 
     # Crea CLAUDE.md del progetto (template in docs/agents/client-workspace-template.md)

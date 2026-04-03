@@ -72,7 +72,7 @@ POST /runs
 }
 ```
 
-`type` può essere: `"discovery"` | `"proposal"` | `"development"` | `"post_sale"`.
+`type` può essere: `"discovery"` | `"proposal"` | `"delivery"` | `"post_sale"`.
 
 **Response 201:**
 ```json
@@ -133,7 +133,7 @@ POST /runs/{run_id}/cancel
 GET /leads?sector=horeca&qualified=true&page=1&per_page=20
 ```
 
-Query params opzionali: `sector`, `qualified`, `status`, `city`, `page`, `per_page`.
+Query params opzionali: `sector`, `qualified`, `status`, `city`, `suggested_service_type`, `page`, `per_page`.
 
 **Response 200:**
 ```json
@@ -162,7 +162,7 @@ GET /leads/{lead_id}
 ### Lista deals
 
 ```
-GET /deals?status=proposal_ready&page=1&per_page=20
+GET /deals?status=proposal_ready&service_type=consulting&page=1&per_page=20
 ```
 
 **Response 200:**
@@ -183,7 +183,7 @@ GET /deals?status=proposal_ready&page=1&per_page=20
 GET /deals/{deal_id}
 ```
 
-**Response 200:** oggetto deal completo con gate flags, status, timestamps.
+**Response 200:** oggetto deal completo con gate flags, status, service_type, timestamps.
 
 ---
 
@@ -244,14 +244,14 @@ Notifica l'Orchestrator per rilancio Design + Proposal Agent.
 
 ---
 
-### GATE 2 — Conferma kickoff sviluppo (operatore)
+### GATE 2 — Conferma kickoff erogazione (operatore)
 
 ```
 POST /deals/{deal_id}/gates/kickoff-confirm
 ```
 
 Imposta `kickoff_confirmed = true`, `kickoff_confirmed_at = now()`.
-Notifica l'Orchestrator per avvio Dev Orchestrator Agent.
+Notifica l'Orchestrator per avvio Delivery Orchestrator Agent.
 
 **Response 200:**
 ```json
@@ -260,18 +260,19 @@ Notifica l'Orchestrator per avvio Dev Orchestrator Agent.
 
 ---
 
-### GATE 3 — Approva deploy (operatore)
+### GATE 3 — Approva consegna (operatore)
 
 ```
-POST /deals/{deal_id}/gates/deploy-approve
+POST /deals/{deal_id}/gates/delivery-approve
 ```
 
-Imposta `deploy_approved = true`, `deploy_approved_at = now()`.
-Notifica l'Orchestrator per avvio procedura di deploy.
+Imposta `delivery_approved = true`, `delivery_approved_at = now()`.
+Per i deal di tipo `consulting`, il gate si comporta come `consulting_approved`.
+Notifica l'Orchestrator per completamento erogazione.
 
 **Response 200:**
 ```json
-{ "deal_id": "uuid", "gate": "deploy", "approved": true, "approved_at": "..." }
+{ "deal_id": "uuid", "gate": "delivery", "approved": true, "approved_at": "..." }
 ```
 
 ---
@@ -425,8 +426,13 @@ GET /stats/pipeline
   "leads_total": 340,
   "leads_qualified": 87,
   "deals_active": 12,
+  "deals_by_service": {
+    "consulting": 4,
+    "web_design": 5,
+    "digital_maintenance": 3
+  },
   "deals_awaiting_gate": 3,
-  "deals_in_development": 4,
+  "deals_in_delivery": 4,
   "deals_delivered": 18,
   "revenue_delivered_eur": 145000,
   "revenue_pipeline_eur": 78000

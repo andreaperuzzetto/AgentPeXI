@@ -4,9 +4,10 @@
 
 ## Responsabilità
 
-Riceve un lead grezzo dallo Scout, analizza il gap digitale del business,
-calcola `lead_score` (0–100) e suggerisce il modello di business applicabile.
-Non contatta il cliente. Non genera mockup. Solo analisi e scoring.
+Riceve un lead grezzo dallo Scout, analizza il gap del business rispetto
+ai servizi offerti (consulenza, web design, manutenzione digitale),
+calcola `lead_score` (0–100) e suggerisce il tipo di servizio più adatto.
+Non contatta il cliente. Non genera artefatti. Solo analisi e scoring.
 
 ## Tool disponibili
 
@@ -29,27 +30,36 @@ Non contatta il cliente. Non genera mockup. Solo analisi e scoring.
 ```python
 {
     "lead_id": str,
-    "lead_score": int,              # 0-100
-    "qualified": bool,              # True se score >= 65
-    "gap_summary": str,             # max 3 frasi, in italiano
-    "business_model": str,          # "saas_booking" | "ecommerce" | "crm" | ...
+    "lead_score": int,                    # 0-100
+    "qualified": bool,                    # True se score >= 65
+    "gap_summary": str,                   # max 3 frasi, in italiano
+    "suggested_service_type": str,        # "consulting" | "web_design" | "digital_maintenance"
+    "gap_signals": list[str],             # segnali specifici rilevati
     "estimated_value_eur": int,
-    "disqualify_reason": str | None # presente solo se qualified == False
+    "disqualify_reason": str | None       # presente solo se qualified == False
 }
 ```
 
 ## Logica di scoring
 
-Pesi in `config/scoring.yaml`. Fattori principali:
+Pesi in `config/scoring.yaml`. Soglia universale: `lead_score >= 65`.
 
-| Segnale | Peso |
-|---------|------|
-| Assenza prenotazioni online (horeca/servizi) | alto |
-| Sito assente o non mobile-friendly | alto |
-| Rating medio < 4.0 | medio |
-| Numero recensioni basso vs competitor | medio |
-| Assenza e-commerce (retail) | alto |
-| Nessuna presenza social attiva | basso |
+### Segnali per servizio
+
+| Servizio | Segnale | Peso |
+|----------|---------|------|
+| **Consulenza** | Inefficienze operative evidenti | alto |
+| **Consulenza** | Crescita rapida senza supporto strutturale | alto |
+| **Consulenza** | Mancanza di competenze interne | medio |
+| **Web Design** | Sito web assente o obsoleto | alto |
+| **Web Design** | Nessuna presenza online | alto |
+| **Web Design** | Brand image poco curata | medio |
+| **Manutenzione Digitale** | Sistemi software datati | alto |
+| **Manutenzione Digitale** | Problemi di performance evidenti | alto |
+| **Manutenzione Digitale** | Necessità di aggiornamenti frequenti | medio |
+
+Il `suggested_service_type` viene determinato in base ai segnali prevalenti.
+Se più servizi sono applicabili, scegliere quello con gap più evidente.
 
 Se `lead_score < 65`: `qualified = false`, compilare `disqualify_reason`,
 non procedere al Design Agent.
@@ -59,7 +69,7 @@ non procedere al Design Agent.
 | Op. | Tabella / risorsa |
 |-----|------------------|
 | Legge | `leads`, `config/sectors.yaml`, `config/scoring.yaml` |
-| Scrive | `leads` (score, analysis, business_model, estimated_value_eur, qualified), `tasks` |
+| Scrive | `leads` (score, analysis, suggested_service_type, gap_signals, estimated_value_eur, qualified), `tasks` |
 
 ## Test
 
