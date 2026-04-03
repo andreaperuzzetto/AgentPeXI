@@ -3,15 +3,15 @@
 Server MCP custom che espone Gmail all'agente tramite protocollo stdio.
 Usato da tutti gli agenti che devono inviare o leggere email.
 
-**File:** `src/mcp_servers/gmail/server.py`
-**Avvio:** `python -m mcp_servers.gmail.server` (stdio)
+**File:** `backend/src/mcp_servers/gmail/server.py`
+**Avvio:** `python -m mcp_servers.gmail.server` (stdio, eseguito da `backend/`)
 
 ---
 
 ## Struttura
 
 ```
-src/mcp_servers/gmail/
+backend/src/mcp_servers/gmail/
 ├── __init__.py
 ├── server.py       ← Entry point MCP (stdio)
 └── auth.py         ← Credenziali OAuth2 da env
@@ -35,7 +35,7 @@ python -m mcp_servers.gmail.server
 ## Autenticazione (`auth.py`)
 
 ```python
-# src/mcp_servers/gmail/auth.py
+# backend/src/mcp_servers/gmail/auth.py
 import os
 from google.oauth2.credentials import Credentials
 
@@ -196,7 +196,7 @@ Ricerca email con query Gmail standard.
 Gli agenti non chiamano il MCP direttamente. Usano `tools/gmail.py`:
 
 ```python
-# src/agents/sales/agent.py
+# backend/src/agents/sales/agent.py
 from tools.gmail import send_email
 
 async def execute(self, task: AgentTask, db: AsyncSession) -> AgentResult:

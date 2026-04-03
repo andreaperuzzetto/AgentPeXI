@@ -1,6 +1,6 @@
 # Schemi dati
 
-Tipi condivisi tra tutti gli agenti. Definiti in `src/agents/models.py`.
+Tipi condivisi tra tutti gli agenti. Definiti in `backend/src/agents/models.py`.
 
 ## ServiceType
 

@@ -132,7 +132,7 @@ fatture_in_cloud:
 Il Billing Agent usa questo wrapper. Non chiamare le API direttamente.
 
 ```python
-# src/tools/fatture_in_cloud.py
+# backend/src/tools/fatture_in_cloud.py
 import os
 import httpx
 from typing import Any

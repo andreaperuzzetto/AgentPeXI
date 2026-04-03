@@ -216,7 +216,7 @@ export function RunStatusPanel({ runId }: { runId: string }) {
 | `run_completed` | `orchestrator/graph.py` | Nodo terminale `END` node |
 
 ```python
-# src/agents/base.py — funzione di supporto (chiamata da run())
+# backend/src/agents/base.py — funzione di supporto (chiamata da run())
 import redis.asyncio as aioredis
 import json
 import os

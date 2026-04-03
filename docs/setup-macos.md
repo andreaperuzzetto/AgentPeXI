@@ -166,7 +166,7 @@ Il pattern adottato è un **worker centralizzato** in `agents/worker.py`
 (non un worker per agente) con wrapper sync → async:
 
 ```python
-# src/agents/worker.py — NON creare workers separati per agente
+# backend/src/agents/worker.py — NON creare workers separati per agente
 @app.task(name="agents.scout.run", bind=True, autoretry_for=(TransientError,), ...)
 def run(self, task_dict: dict) -> dict:
     task = AgentTask(**task_dict)

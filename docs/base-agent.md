@@ -1,7 +1,7 @@
 # BaseAgent — Specifica classe base
 
-Ogni agente del sistema eredita da `BaseAgent` definita in `src/agents/base.py`.
-Le dataclass, enum e modelli condivisi sono in `src/agents/models.py`.
+Ogni agente del sistema eredita da `BaseAgent` definita in `backend/src/agents/base.py`.
+Le dataclass, enum e modelli condivisi sono in `backend/src/agents/models.py`.
 Questo documento specifica contratto, lifecycle e pattern da rispettare.
 
 ---
@@ -9,7 +9,7 @@ Questo documento specifica contratto, lifecycle e pattern da rispettare.
 ## Struttura file
 
 ```
-src/agents/
+backend/src/agents/
 ├── base.py          ← Classe BaseAgent (ABC)
 ├── models.py        ← ServiceType, TaskStatus, AgentTask, AgentResult, errori
 ├── _sse.py          ← Helper _publish_sse(): pubblica eventi SSE su Redis per il frontend
@@ -74,7 +74,7 @@ class TransientError(Exception):
 ## `agents/base.py` — classe base
 
 ```python
-# src/agents/base.py
+# backend/src/agents/base.py
 from abc import ABC, abstractmethod
 from typing import Any
 

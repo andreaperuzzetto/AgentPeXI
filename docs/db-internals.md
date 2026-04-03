@@ -1,8 +1,8 @@
 # DB internals — struttura `db/`
 
-Modulo `db/` vive in **`src/db/`** (src layout — vedi `docs/project-structure.md`).
-Grazie al src layout (`pip install -e .` o `PYTHONPATH=src`), tutti gli import usano
-`from db.* import ...` senza prefisso `src.`.
+Modulo `db/` vive in **`backend/src/db/`** (src layout — vedi `docs/project-structure.md`).
+Grazie al src layout (`cd backend && pip install -e .` o `PYTHONPATH=backend/src`), tutti gli import usano
+`from db.* import ...` senza prefisso `backend.`.
 
 Gestisce sessione SQLAlchemy async, configurazione engine, metadati modelli.
 
@@ -11,7 +11,7 @@ Gestisce sessione SQLAlchemy async, configurazione engine, metadati modelli.
 ## Struttura directory
 
 ```
-src/db/
+backend/src/db/
 ├── __init__.py
 ├── session.py          ← get_db_session() context manager (import qui)
 ├── engine.py           ← AsyncEngine + AsyncSessionFactory
@@ -32,11 +32,11 @@ src/db/
     └── nps_record.py
 ```
 
-`src/db/models/__init__.py` deve importare tutti i modelli in modo che
+`backend/src/db/models/__init__.py` deve importare tutti i modelli in modo che
 Alembic `--autogenerate` li veda:
 
 ```python
-# src/db/models/__init__.py
+# backend/src/db/models/__init__.py
 from db.models.lead             import Lead
 from db.models.deal             import Deal
 from db.models.client           import Client
@@ -62,7 +62,7 @@ __all__ = [
 ## `db/engine.py`
 
 ```python
-# src/db/engine.py
+# backend/src/db/engine.py
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -95,7 +95,7 @@ Unico punto di ingresso per aprire una sessione DB negli agenti e nei tool.
 Gestisce commit e rollback automaticamente.
 
 ```python
-# src/db/session.py
+# backend/src/db/session.py
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,7 +122,7 @@ diversi — una sessione per task (già gestito da `BaseAgent.run()`).
 ## `db/base.py`
 
 ```python
-# src/db/base.py
+# backend/src/db/base.py
 from sqlalchemy.orm import DeclarativeBase
 
 class Base(DeclarativeBase):
@@ -137,15 +137,15 @@ Le Alembic migrations usano `Base.metadata` per generare gli script.
 ## Alembic
 
 ```
-alembic/
-├── env.py          ← aggiunge src/ al sys.path; importa Base e tutti i modelli
+backend/alembic/
+├── env.py          ← aggiunge backend/src/ al sys.path; importa Base e tutti i modelli
 ├── script.py.mako
 └── versions/
     └── *.py        ← ogni migrazione è un file separato
 ```
 
 ```python
-# alembic/env.py — head obbligatoria (src layout)
+# backend/alembic/env.py — head obbligatoria (src layout)
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
