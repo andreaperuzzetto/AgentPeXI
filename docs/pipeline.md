@@ -1,14 +1,27 @@
 # Pipeline operativa
 
+Il sistema gestisce tre tipologie di servizio: **Consulenza**, **Web Design** e **Manutenzione Digitale**.
+La pipeline è comune fino alla Fase 02. Dalla Fase 03 il flusso si differenzia per `service_type`.
+
+---
+
 ## Fase 01 — Discovery (autonoma)
 
 Scout → Market Analyst → Lead Profiler. Nessun gate umano.
 
 **Criteri di qualifica lead (tutti obbligatori):**
-- `lead_score >= 65`
+- `lead_score >= 65` (soglia universale per tutti i servizi)
 - Settore in `config/sectors.yaml`
-- `website_exists = true` AND `digitalization_gap_detected = true`
+- Gap rilevato (`service_gap_detected = true`): varia in base al servizio potenziale
 - Nessun record `deals` con stesso `google_place_id`
+
+**Gap per tipologia di servizio:**
+
+| Servizio | Segnali di gap |
+|----------|---------------|
+| Consulenza | Inefficienze operative, crescita rapida senza supporto, mancanza competenze interne |
+| Web Design | Sito obsoleto/assente, nessuna presenza online, brand image poco curata |
+| Manutenzione Digitale | Sistemi software datati, problemi di performance, necessità aggiornamenti frequenti |
 
 **Fallback no-leads:** espandere raggio `+5km` × 3 iterazioni max.
 Se ancora nessun lead: `status = "blocked"`, `blocked_reason = "no_qualified_leads_in_zone"`.
@@ -18,6 +31,14 @@ Se ancora nessun lead: `status = "blocked"`, `blocked_reason = "no_qualified_lea
 ## Fase 02 — Proposal (semi-autonoma)
 
 Design Agent → Proposal Agent → **GATE 1** → Sales Agent.
+
+Il Design Agent produce **artefatti contestuali** in base al `service_type`:
+- **Consulenza:** presentazioni visive, strutture workshop, schemi di processi, roadmap operative
+- **Web Design:** mockup UI (landing page, pagine interne, responsive)
+- **Manutenzione Digitale:** schemi architetturali, piani di aggiornamento, dashboard di monitoraggio
+
+La proposta commerciale cambia leggermente a seconda del contesto del servizio.
+Pricing: **per progetto**.
 
 ### GATE 1 — Revisione proposta
 ```python
@@ -35,26 +56,44 @@ Oltre: `status = "blocked"`, notifica operatore.
 
 ---
 
-## Fase 03 — Development (semi-autonoma)
+## Fase 03 — Delivery (semi-autonoma, differenziata per servizio)
 
-**GATE 2 — Kickoff sviluppo**
-Verificare `deal.kickoff_confirmed = true` prima di avviare i Code Agent.
-(Necessario anche dopo approvazione cliente — pianificazione risorse.)
+**GATE 2 — Kickoff erogazione**
+Verificare `deal.kickoff_confirmed = true` prima di avviare l'erogazione.
+(Necessario anche dopo approvazione cliente — pianificazione risorse dell'operatore.)
 
-**Lavoro autonomo Code Agent:**
-- Branch: `client/{client_id}/feat/{slug}` — mai su `main`
-- PR solo quando tutti i test passano
-- QA Agent review obbligatoria prima del merge
+Il Delivery Orchestrator coordina gli agenti di erogazione in base al `service_type`.
+I Code Agent, QA Agent e Dev Orchestrator della vecchia pipeline sono **disattivati** e sostituiti da:
 
-**GATE 3 — Deploy in produzione**
-Verificare `deal.deploy_approved = true` prima di qualsiasi push su hosting cliente.
+| Vecchio agente | Nuovo agente | Funzione |
+|---------------|-------------|----------|
+| Dev Orchestrator | **Delivery Orchestrator** | Pianifica e traccia l'erogazione del servizio |
+| Code Team | **Document Generator** | Genera report, presentazioni, documenti di progetto |
+| QA Agent | **Delivery Tracker** | Traccia avanzamento, milestone, qualità deliverable |
+
+### Milestone specifiche per servizio
+
+| Servizio | Milestone di kickoff | Milestone chiave |
+|----------|---------------------|-----------------|
+| Consulenza | Firma contratto o inizio primo workshop | `consulting_approved` |
+| Web Design | Inizio progettazione | Approvazione mockup finale |
+| Manutenzione Digitale | Avvio servizio | Primo ciclo di aggiornamento pianificato |
+
+### GATE 3 — Approvazione consegna finale
+Verificare `deal.delivery_approved = true` prima di chiudere il deal come consegnato.
+(Per consulenza il gate si chiama `consulting_approved` ed è verificato allo stesso modo.)
 
 ---
 
 ## Fase 04 — Post-Sale (autonoma con escalation)
 
+Il supporto post-vendita è orientato al servizio offerto:
+- Richieste di assistenza e aggiornamenti
+- Richieste di servizio aggiuntivo
+- Supporto post vendita specifico per il servizio erogato
+
 **Escalation automatica** all'operatore se:
 - Ticket support aperto da > 48h senza risposta
 - `billing_dispute = true` su una fattura
 - NPS < 6 nell'ultimo survey automatico
-- Uptime produzione < 99%
+- Soddisfazione cliente in calo
