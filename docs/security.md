@@ -164,7 +164,7 @@ Le seguenti colonne DB sono cifrate con AES-256 usando `sqlalchemy-utils Encrypt
 (già presente in `requirements.txt`). La chiave di cifratura è `SECRET_KEY` da env.
 
 ```python
-# backend/src/db/models/client.py (esempio)
+# src/db/models/client.py (esempio)
 from sqlalchemy_utils import EncryptedType
 from sqlalchemy_utils.types.encrypted.encrypted_type import AesEngine
 import os

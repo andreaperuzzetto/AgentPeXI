@@ -4,30 +4,16 @@
 
 ```
 AgentPeXI/
-├── backend/                    ← Tutto il codice Python
-│   ├── src/                    ← UNICA radice Python (PYTHONPATH=backend/src)
-│   │   ├── api/                ← FastAPI application
-│   │   ├── agents/             ← Tutti gli agenti + worker Celery
-│   │   ├── db/                 ← SQLAlchemy engine, session, modelli ORM
-│   │   ├── orchestrator/       ← Grafo LangGraph
-│   │   ├── tools/              ← Tool wrapper (DB, MinIO, Gmail, Maps, PDF, Render)
-│   │   └── mcp_servers/
-│   │       └── gmail/          ← MCP server Gmail (processo stdio separato)
-│   ├── alembic/
-│   │   ├── env.py
-│   │   ├── script.py.mako
-│   │   └── versions/
-│   ├── tests/
-│   │   ├── conftest.py
-│   │   ├── fixtures/
-│   │   ├── unit/
-│   │   ├── integration/
-│   │   └── e2e/
-│   ├── pyproject.toml          ← Package config (where=["src"], pythonpath=["src"])
-│   ├── requirements.txt
-│   └── .env.example
+├── src/                        ← UNICA radice del codice Python (PYTHONPATH=src)
+│   ├── api/                    ← FastAPI application
+│   ├── agents/                 ← Tutti gli agenti + worker Celery
+│   ├── db/                     ← SQLAlchemy engine, session, modelli ORM
+│   ├── orchestrator/           ← Grafo LangGraph
+│   ├── tools/                  ← Tool wrapper (DB, MinIO, Gmail, Maps, PDF, Render)
+│   └── mcp_servers/
+│       └── gmail/              ← MCP server Gmail (processo stdio separato)
 │
-├── frontend/                   ← Next.js 14 App Router
+├── frontend/                   ← Next.js 14 App Router (fuori da src/)
 │   ├── app/
 │   ├── components/
 │   ├── lib/
@@ -48,20 +34,35 @@ AgentPeXI/
 │       ├── proposal/           ← base.html proposta commerciale
 │       └── artifacts/          ← Template HTML per artefatti (Puppeteer)
 │
+├── tests/
+│   ├── conftest.py
+│   ├── fixtures/
+│   ├── unit/
+│   ├── integration/
+│   └── e2e/
+│
+├── alembic/
+│   ├── env.py
+│   ├── script.py.mako
+│   └── versions/
+│
 ├── docs/                       ← Questa directory
 ├── agents/                     ← CLAUDE.md per ogni agente
-└── docker-compose.yml
+├── docker-compose.yml
+├── pyproject.toml              ← Package config + PYTHONPATH=src
+├── requirements.txt
+└── .env.example
 ```
 
 ---
 
 ## Python src layout — import paths canonici
 
-Il progetto usa il **src layout** standard Python. Il file `backend/pyproject.toml` configura
-`src/` (relativo a `backend/`) come root dei package, equivalente ad aggiungere `backend/src/` a `PYTHONPATH`.
+Il progetto usa il **src layout** standard Python. Il file `pyproject.toml` configura
+`src/` come root dei package, che equivale ad aggiungere `src/` a `PYTHONPATH`.
 
 ```toml
-# backend/pyproject.toml
+# pyproject.toml
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.backends.legacy:build"
@@ -82,7 +83,7 @@ asyncio_mode = "auto"
 src = ["src"]
 ```
 
-Con questa configurazione, tutti gli import partono dai package dentro `backend/src/`:
+Con questa configurazione, tutti gli import partono dai package dentro `src/`:
 
 ```python
 from db.session         import get_db_session
@@ -112,10 +113,10 @@ from api.schemas.deal   import DealResponse
 
 ---
 
-## Struttura `backend/src/api/`
+## Struttura `src/api/`
 
 ```
-backend/src/api/
+src/api/
 ├── __init__.py
 ├── main.py             ← FastAPI app factory + middleware + router include
 ├── deps.py             ← Dependencies iniettabili (get_current_operator, get_db)
@@ -144,11 +145,11 @@ backend/src/api/
     └── stats.py
 ```
 
-Entry point: `uvicorn api.main:app --reload --port 8000` (eseguito da `backend/`)
-(funziona perché `backend/src/` è in PYTHONPATH via `backend/pyproject.toml`)
+Entry point: `uvicorn api.main:app --reload --port 8000`
+(funziona perché `src/` è in PYTHONPATH via `pyproject.toml`)
 
 ```python
-# backend/src/api/main.py — punti chiave
+# src/api/main.py — punti chiave
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -182,10 +183,10 @@ async def health() -> dict:
 
 ---
 
-## Struttura `backend/src/agents/`
+## Struttura `src/agents/`
 
 ```
-backend/src/agents/
+src/agents/
 ├── __init__.py
 ├── base.py             ← Classe BaseAgent (ABC)
 ├── models.py           ← AgentTask, AgentResult, ServiceType, TaskStatus, DealStatus (Pydantic)
@@ -222,10 +223,10 @@ backend/src/agents/
 
 ---
 
-## Struttura `backend/src/db/`
+## Struttura `src/db/`
 
 ```
-backend/src/db/
+src/db/
 ├── __init__.py
 ├── engine.py           ← AsyncEngine + AsyncSessionFactory
 ├── session.py          ← get_db_session() context manager
@@ -248,10 +249,10 @@ backend/src/db/
 
 ---
 
-## Struttura `backend/src/orchestrator/`
+## Struttura `src/orchestrator/`
 
 ```
-backend/src/orchestrator/
+src/orchestrator/
 ├── __init__.py
 ├── graph.py            ← build_graph() → compilato grafo LangGraph
 ├── state.py            ← AgentState TypedDict
@@ -265,10 +266,10 @@ backend/src/orchestrator/
 
 ---
 
-## Struttura `backend/src/tools/`
+## Struttura `src/tools/`
 
 ```
-backend/src/tools/
+src/tools/
 ├── __init__.py         ← AgentToolError (base exception)
 ├── db_tools.py         ← CRUD asincrono DB (wrap SQLAlchemy)
 ├── file_store.py       ← MinIO upload/download/presigned URL
@@ -280,10 +281,10 @@ backend/src/tools/
 
 ---
 
-## Struttura `backend/src/mcp_servers/gmail/`
+## Struttura `src/mcp_servers/gmail/`
 
 ```
-backend/src/mcp_servers/gmail/
+src/mcp_servers/gmail/
 ├── __init__.py
 ├── server.py           ← MCP server stdio (entry point: python -m mcp_servers.gmail.server)
 └── auth.py             ← Gmail OAuth2 credential builder da env vars
@@ -309,23 +310,22 @@ Vedi [Puppeteer bridge — pattern invocazione](#) nel paragrafo sotto.
 ## Comandi con src layout
 
 ```bash
-# Setup iniziale — tutto dentro backend/
+# Setup iniziale
 python -m venv .venv
 source .venv/bin/activate
-cd backend
-pip install -e .                    # installa il package in editable mode (legge backend/pyproject.toml)
+pip install -e .                    # installa il package in editable mode (legge pyproject.toml)
 pip install -r requirements.txt
 
-# Alternativa senza install -e (test rapido, dalla root del progetto)
-PYTHONPATH=backend/src uvicorn api.main:app --reload --port 8000
+# Alternativa senza install -e (test rapido)
+PYTHONPATH=src uvicorn api.main:app --reload --port 8000
 
-# Comandi canonici (eseguiti da backend/, con .venv attivo post pip install -e .)
+# Comandi canonici (con .venv attivo post pip install -e .)
 uvicorn api.main:app --reload --port 8000
 celery -A agents.worker worker --loglevel=info --concurrency=4
 python -m orchestrator.graph --dev
-alembic upgrade head                # alembic cerca backend/alembic/env.py, che importa da backend/src/
+alembic upgrade head                # alembic cerca alembic/env.py, che importa da src/
 
-# Script Node.js render (dalla root del progetto)
+# Script Node.js render
 cd scripts && npm install           # installa puppeteer
 node scripts/render.js              # non eseguire direttamente — invocato da mockup_renderer.py
 ```
@@ -334,14 +334,14 @@ node scripts/render.js              # non eseguire direttamente — invocato da 
 
 ## Alembic con src layout
 
-`backend/alembic/env.py` deve importare i modelli da `backend/src/`:
+`alembic/env.py` deve importare i modelli da `src/`:
 
 ```python
-# backend/alembic/env.py
+# alembic/env.py
 import sys
 from pathlib import Path
 
-# Aggiungi backend/src/ al path per Alembic (che non usa pyproject.toml)
+# Aggiungi src/ al path per Alembic (che non usa pyproject.toml)
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from db.base import Base
@@ -356,19 +356,19 @@ config.set_main_option("sqlalchemy.url", os.environ["DATABASE_SYNC_URL"])
 ## Variabili d'ambiente per src layout
 
 ```bash
-# .env (o esportare manualmente) — dalla root del progetto
-PYTHONPATH=backend/src              # necessario SOLO se non usi `pip install -e .` da backend/
-                                    # Con pip install -e . da backend/ non serve
+# .env (o esportare manualmente)
+PYTHONPATH=src                      # necessario SOLO se non usi `pip install -e .`
+                                    # Con pip install -e . non serve
 ```
 
-Raccomandato: eseguire `cd backend && pip install -e .` — risolve tutti i path in modo pulito.
+Raccomandato: usare sempre `pip install -e .` — risolve tutti i path in modo pulito.
 
 ---
 
 ## Pytest con src layout
 
 ```ini
-# backend/pyproject.toml — già incluso sopra
+# pyproject.toml — già incluso sopra
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
@@ -376,8 +376,7 @@ asyncio_mode = "auto"
 ```
 
 ```bash
-# Eseguire da backend/
-pytest tests/ -v                    # pytest legge pyproject.toml, aggiunge backend/src/ al path
+pytest tests/ -v                    # pytest legge pyproject.toml, aggiunge src/ al path
 ```
 
 ---
@@ -386,9 +385,9 @@ pytest tests/ -v                    # pytest legge pyproject.toml, aggiunge back
 
 | Tipo | Esempio path | Esempio import |
 |------|-------------|----------------|
-| Agente | `backend/src/agents/scout/agent.py` | `from agents.scout.agent import ScoutAgent` |
-| Modelli dati | `backend/src/agents/models.py` | `from agents.models import AgentTask` |
-| ORM model | `backend/src/db/models/deal.py` | `from db.models.deal import Deal` |
-| Tool | `backend/src/tools/db_tools.py` | `from tools.db_tools import get_deal` |
-| API router | `backend/src/api/routers/deals.py` | `from api.routers import deals` |
-| Schema Pydantic | `backend/src/api/schemas/deal.py` | `from api.schemas.deal import DealResponse` |
+| Agente | `src/agents/scout/agent.py` | `from agents.scout.agent import ScoutAgent` |
+| Modelli dati | `src/agents/models.py` | `from agents.models import AgentTask` |
+| ORM model | `src/db/models/deal.py` | `from db.models.deal import Deal` |
+| Tool | `src/tools/db_tools.py` | `from tools.db_tools import get_deal` |
+| API router | `src/api/routers/deals.py` | `from api.routers import deals` |
+| Schema Pydantic | `src/api/schemas/deal.py` | `from api.schemas.deal import DealResponse` |

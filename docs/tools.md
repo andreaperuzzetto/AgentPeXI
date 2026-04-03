@@ -1,6 +1,6 @@
 # Tools — Firme e contratti
 
-Ogni tool è un modulo Python in `backend/src/tools/`. Gli agenti **non** chiamano mai
+Ogni tool è un modulo Python in `src/tools/`. Gli agenti **non** chiamano mai
 API esterne o DB direttamente: usano solo questi wrapper.
 
 ---
@@ -223,7 +223,7 @@ from tools.file_store import upload_file, download_file, get_presigned_url, file
 **Pattern aiobotocore interno** (non chiamare direttamente negli agenti):
 
 ```python
-# backend/src/tools/file_store.py — pattern interno
+# src/tools/file_store.py — pattern interno
 import aiobotocore.session
 import os
 
@@ -339,7 +339,7 @@ async def geocode_address(address: str) -> tuple[float, float] | None
 
 ## `tools/gmail.py`
 
-Wrapper Python attorno al **Gmail MCP server** (`backend/src/mcp_servers/gmail/server.py`).
+Wrapper Python attorno al **Gmail MCP server** (`src/mcp_servers/gmail/server.py`).
 Il server è un processo stdio separato; questo modulo lo avvia una volta e fa da client.
 Non usare `google-api-python-client` direttamente — passare sempre da questo wrapper.
 

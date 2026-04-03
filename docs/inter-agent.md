@@ -19,7 +19,7 @@ Il pattern adottato è un wrapper sync → async per ogni agente:
 
 ```python
 # agents/worker.py — worker centralizzato
-# backend/src/agents/worker.py
+# src/agents/worker.py
 import asyncio
 from celery import Celery
 from agents.models import AgentTask, AgentResult, TransientError

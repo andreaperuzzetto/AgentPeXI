@@ -13,7 +13,7 @@
 | Object storage | MinIO (S3-compat) | locale |
 | Render artefatti | Puppeteer headless (`scripts/render.js`) | 22 |
 | PDF | WeasyPrint + Jinja2 | 62 |
-| Email | Gmail API — MCP server custom stdio (`backend/src/mcp_servers/gmail/server.py`) | — |
+| Email | Gmail API — MCP server custom stdio (`src/mcp_servers/gmail/server.py`) | — |
 | Mappe | Google Maps Places + Geocoding | — |
 | Runtime | Python 3.12, Node.js 20 | — |
 | Container | Docker Compose | solo dev |
