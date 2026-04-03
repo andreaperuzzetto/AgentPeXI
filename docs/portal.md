@@ -1,7 +1,12 @@
 # Portale cliente
 
 Pagina Next.js che permette al cliente di visualizzare la proposta e approvarla o rifiutarla.
-È l'interfaccia del GATE 1 (approvazione proposta) e del GATE 3 (conferma deploy).
+È l'interfaccia del GATE 1 (approvazione proposta) e del GATE 3 (conferma consegna).
+
+Il portale mostra proposte contestuali al tipo di servizio:
+- **Consulenza:** roadmap operativa, piano workshop, deliverable previsti
+- **Web Design:** mockup visivi, struttura sito, timeline
+- **Manutenzione Digitale:** piano di manutenzione, SLA, cicli di aggiornamento
 
 ---
 
@@ -113,7 +118,7 @@ Il backend (vedi `docs/api.md`):
 3. Pubblica su Redis → Orchestrator riprende il run
 4. Risponde 200
 
-La pagina mostra messaggio di conferma: _"Perfetto! Verrete contattati entro 24 ore per definire i dettagli del progetto."_
+La pagina mostra messaggio di conferma: _"Perfetto! Verrete contattati entro 24 ore per definire i dettagli del servizio."_
 
 ---
 
@@ -158,11 +163,11 @@ BASE_URL=               # es. http://localhost:3000
 
 ---
 
-## Estensione futura — GATE 3 (approvazione deploy)
+## Estensione futura — GATE 3 (approvazione consegna)
 
 Lo stesso meccanismo si applica al GATE 3: il sistema invia al cliente
-un link `/portal/{token}` che mostra il risultato della fase di sviluppo
-(demo link, screenshot, changelog) e permette di approvare il deploy in produzione.
+un link `/portal/{token}` che mostra il risultato dell'erogazione del servizio
+(report finale, mockup approvati, piano di manutenzione) e permette di approvare la consegna.
 
-Il token GATE 3 usa `type: "deploy_access"` nel payload JWT.
-Il webhook corrispondente è `POST /webhooks/portal/deploy-approve`.
+Il token GATE 3 usa `type: "delivery_access"` nel payload JWT.
+Il webhook corrispondente è `POST /webhooks/portal/delivery-approve`.

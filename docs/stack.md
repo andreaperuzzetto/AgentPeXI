@@ -10,19 +10,22 @@
 | Database | PostgreSQL + pgvector | 16 |
 | Cache + queue | Redis + Celery | 7 |
 | Object storage | MinIO (S3-compat) | locale |
-| Mockup render | Puppeteer headless | 22 |
+| Render artefatti | Puppeteer headless | 22 |
 | PDF | WeasyPrint + Jinja2 | 62 |
 | Email | Gmail API via MCP | — |
 | Mappe | Google Maps Places + Geocoding | — |
 | Runtime | Python 3.12, Node.js 20 | — |
 | Container | Docker Compose | solo dev |
 
+> **Nota:** Puppeteer è usato per renderizzare artefatti visivi (mockup web design,
+> presentazioni consulenza, schemi di processo) — non solo mockup software.
+
 ## Modelli Anthropic per agente
 
 | Agente | Modello | Perché |
 |--------|---------|--------|
 | Orchestrator | `claude-opus-4-6` | Pianificazione, routing complesso |
-| Dev Orchestrator | `claude-opus-4-6` | Decomposizione task di sviluppo |
+| Delivery Orchestrator | `claude-opus-4-6` | Decomposizione task di erogazione |
 | Tutti gli altri | `claude-sonnet-4-6` | Velocità + costo su task specializzati |
 
 **Max tokens per chiamata:** 8192. Non superare senza motivazione esplicita nel codice.

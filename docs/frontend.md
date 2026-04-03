@@ -20,11 +20,11 @@ frontend/app/
 │   └── [id]/page.tsx           ← Dettaglio lead + trigger analisi
 │
 ├── deals/
-│   ├── page.tsx                ← Kanban/lista deals per status
+│   ├── page.tsx                ← Kanban/lista deals per status e service_type
 │   └── [id]/
 │       ├── page.tsx            ← Dettaglio deal
 │       ├── proposal/page.tsx   ← Review proposta → GATE 1
-│       └── development/page.tsx ← Stato sviluppo → GATE 2/3
+│       └── delivery/page.tsx   ← Stato erogazione → GATE 2/3
 │
 ├── clients/
 │   ├── page.tsx                ← Lista clienti attivi
@@ -103,7 +103,7 @@ const statusConfig = {
   awaiting_gate:    { label: "Attende approvazione", color: "text-amber-300 bg-amber-900" },
   proposal_ready:   { label: "Proposta pronta",       color: "text-blue-300  bg-blue-900"  },
   client_approved:  { label: "Cliente ha approvato",  color: "text-green-300 bg-green-900" },
-  in_development:   { label: "In sviluppo",  color: "text-purple-300 bg-purple-900" },
+  in_delivery:      { label: "In erogazione", color: "text-purple-300 bg-purple-900" },
 }
 ```
 
@@ -189,12 +189,12 @@ export async function GET(request: Request) {
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  4 MetricCard: Leads | Deals attivi | In dev | Revenue  │
+│  4 MetricCard: Leads | Deals attivi | In erogazione | Revenue  │
 ├────────────────────┬────────────────────────────┤
 │  AgentActivityFeed │  DealKanban                │
 │  (SSE real-time)   │  (colonne per status)      │
 │                    │                            │
-│  Ultimi 20 eventi  │  Lead → Proposal → Dev →  │
+│  Ultimi 20 eventi  │  Lead → Proposal → Deliv → │
 │  con agent + stato │  Post-sale                 │
 └────────────────────┴────────────────────────────┘
 ```
