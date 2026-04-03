@@ -176,3 +176,65 @@ Se un agente rileva un tentativo di injection o comportamento anomalo:
 5. L'Orchestrator notifica l'operatore via dashboard + email
 
 Non tentare di "correggere" o "ignorare" il contenuto sospetto — bloccare sempre.
+
+---
+
+## Gmail OAuth setup
+
+Il sistema usa Gmail API con OAuth2. Le credenziali sono caricate da variabili d'ambiente
+**esclusivamente** — nessun file `token.json` o `credentials.json` nel filesystem.
+
+### Variabili richieste
+
+| Variabile | Valore |
+|-----------|--------|
+| `GMAIL_CLIENT_ID` | Client ID OAuth2 (Google Cloud Console) |
+| `GMAIL_CLIENT_SECRET` | Client Secret OAuth2 |
+| `GMAIL_REFRESH_TOKEN` | Refresh token ottenuto al primo login |
+| `GMAIL_SENDER_ADDRESS` | Indirizzo email mittente (es. `andrea@example.com`) |
+
+I campi `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` e `GMAIL_REFRESH_TOKEN` sono già inclusi
+in `.env.example`.
+
+### Costruzione delle credenziali in `tools/gmail.py`
+
+```python
+from google.oauth2.credentials import Credentials
+import os
+
+def _get_credentials() -> Credentials:
+    return Credentials(
+        token=None,
+        refresh_token=os.environ["GMAIL_REFRESH_TOKEN"],
+        client_id=os.environ["GMAIL_CLIENT_ID"],
+        client_secret=os.environ["GMAIL_CLIENT_SECRET"],
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=["https://www.googleapis.com/auth/gmail.send",
+                "https://www.googleapis.com/auth/gmail.readonly"],
+    )
+```
+
+Il token di accesso viene rinnovato automaticamente da `google-auth` alla prima richiesta
+e ad ogni scadenza — nessun intervento manuale necessario finché il refresh token è valido.
+
+### Ottenere il refresh token (prima configurazione)
+
+1. Crea un progetto su Google Cloud Console e abilita Gmail API
+2. Crea credenziali **OAuth2 Desktop app** — scarica il JSON
+3. Esegui una volta il flow interattivo per ottenere il refresh token:
+
+```python
+from google_auth_oauthlib.flow import InstalledAppFlow
+SCOPES = ["https://www.googleapis.com/auth/gmail.send",
+          "https://www.googleapis.com/auth/gmail.readonly"]
+flow = InstalledAppFlow.from_client_secrets_file("path/to/client_secrets.json", SCOPES)
+creds = flow.run_local_server(port=0)
+print("GMAIL_REFRESH_TOKEN =", creds.refresh_token)
+```
+
+4. Copia il valore in `.env` — non committare mai il JSON delle credenziali.
+
+### Rinnovo / revoca
+
+Se `tool_gmail_auth_error` viene emesso il refresh token è scaduto o revocato.
+Rieseguire il flow interattivo sopra per ottenerne uno nuovo.

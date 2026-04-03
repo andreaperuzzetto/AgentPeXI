@@ -53,6 +53,37 @@ Nessuna autenticazione richiesta. Usato da Docker health check.
 
 ## Orchestrator — `/runs`
 
+### Lista runs attivi
+
+```
+GET /runs?status=awaiting_gate&deal_id={deal_id}&page=1&per_page=20
+```
+
+Query params opzionali: `status`, `deal_id`, `page`, `per_page`.
+
+**Response 200:**
+```json
+{
+  "items": [
+    {
+      "run_id": "uuid",
+      "deal_id": "uuid",
+      "status": "awaiting_gate",
+      "gate_type": "proposal_review",
+      "awaiting_gate_since": "2025-01-01T11:00:00Z",
+      "current_phase": "proposal",
+      "current_agent": "proposal",
+      "started_at": "2025-01-01T10:00:00Z"
+    }
+  ],
+  "total": 3,
+  "page": 1,
+  "per_page": 20
+}
+```
+
+---
+
 ### Avvia un nuovo run
 
 ```
@@ -206,7 +237,7 @@ POST /deals/{deal_id}/gates/proposal-approve
 ```
 
 Imposta `proposal_human_approved = true`, `proposal_approved_at = now()`.
-Notifica l'Orchestrator via Redis per riprendere il run in attesa.
+Il Gate Poller (Celery Beat, ogni 30s) rileverà il flag e riprende il run.
 
 **Response 200:**
 ```json
@@ -229,7 +260,8 @@ POST /deals/{deal_id}/gates/proposal-reject
 **Request:** `{ "notes": "Cambiare il pricing, troppo alto per il settore" }`
 
 Incrementa `proposal_rejection_count`, salva `proposal_rejection_notes`.
-Notifica l'Orchestrator per rilancio Design + Proposal Agent.
+Il Gate Poller riprende il run non appena il flag `proposal_human_approved` viene impostato
+da una successiva approvazione.
 
 **Response 200:**
 ```json
@@ -251,7 +283,7 @@ POST /deals/{deal_id}/gates/kickoff-confirm
 ```
 
 Imposta `kickoff_confirmed = true`, `kickoff_confirmed_at = now()`.
-Notifica l'Orchestrator per avvio Delivery Orchestrator Agent.
+Il Gate Poller (Celery Beat) rileverà il flag e riprende il run.
 
 **Response 200:**
 ```json
@@ -268,7 +300,25 @@ POST /deals/{deal_id}/gates/delivery-approve
 
 Imposta `delivery_approved = true`, `delivery_approved_at = now()`.
 Per i deal di tipo `consulting`, il gate si comporta come `consulting_approved`.
-Notifica l'Orchestrator per completamento erogazione.
+Il Gate Poller (Celery Beat) rileverà il flag e completa il run.
+
+**Response 200:**
+```json
+{ "deal_id": "uuid", "gate": "delivery", "approved": true, "approved_at": "..." }
+```
+
+---
+
+### GATE 3 — Rifiuta consegna (operatore)
+
+```
+POST /deals/{deal_id}/gates/delivery-reject
+```
+
+**Request:** `{ "notes": "Il sito non corrisponde al brief concordato" }`
+
+Incrementa `delivery_rejection_count`, salva `delivery_rejection_notes`.
+Non sblocca il Gate Poller — il nodo delivery tracker viene rilasciato dalla pipeline per revisione.
 
 **Response 200:**
 ```json

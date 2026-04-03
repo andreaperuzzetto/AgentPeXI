@@ -10,16 +10,22 @@ Questo documento specifica contratto, lifecycle e pattern da rispettare.
 ```python
 # agents/base.py
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger()
+
+# get_db_session  --  from db.session import get_db_session
+# _mark_task_*    --  from tools.db_tools import (
+#                         _mark_task_running, _mark_task_blocked,
+#                         _mark_task_failed, _mark_task_completed,
+#                     )
 
 
 class ServiceType(StrEnum):
@@ -38,8 +44,9 @@ class TaskStatus(StrEnum):
     CANCELLED  = "cancelled"
 
 
-@dataclass
-class AgentTask:
+class AgentTask(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
     id: UUID
     type: str
     agent: str
@@ -50,25 +57,31 @@ class AgentTask:
     blocked_reason: str | None = None
     retry_count: int = 0
     idempotency_key: str | None = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-@dataclass
-class AgentResult:
+class AgentResult(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
     task_id: UUID
     success: bool
     output: dict
     error: str | None = None
-    artifacts: list[str] = field(default_factory=list)
-    next_tasks: list[str] = field(default_factory=list)
+    artifacts: list[str] = Field(default_factory=list)
+    next_tasks: list[str] = Field(default_factory=list)
     requires_human_gate: bool = False
     gate_type: str | None = None  # "proposal_review" | "kickoff" | "delivery"
 
 
 class AgentToolError(Exception):
-    """Eccezione base per tutti gli errori dei tool."""
-    pass
+    """
+    Eccezione base per tutti gli errori dei tool.
+    Trasporta un codice errore snake_case (vedi docs/error-codes.md).
+    """
+    def __init__(self, code: str, message: str = "") -> None:
+        self.code = code
+        super().__init__(message or code)
 
 
 class GateNotApprovedError(Exception):
@@ -114,9 +127,9 @@ class BaseAgent(ABC):
                     requires_human_gate=True,
                 )
             except AgentToolError as e:
-                self.log.error("task.tool_error", task_id=str(task.id), error=str(e))
-                await _mark_task_failed(task.id, str(e), db)
-                return AgentResult(task_id=task.id, success=False, output={}, error=str(e))
+                self.log.error("task.tool_error", task_id=str(task.id), error_code=e.code)
+                await _mark_task_failed(task.id, e.code, db)
+                return AgentResult(task_id=task.id, success=False, output={}, error=e.code)
             except Exception as e:
                 self.log.error("task.unexpected_error", task_id=str(task.id), error=str(e))
                 await _mark_task_failed(task.id, str(e), db)
@@ -207,7 +220,10 @@ async def execute(self, task: AgentTask, db: AsyncSession) -> AgentResult:
     # Leggere SEMPRE da DB, mai fidarsi di task.payload per i gate
     deal = await get_deal(UUID(task.payload["deal_id"]), db)
     if deal is None:
-        raise AgentToolError(f"Deal {task.payload['deal_id']} non trovato")
+        raise AgentToolError(
+            code="tool_db_deal_not_found",
+            message=f"Deal {task.payload['deal_id']} non trovato",
+        )
 
     if not deal.proposal_human_approved:
         raise GateNotApprovedError("GATE 1 non approvato")

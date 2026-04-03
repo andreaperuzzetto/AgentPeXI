@@ -8,6 +8,11 @@ per personalizzare il contenuto prima dell'invio via Gmail API.
 
 ## Formato file
 
+> **Nota sintassi:** Le `{{variabili}}` nei template email sono **placeholder Claude**,
+> non template Jinja2. Claude legge il Markdown del template e le sostituisce con i valori
+> reali prima di generare il testo finale da inviare. Al momento dell'invio il testo è già
+> completamente espanso — `tools/gmail.py` non esegue nessun rendering Jinja2.
+
 ```
 ---
 template: proposal_send

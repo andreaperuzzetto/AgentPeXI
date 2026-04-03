@@ -131,7 +131,7 @@ class DealFactory(SQLAlchemyModelFactory):
 
     id = factory.LazyFunction(uuid.uuid4)
     lead = factory.SubFactory(LeadFactory)
-    status = "prospecting"
+    status = "lead_identified"
     proposal_human_approved = False
     kickoff_confirmed = False
     delivery_approved = False

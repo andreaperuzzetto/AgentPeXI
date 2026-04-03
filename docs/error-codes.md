@@ -158,3 +158,32 @@ log.critical(
 
 **PII nei log:** mai loggare email, nome, telefono, P.IVA.
 Loggare solo: task_id, deal_id, client_id, agent, error_code, source (categoria, non valore).
+
+---
+
+## Trasporto degli errori in un agente
+
+`AgentToolError` accetta un `code` obbligatorio (stringa dal catalogo sopra) e un `message` opzionale (mai PII).
+
+```python
+# ✅ Corretto — codice esplicito dal catalogo
+raise AgentToolError(
+    code="tool_db_timeout",
+    message="Query > 30s su tabella leads",
+)
+
+# ❌ Sbagliato — str(e) generico nasconde il codice
+raise AgentToolError(str(exception))
+```
+
+Il catch nel `BaseAgent.run()` usa `e.code` — non `str(e)`:
+
+```python
+except AgentToolError as e:
+    log.error("task.tool_error", task_id=str(task.id), error_code=e.code)
+    await _mark_task_failed(task.id, e.code, db)
+    return AgentResult(task_id=task.id, success=False, output={}, error=e.code)
+```
+
+Il codice finisce in `tasks.error` e in `AgentResult.error`.
+Il frontend mostra `error_code` all'operatore nella dashboard task.

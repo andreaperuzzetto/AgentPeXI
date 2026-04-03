@@ -261,58 +261,118 @@ async def check_gate_delivery(state: AgentState, db: AsyncSession) -> bool:
 
 ## Nodi gate (`orchestrator/nodes/gates.py`)
 
-I gate mettono il grafo in pausa impostando `awaiting_gate = True`.
-Il grafo persiste lo stato nel checkpointer Redis e attende.
-Il resume avviene quando l'API riceve il webhook di approvazione.
+I gate scrivono nella tabella `runs` impostando `status = 'awaiting_gate'` e terminano
+immediatamente — **il processo non resta appeso**. Il resume viene effettuato dal
+Gate Poller (Celery Beat), non dall'API.
 
 ```python
 from orchestrator.state import AgentState
+from db.session import get_db_session
+import datetime
+
+async def _write_runs_awaiting(run_id: str, gate_type: str) -> None:
+    async with get_db_session() as db:
+        await db.execute(
+            """
+            UPDATE runs
+            SET status = 'awaiting_gate',
+                gate_type = :gate_type,
+                awaiting_gate_since = :now,
+                updated_at = :now
+            WHERE run_id = :run_id
+            """,
+            {"run_id": run_id, "gate_type": gate_type, "now": datetime.datetime.utcnow()},
+        )
+        await db.commit()
 
 async def await_proposal_review(state: AgentState) -> AgentState:
     """
-    GATE 1 — Pausa in attesa di approvazione/rifiuto proposta da operatore.
-    Imposta awaiting_gate = True. Il grafo si ferma qui.
-    L'Orchestrator viene risvegliato da POST /webhooks/portal/operator-approve
-    o da POST /api/deals/{id}/gates/approve-proposal.
+    GATE 1 — Scrive runs.status='awaiting_gate' e termina.
+    Il Gate Poller rileva e riprende quando deal.proposal_human_approved = true.
     """
+    await _write_runs_awaiting(state["run_id"], "proposal_review")
     return {**state, "awaiting_gate": True, "gate_type": "proposal_review"}
 
 async def await_kickoff(state: AgentState) -> AgentState:
-    """GATE 2 — Pausa in attesa di conferma kickoff da operatore."""
+    """GATE 2 — Scrive runs.status='awaiting_gate'. Riprende quando deal.kickoff_confirmed = true."""
+    await _write_runs_awaiting(state["run_id"], "kickoff")
     return {**state, "awaiting_gate": True, "gate_type": "kickoff"}
 
 async def await_delivery_approval(state: AgentState) -> AgentState:
-    """GATE 3 — Pausa in attesa di approvazione consegna da operatore."""
+    """GATE 3 — Scrive runs.status='awaiting_gate'. Riprende quando deal.delivery_approved = true."""
+    await _write_runs_awaiting(state["run_id"], "delivery")
     return {**state, "awaiting_gate": True, "gate_type": "delivery"}
 ```
 
-### Resume dopo gate
+### Gate Poller (Celery Beat)
+
+Un task Celery Beat (`agents/worker.py`, schedule ogni 30 s) interroga la tabella `runs`
+ per trovare run in attesa e verifica il flag corrispondente nel deal.
 
 ```python
-# api/routes/gates.py (o webhook handler)
-from orchestrator.graph import get_compiled_graph
+# agents/tasks/gate_poller.py
+import asyncio
+from celery import shared_task
+from db.session import get_db_session
+from orchestrator.graph import build_graph
 
-async def resume_run_after_gate(run_id: str, gate_decision: str, notes: str | None = None):
-    """
-    Riprende un run dopo approvazione/rifiuto gate.
-    gate_decision: "approved" | "rejected"
-    """
-    graph = get_compiled_graph()
+GATE_FLAG_MAP = {
+    "proposal_review": "proposal_human_approved",
+    "kickoff":         "kickoff_confirmed",
+    "delivery":        "delivery_approved",
+}
+
+@shared_task(name="agents.gate_poller")
+def poll_gates() -> None:
+    asyncio.run(_poll_gates_async())
+
+async def _poll_gates_async() -> None:
+    async with get_db_session() as db:
+        rows = await db.execute(
+            "SELECT run_id, deal_id, gate_type FROM runs WHERE status = 'awaiting_gate'"
+        )
+        pending = rows.fetchall()
+
+    for run_id, deal_id, gate_type in pending:
+        await _try_resume(run_id, deal_id, gate_type)
+
+async def _try_resume(run_id: str, deal_id: str, gate_type: str) -> None:
+    async with get_db_session() as db:
+        row = await db.execute(
+            f"SELECT {GATE_FLAG_MAP[gate_type]} FROM deals WHERE id = :deal_id",
+            {"deal_id": deal_id},
+        )
+        approved = row.scalar_one_or_none()
+
+    if not approved:
+        return  # gate ancora chiuso, riprova al prossimo ciclo
+
+    # Flag approvato: riprendi il run
+    graph = build_graph()
     config = {"configurable": {"thread_id": run_id}}
-
-    # Aggiorna lo stato nel checkpointer
-    current_state = await graph.aget_state(config)
-    new_state = {
-        **current_state.values,
-        "awaiting_gate": False,
-        "gate_decision": gate_decision,
-        "gate_notes": notes,
-    }
-    await graph.aupdate_state(config, new_state)
-
-    # Riprende l'esecuzione dal punto di pausa
     await graph.ainvoke(None, config=config)
+
+    # Aggiorna runs.status
+    async with get_db_session() as db:
+        await db.execute(
+            "UPDATE runs SET status = 'running', updated_at = now() WHERE run_id = :rid",
+            {"rid": run_id},
+        )
+        await db.commit()
 ```
+
+Schedule Celery Beat (in `agents/worker.py`):
+```python
+celery_app.conf.beat_schedule = {
+    "gate-poller": {
+        "task": "agents.gate_poller",
+        "schedule": 30.0,   # secondi
+    },
+}
+```
+
+> **Non usare `graph.ainvoke()` dall'handler API** per riprendere i gate.
+> L'unico entry point di resume è il Gate Poller. L'API aggiorna solo il flag nel deal.
 
 ---
 
@@ -337,7 +397,7 @@ def _dispatch(agent: str, task_type: str, payload: dict, state: AgentState) -> s
     )
     celery_app.send_task(
         f"agents.{agent}.run",
-        args=[task.__dict__],
+        args=[task.model_dump()],
         task_id=task_id,
     )
     return task_id

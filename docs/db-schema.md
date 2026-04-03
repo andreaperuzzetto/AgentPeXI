@@ -527,6 +527,46 @@ CREATE INDEX idx_delivery_reports_svc_id ON delivery_reports(service_delivery_id
 
 ---
 
+### `runs`
+
+Tracciamento dei run LangGraph attivi. Una riga per ogni `graph.invoke()` avviato dall'API.
+Usata dal gate poller (Celery Beat, ogni 30 s) per trovare run in attesa di approvazione umana.
+
+```sql
+CREATE TABLE runs (
+    run_id      TEXT PRIMARY KEY,       -- thread_id LangGraph (UUID come stringa)
+    deal_id     UUID REFERENCES deals(id),
+
+    status      TEXT NOT NULL DEFAULT 'running',
+                -- "running"|"awaiting_gate"|"completed"|"failed"|"cancelled"
+
+    current_phase   TEXT,               -- "discovery"|"proposal"|"delivery"|"post_sale"
+    current_agent   TEXT,
+
+    -- Gate attivo (valorizzato solo quando status = "awaiting_gate")
+    gate_type           TEXT,           -- "proposal_review"|"kickoff"|"delivery"
+    awaiting_gate_since TIMESTAMPTZ,
+
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at    TIMESTAMPTZ,
+
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at  TIMESTAMPTZ
+);
+
+CREATE INDEX idx_runs_deal_id ON runs(deal_id);
+CREATE INDEX idx_runs_status  ON runs(status);
+```
+
+> Il `run_id` coincide con il `thread_id` del Redis checkpointer LangGraph.
+> Il gate poller interroga `WHERE status = 'awaiting_gate'` ogni 30 s, verifica il
+> flag nel deal corrispondente (`proposal_human_approved`, `kickoff_confirmed`,
+> `delivery_approved`), e riprende il run chiamando:
+> `graph.invoke(None, config={"configurable": {"thread_id": run_id}})`.
+
+---
+
 ## Schema per-cliente (multi-tenancy)
 
 Ogni cliente ha uno schema PostgreSQL dedicato: `client_{id_senza_trattini}`.

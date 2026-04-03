@@ -237,3 +237,26 @@ NEXT_PUBLIC_APP_NAME=AgentPeXI
 
 Le variabili senza `NEXT_PUBLIC_` non sono mai esposte al browser.
 `PORTAL_SECRET_KEY` non va mai in `.env.local` frontend — vive solo nel backend.
+
+---
+
+## Dipendenze npm (`frontend/package.json`)
+
+| Pacchetto | Versione | Scopo |
+|-----------|----------|-------|
+| `next` | 14.2.x | Framework React App Router |
+| `react` | 18.x | UI runtime |
+| `react-dom` | 18.x | DOM render |
+| `typescript` | 5.x | Tipizzazione |
+| `tailwindcss` | 3.x | Utility CSS |
+| `@headlessui/react` | 2.x | Componenti accessibili (dialog, menu) |
+| `@heroicons/react` | 2.x | Icone SVG |
+| `recharts` | 2.x | Grafici pipeline / stats |
+| `react-pdf` | 7.x | PDF viewer inline (review proposta) |
+| `swr` | 2.x | Data fetching + revalidation |
+| `jose` | 5.x | Verifica JWT portale cliente (server-side) |
+| `date-fns` | 3.x | Formattazione date (fuso EU/IT) |
+| `clsx` | 2.x | Composizione className condizionale |
+
+**Dev:**
+`@types/react`, `@types/node`, `eslint`, `eslint-config-next`, `postcss`, `autoprefixer`.

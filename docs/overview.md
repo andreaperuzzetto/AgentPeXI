@@ -75,9 +75,9 @@ agents/
 ├── design/CLAUDE.md
 ├── proposal/CLAUDE.md
 ├── sales/CLAUDE.md
-├── delivery_orchestrator/CLAUDE.md      ← sostituisce dev_orchestrator
-├── doc_generator/CLAUDE.md              ← sostituisce code_team
-├── delivery_tracker/CLAUDE.md           ← sostituisce qa
+├── delivery_orchestrator/CLAUDE.md
+├── doc_generator/CLAUDE.md
+├── delivery_tracker/CLAUDE.md
 ├── account_manager/CLAUDE.md
 ├── billing/CLAUDE.md
 └── support/CLAUDE.md

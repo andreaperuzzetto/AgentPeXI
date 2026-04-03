@@ -38,6 +38,7 @@ i servizi ed è l'unico ad avere accesso al software per monitorare il comportam
 | Stack, modelli, versioni, porte | `docs/stack.md` |
 | Schemi AgentTask, Deal, AgentState | `docs/data-models.md` |
 | Tabelle SQL complete e relazioni FK | `docs/db-schema.md` |
+| Struttura `db/`, `get_db_session()`, engine | `docs/db-internals.md` |
 | Endpoint REST, request/response | `docs/api.md` |
 | Pipeline, fasi, gate umani | `docs/pipeline.md` |
 | Come gli agenti si comunicano | `docs/inter-agent.md` |
@@ -50,6 +51,7 @@ i servizi ed è l'unico ad avere accesso al software per monitorare il comportam
 | Template email: struttura e variabili | `config/templates/email/structure.md` |
 | Firme tool, errori, pattern MinIO/Maps | `docs/tools.md` |
 | Classe BaseAgent, lifecycle, pattern | `docs/base-agent.md` |
+| Schema prompt di sistema per agente | `docs/agent-prompts.md` |
 | Grafo LangGraph, nodi, gate, resume | `docs/orchestrator.md` |
 | Comportamento agenti per service_type | `docs/service-types.md` |
 | Codici errore per agente e tool | `docs/error-codes.md` |

@@ -40,7 +40,10 @@ def _make_task(agent_name: str, agent_class):
         task = AgentTask(**task_dict)
         agent = agent_class()
         result: AgentResult = asyncio.run(agent.run(task))
-        # Pubblica risultato su Redis
+        # Due chiamate asyncio.run() separate: intenzionale.
+        # La prima chiude il loop dopo agent.run(); la seconda ne apre uno nuovo
+        # per la pubblicazione. Su macOS ARM (no uvloop) questo evita
+        # "This event loop is already running" con asyncpg.
         asyncio.run(_publish_result(result))
         return result.model_dump()
     return run

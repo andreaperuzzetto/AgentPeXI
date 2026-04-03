@@ -41,14 +41,6 @@ Ogni agente accede **solo** alle tabelle elencate. Non leggere né scrivere altr
 | Billing Agent | `deals`, `invoices`, `clients` | `invoices`, `tasks` |
 | Support Agent | `tickets`, `clients`, workspace cliente/deliverables | `tickets`, `service_deliveries` (nuovi task intervento), `tasks` |
 
-### Agenti deprecati
-
-| Vecchio agente | Sostituito da | Note |
-|----------------|--------------|------|
-| Dev Orchestrator | Delivery Orchestrator | Vedi `agents/dev_orchestrator/CLAUDE.md` |
-| Code Team | Document Generator | Vedi `agents/code_team/CLAUDE.md` |
-| QA Agent | Delivery Tracker | Vedi `agents/qa/CLAUDE.md` |
-
 ## Dettaglio per agente
 
 Ogni agente ha la propria pagina in `docs/agents/{nome}.md`

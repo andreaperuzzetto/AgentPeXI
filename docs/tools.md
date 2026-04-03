@@ -371,3 +371,75 @@ VIEWPORT_MOBILE  = {"width": 390,  "height": 844}
 
 Tutti queste eccezioni estendono `AgentToolError(Exception)` definita in `tools/__init__.py`.
 Gli agenti devono catturare `AgentToolError` per gestire i fallback.
+
+---
+
+## Sessione DB e helper task
+
+### `db.session` — `get_db_session()`
+
+```python
+from db.session import get_db_session
+```
+
+Context manager asincrono che apre una sessione SQLAlchemy e fa commit / rollback
+automatici. Usato dentro `BaseAgent.run()` — gli agenti **non** devono crearne di proprie.
+
+```python
+from contextlib import asynccontextmanager
+from sqlalchemy.ext.asyncio import AsyncSession
+
+@asynccontextmanager
+async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionFactory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+```
+
+`AsyncSessionFactory` è configurata in `db/session.py` con l'URL da `DATABASE_URL` env.
+
+### `tools.db_tools` — Helper task status
+
+```python
+from tools.db_tools import (
+    _mark_task_running,
+    _mark_task_blocked,
+    _mark_task_failed,
+    _mark_task_completed,
+)
+```
+
+Usati esclusivamente da `BaseAgent.run()` — non chiamarli direttamente negli agenti.
+
+```python
+async def _mark_task_running(
+    task_id: UUID,
+    db: AsyncSession,
+) -> None
+    # tasks.status = "running", tasks.started_at = now()
+
+async def _mark_task_blocked(
+    task_id: UUID,
+    reason: str,
+    db: AsyncSession,
+) -> None
+    # tasks.status = "blocked", tasks.blocked_reason = reason
+
+async def _mark_task_failed(
+    task_id: UUID,
+    error_code: str,      # codice dal catalogo docs/error-codes.md
+    db: AsyncSession,
+) -> None
+    # tasks.status = "failed", tasks.error = error_code
+
+async def _mark_task_completed(
+    task_id: UUID,
+    output: dict,
+    db: AsyncSession,
+) -> None
+    # tasks.status = "completed", tasks.output = output, tasks.completed_at = now()
+```
