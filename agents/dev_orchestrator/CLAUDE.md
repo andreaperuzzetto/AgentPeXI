@@ -1,5 +1,15 @@
 # Dev Orchestrator Agent
 
+> ⚠️ **DEPRECATO** — Questo agente è stato sostituito dal **Delivery Orchestrator Agent**
+> (`agents/delivery_orchestrator/CLAUDE.md`).
+>
+> Il Dev Orchestrator faceva parte della vecchia pipeline di sviluppo software.
+> Con il pivot verso servizi (consulenza, web design, manutenzione digitale),
+> la pianificazione e il coordinamento dell'erogazione sono gestiti dal Delivery Orchestrator.
+>
+> Questa directory è mantenuta come riferimento storico. Non creare nuovi task per questo agente.
+> Vedi `docs/overview.md` → "Mappa agenti: vecchi vs nuovi" per il mapping completo.
+
 > Le regole globali in `../../CLAUDE.md` hanno sempre precedenza.
 
 ## Responsabilità

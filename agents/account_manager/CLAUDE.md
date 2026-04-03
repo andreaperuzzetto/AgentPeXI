@@ -4,9 +4,10 @@
 
 ## Responsabilità
 
-Gestisce la relazione col cliente dopo la consegna: onboarding, monitoraggio
-soddisfazione, NPS, identificazione opportunità di upselling.
-Non gestisce bug o problemi tecnici (→ Support Agent).
+Gestisce la relazione col cliente dopo l'erogazione del servizio: onboarding,
+monitoraggio soddisfazione, NPS, identificazione opportunità di upselling.
+Non gestisce richieste di assistenza tecnica (→ Support Agent).
+Supporta tutti e tre i `service_type`: consulenza, web design, manutenzione digitale.
 
 ## Tool disponibili
 
@@ -39,15 +40,15 @@ Non gestisce bug o problemi tecnici (→ Support Agent).
 }
 ```
 
-## Sequenza post-consegna
+## Sequenza post-erogazione
 
 | Trigger | Azione | Canale |
 |---------|--------|--------|
-| Delivery | Email onboarding con guide e link | Email |
+| Delivery approved | Email onboarding con riepilogo servizio erogato e documentazione | Email |
 | +7 giorni | Check-in "tutto ok?" | Email |
 | +30 giorni | NPS survey (1-10) | Email con link form |
-| +90 giorni | Review utilizzo + opportunità upsell | Email |
-| +180 giorni | Rinnovo / espansione | Email |
+| +90 giorni | Review soddisfazione + opportunità upsell/cross-sell | Email |
+| +180 giorni | Rinnovo / espansione servizio | Email |
 
 Tutte le comunicazioni in **italiano**.
 Template in `config/templates/email/post_sale/`.
@@ -59,12 +60,12 @@ Notificare l'Orchestrator con priorità alta se:
 - Nessuna risposta ai primi 2 check-in
 - Il cliente segnala insoddisfazione nella risposta email
 
-## Identificazione upsell
+## Identificazione upsell / cross-sell
 
-L'agente analizza il profilo del cliente e il prodotto consegnato.
-Se individua un'opportunità concreta (es. "ha un e-commerce ma non ha
-analytics"), crea un nuovo lead nel DB con `source = "upsell"`
-e notifica l'Orchestrator.
+L'agente analizza il profilo del cliente, il servizio erogato e il `service_type`.
+Se individua un'opportunità concreta (es. "ha ricevuto consulenza operativa ma
+il sito web è obsoleto → proporre web design"), crea un nuovo lead nel DB con
+`source = "upsell"` e notifica l'Orchestrator.
 
 ## Tabelle accessibili
 

@@ -1,5 +1,15 @@
 # Code Agent Team
 
+> ⚠️ **DEPRECATO** — Questo agente è stato sostituito dal **Document Generator Agent**
+> (`agents/doc_generator/CLAUDE.md`).
+>
+> Il Code Agent Team faceva parte della vecchia pipeline di sviluppo software.
+> Con il pivot verso servizi (consulenza, web design, manutenzione digitale),
+> la generazione di deliverable è gestita dal Document Generator.
+>
+> Questa directory è mantenuta come riferimento storico. Non creare nuovi task per questo agente.
+> Vedi `docs/overview.md` → "Mappa agenti: vecchi vs nuovi" per il mapping completo.
+
 > Le regole globali in `../../CLAUDE.md` hanno sempre precedenza.
 > Leggere anche il CLAUDE.md del progetto cliente in `/workspace/clients/{client_id}/CLAUDE.md`.
 
