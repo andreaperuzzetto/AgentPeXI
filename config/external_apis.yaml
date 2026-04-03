@@ -1,0 +1,134 @@
+# API esterne — endpoint e configurazione
+#
+# Usato da: Lead Profiler Agent, Billing Agent
+# Ogni voce include: URL base, autenticazione, rate limit, note.
+# Le credenziali vengono lette da variabili d'ambiente (mai hardcoded qui).
+
+# ── Google Maps ───────────────────────────────────────────────────────────────
+google_maps:
+  places_search:
+    url: "https://places.googleapis.com/v1/places:searchText"
+    method: POST
+    auth: "header: X-Goog-Api-Key: {GOOGLE_MAPS_API_KEY}"
+    rate_limit_rps: 100
+    timeout_s: 10
+    retry_max: 3
+    docs: "https://developers.google.com/maps/documentation/places/web-service/text-search"
+    notes: >
+      Usare sempre tramite tools/google_maps.py (gestisce token bucket).
+      Non chiamare direttamente. Abilitare "Places API (New)" in Google Cloud Console.
+
+  place_details:
+    url: "https://places.googleapis.com/v1/places/{place_id}"
+    method: GET
+    auth: "header: X-Goog-Api-Key: {GOOGLE_MAPS_API_KEY}"
+    field_mask: "id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,rating,userRatingCount,primaryTypeDisplayName,location"
+    rate_limit_rps: 100
+    timeout_s: 10
+    retry_max: 3
+
+  geocoding:
+    url: "https://maps.googleapis.com/maps/api/geocode/json"
+    method: GET
+    auth: "query: key={GOOGLE_MAPS_API_KEY}"
+    rate_limit_rps: 50
+    timeout_s: 10
+    retry_max: 3
+    docs: "https://developers.google.com/maps/documentation/geocoding"
+
+# ── Registro Imprese / CCIAA ─────────────────────────────────────────────────
+registro_imprese:
+  # API pubblica del Registro delle Imprese italiano.
+  # Permette ricerca per ragione sociale, P.IVA, sede.
+  # Accesso gratuito per dati pubblici; API key necessaria per rate limit elevati.
+  search_by_name:
+    url: "https://www.registroimprese.it/api/search"
+    method: GET
+    auth: "query: apiKey={REGISTRO_IMPRESE_API_KEY}"
+    params:
+      q: "{business_name}"
+      comune: "{city}"
+      tipoRicerca: "DENOMINAZIONE"
+    rate_limit_rps: 5
+    timeout_s: 15
+    retry_max: 2
+    notes: >
+      Se REGISTRO_IMPRESE_API_KEY è vuota, l'agente usa un livello degradato
+      (skip arricchimento P.IVA, enrichment_level = "basic").
+
+  search_by_vat:
+    url: "https://www.registroimprese.it/api/search"
+    method: GET
+    auth: "query: apiKey={REGISTRO_IMPRESE_API_KEY}"
+    params:
+      piva: "{vat_number}"
+    rate_limit_rps: 5
+    timeout_s: 15
+    retry_max: 2
+
+# ── OpenCorporates (fallback per dati societari) ─────────────────────────────
+opencorporates:
+  search:
+    url: "https://api.opencorporates.com/v0.4/companies/search"
+    method: GET
+    auth: "query: api_token={OPENCORPORATES_API_TOKEN}"
+    params:
+      q: "{business_name}"
+      jurisdiction_code: "it"
+      per_page: 5
+    rate_limit_rps: 10
+    timeout_s: 10
+    retry_max: 2
+    notes: >
+      Usato come fallback se Registro Imprese non risponde.
+      OPENCORPORATES_API_TOKEN opzionale — senza token si usa il livello free
+      con rate limit 10 req/min.
+
+# ── ATECO (codici attività economica) ────────────────────────────────────────
+ateco:
+  # Dataset pubblico ISTAT — scaricato localmente all'avvio
+  local_json_path: "config/data/ateco_codes.json"
+  source_url: "https://www.istat.it/classificazione/ateco-2025/"
+  notes: >
+    Il file config/data/ateco_codes.json va scaricato una volta sola
+    (vedi docs/setup-macos.md). Il Lead Profiler lo carica in memoria
+    per la classificazione senza chiamate HTTP.
+
+# ── Fatture in Cloud ─────────────────────────────────────────────────────────
+fatture_in_cloud:
+  base_url: "https://api.fattureincloud.it/v2"
+  auth_type: "Bearer"
+  auth_header: "Authorization: Bearer {FATTURE_IN_CLOUD_ACCESS_TOKEN}"
+  rate_limit_rps: 10
+  timeout_s: 30
+  retry_max: 2
+  docs: "https://developers.fattureincloud.it/docs"
+
+  endpoints:
+    create_invoice:
+      path: "/c/{FATTURE_IN_CLOUD_COMPANY_ID}/issued_documents"
+      method: POST
+      notes: "type = 'invoice' nel body"
+
+    get_invoice:
+      path: "/c/{FATTURE_IN_CLOUD_COMPANY_ID}/issued_documents/{id}"
+      method: GET
+
+    send_invoice:
+      path: "/c/{FATTURE_IN_CLOUD_COMPANY_ID}/issued_documents/{id}/email"
+      method: POST
+      notes: >
+        Usato opzionalmente — il Billing Agent può inviare via Gmail
+        invece di delegare a Fatture in Cloud. Configurabile.
+
+# ── Note generali ─────────────────────────────────────────────────────────────
+notes:
+  - >
+    Tutti i wrapper HTTP per queste API sono in tools/. Non chiamare
+    le URL direttamente dagli agenti.
+  - >
+    In caso di errore 429 (rate limit) applicare exponential backoff
+    con jitter: base=1s, max=30s, moltiplicatore=2.
+  - >
+    Log degli errori API: loggare solo status code e endpoint,
+    mai request body (può contenere PII).

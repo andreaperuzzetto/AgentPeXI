@@ -48,6 +48,12 @@ i servizi ed è l'unico ad avere accesso al software per monitorare il comportam
 | Dashboard frontend, componenti | `docs/frontend.md` |
 | Setup Mac Mini M4 (macOS ARM) | `docs/setup-macos.md` |
 | Template email: struttura e variabili | `config/templates/email/structure.md` |
+| Firme tool, errori, pattern MinIO/Maps | `docs/tools.md` |
+| Classe BaseAgent, lifecycle, pattern | `docs/base-agent.md` |
+| Grafo LangGraph, nodi, gate, resume | `docs/orchestrator.md` |
+| Comportamento agenti per service_type | `docs/service-types.md` |
+| Codici errore per agente e tool | `docs/error-codes.md` |
+| Testing, mock, fixture, coverage | `docs/testing.md` |
 
 Ogni agente ha il proprio `agents/{nome}/CLAUDE.md` con responsabilità, payload e scope dati specifici.
 

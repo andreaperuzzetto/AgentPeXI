@@ -1,0 +1,147 @@
+# Configurazione scoring lead
+#
+# Usato da: Market Analyst Agent
+# Soglia universale di qualifica: lead_score >= 65
+#
+# Ogni segnale ha un peso (0-100). Il punteggio finale è la media pesata
+# dei segnali rilevati, moltiplicata per il moltiplicatore di settore.
+#
+# Schema punteggio:
+#   score = sum(segnale_peso * segnale_presente) / max_score_possibile * 100
+#   score_finale = clamp(score * sector_multiplier, 0, 100)
+
+# ── Segnali Web Design ────────────────────────────────────────────────────────
+web_design_signals:
+  no_website:
+    label: "Sito web assente"
+    weight: 40
+    description: "Il business non ha nessun sito web rilevabile"
+
+  outdated_website:
+    label: "Sito web obsoleto"
+    weight: 32
+    description: "Sito < mobile-first, design ante-2018, HTTP non sicuro"
+
+  no_social_presence:
+    label: "Nessuna presenza social"
+    weight: 20
+    description: "Nessun profilo Facebook/Instagram attivo"
+
+  poor_brand_image:
+    label: "Brand image poco curata"
+    weight: 15
+    description: "Logo assente, immagini di bassa qualità, nessuna coerenza visiva"
+
+  low_google_rating:
+    label: "Rating Google basso"
+    weight: 10
+    description: "Rating < 3.5 con più di 20 recensioni"
+
+  few_google_reviews:
+    label: "Poche recensioni Google"
+    weight: 8
+    description: "Meno di 10 recensioni"
+
+# ── Segnali Consulenza ───────────────────────────────────────────────────────
+consulting_signals:
+  operational_inefficiency:
+    label: "Inefficienze operative evidenti"
+    weight: 38
+    description: "Processi manuali, mancanza di digitalizzazione operativa"
+
+  rapid_growth_no_support:
+    label: "Crescita rapida senza struttura"
+    weight: 35
+    description: "Business in espansione senza supporto manageriale/organizzativo"
+
+  no_internal_expertise:
+    label: "Mancanza competenze interne"
+    weight: 25
+    description: "Settore specializzato senza figure competenti visibili"
+
+  multi_location:
+    label: "Più sedi o filiali"
+    weight: 18
+    description: "Business con più punti operativi o franchising"
+
+  high_review_volume:
+    label: "Alto volume recensioni (opportunità)"
+    weight: 12
+    description: "> 100 recensioni: business consolidato con operatività complessa"
+
+# ── Segnali Manutenzione Digitale ────────────────────────────────────────────
+digital_maintenance_signals:
+  outdated_software:
+    label: "Sistemi software datati"
+    weight: 38
+    description: "Tecnologie obsolete, CMS non aggiornati, plugin scaduti"
+
+  performance_issues:
+    label: "Problemi di performance evidenti"
+    weight: 35
+    description: "Sito lento, Core Web Vitals bassi, errori nell'analisi"
+
+  security_vulnerabilities:
+    label: "Vulnerabilità di sicurezza rilevabili"
+    weight: 30
+    description: "HTTP senza HTTPS, certificati scaduti, CMS noti non aggiornati"
+
+  high_update_frequency_sector:
+    label: "Settore ad alta frequenza di aggiornamento"
+    weight: 20
+    description: "E-commerce, sanità, professioni con compliance normativa"
+
+  existing_digital_presence:
+    label: "Presenza digitale esistente da mantenere"
+    weight: 15
+    description: "Ha già sito + social + CRM: infrastructure da mantenere"
+
+# ── Bonus e malus generalizzati ───────────────────────────────────────────────
+general_modifiers:
+  high_google_rating:
+    label: "Business ben valutato (bonus)"
+    delta: +8
+    condition: "google_rating >= 4.2 AND google_review_count >= 30"
+
+  already_a_client:
+    label: "Già cliente (esclusione)"
+    delta: -100
+    condition: "deal esistente con stesso google_place_id e status != lost"
+    description: "Se il lead è già cliente non va mai riqualificato"
+
+  no_website_no_phone:
+    label: "Nessun contatto rilevabile (malus)"
+    delta: -20
+    condition: "website_url IS NULL AND phone IS NULL"
+    description: "Senza canale di contatto è quasi impossibile approcciare"
+
+  very_low_review_count:
+    label: "Troppo poche recensioni (incertezza)"
+    delta: -5
+    condition: "google_review_count < 5"
+
+# ── Moltiplicatori di settore ─────────────────────────────────────────────────
+# Amplifica o riduce il punteggio in base alla probabilità di conversione
+# per settore (basato su esperienza operatore, aggiornabile nel tempo)
+sector_multipliers:
+  horeca: 1.10
+  hotel_tourism: 1.08
+  retail: 1.05
+  food_retail: 1.00
+  beauty_wellness: 1.05
+  fitness_sport: 1.00
+  healthcare: 0.90          # alta regolamentazione, approccio cauto
+  education: 1.00
+  professional_services: 1.12
+  real_estate: 1.08
+  automotive: 1.00
+  construction: 0.95
+  manufacturing_craft: 0.95
+  logistics_transport: 1.00
+  creative_media: 0.90      # competitor diretti probabili
+
+# ── Soglie ────────────────────────────────────────────────────────────────────
+thresholds:
+  qualify: 65          # score >= qualify → qualified = true
+  high_value: 82       # score >= high_value → segnalare all'operatore come priorità
+  auto_discard: 20     # score <= auto_discard → skip senza analisi profonda

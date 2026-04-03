@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Presentazione – {{ business_name }}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1440px; height: 900px; overflow: hidden;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    background: #0f172a; color: #e2e8f0;
+  }
+
+  /* ── SLIDE LAYOUT ── */
+  .slide {
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+    position: relative;
+  }
+
+  /* ── TOP BAR ── */
+  .top-bar {
+    background: #1e293b; border-bottom: 1px solid #334155;
+    padding: 14px 56px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .company-brand { display: flex; align-items: center; gap: 12px; }
+  .company-dot { width: 10px; height: 10px; border-radius: 50%; background: #3b82f6; }
+  .company-name { font-size: 14px; font-weight: 700; }
+  .slide-counter { font-size: 12px; color: #64748b; }
+  .slide-title-bar { font-size: 13px; color: #94a3b8; font-weight: 500; }
+
+  /* ── HERO SLIDE ── */
+  .hero {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, #1e3a5f 0%, #0f172a 70%);
+    padding: 60px;
+    position: relative;
+  }
+  .hero::after {
+    content: ''; position: absolute; inset: 0;
+    background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%233b82f6' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    pointer-events: none;
+  }
+  .hero-eyebrow {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;
+    color: #3b82f6; margin-bottom: 20px;
+  }
+  .hero-title {
+    font-size: 52px; font-weight: 800; text-align: center; line-height: 1.15;
+    letter-spacing: -1.5px; max-width: 900px; margin-bottom: 28px;
+  }
+  .hero-title span { color: #3b82f6; }
+  .hero-subtitle {
+    font-size: 18px; color: #94a3b8; text-align: center; max-width: 640px; line-height: 1.6;
+    margin-bottom: 40px;
+  }
+  .hero-tags { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .hero-tag {
+    background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.3);
+    color: #93c5fd; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 500;
+  }
+
+  /* ── CONTENT SLIDE (usato per sezioni) ── */
+  .slide-body {
+    flex: 1; display: flex; gap: 0; overflow: hidden;
+  }
+
+  /* ── SIDE NAV ── */
+  .side-nav {
+    width: 240px; background: #1e293b; border-right: 1px solid #334155;
+    display: flex; flex-direction: column; padding: 32px 0;
+  }
+  .nav-section {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: #475569; padding: 0 24px 12px;
+  }
+  .nav-item {
+    padding: 10px 24px; font-size: 13px; color: #64748b;
+    display: flex; align-items: center; gap: 10px;
+    border-left: 2px solid transparent; cursor: default;
+  }
+  .nav-item.active { color: #e2e8f0; border-left-color: #3b82f6; background: rgba(59,130,246,0.06); }
+  .nav-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+
+  /* ── MAIN CONTENT ── */
+  .main-area {
+    flex: 1; padding: 40px 56px; display: flex; flex-direction: column; gap: 28px;
+  }
+  .section-header { display: flex; align-items: baseline; gap: 16px; }
+  .section-number { font-size: 48px; font-weight: 900; color: #1e3a5f; line-height: 1; }
+  .section-eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #3b82f6; }
+  .section-title { font-size: 28px; font-weight: 700; margin-top: 2px; }
+
+  /* ── KEY POINTS ── */
+  .key-points-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .key-point {
+    background: #1e293b; border-radius: 12px; padding: 20px;
+    border: 1px solid #334155; display: flex; gap: 14px;
+  }
+  .kp-icon { font-size: 22px; flex-shrink: 0; }
+  .kp-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .kp-body { font-size: 12px; color: #94a3b8; line-height: 1.6; }
+
+  /* ── STATS ROW ── */
+  .stats-row { display: flex; gap: 24px; }
+  .stat {
+    flex: 1; background: #1e293b; border-radius: 12px; padding: 20px 24px;
+    border: 1px solid #334155; text-align: center;
+  }
+  .stat-value { font-size: 36px; font-weight: 800; color: #3b82f6; }
+  .stat-label { font-size: 12px; color: #64748b; margin-top: 4px; }
+  .stat-delta { font-size: 11px; color: #22c55e; margin-top: 6px; font-weight: 600; }
+
+  /* ── FOOTER ── */
+  footer {
+    background: #1e293b; border-top: 1px solid #334155;
+    padding: 10px 56px; display: flex; align-items: center; justify-content: space-between;
+  }
+  footer .f-left { font-size: 11px; color: #475569; }
+  footer .f-right { font-size: 11px; color: #475569; }
+  .progress-bar { 
+    width: 200px; height: 2px; background: #334155; border-radius: 1px; margin: 0 24px;
+  }
+  .progress-fill { height: 100%; border-radius: 1px; background: #3b82f6; width: var(--progress-width, 0%); }
+</style>
+</head>
+<body>
+<div class="slide">
+
+  <!-- TOP BAR -->
+  <div class="top-bar">
+    <div class="company-brand">
+      <div class="company-dot"></div>
+      <div class="company-name">{{ business_name }}</div>
+    </div>
+    <div class="slide-title-bar">{{ presentation_title }}</div>
+    <div class="slide-counter">{{ current_slide }} / {{ total_slides }}</div>
+  </div>
+
+  {% if is_cover %}
+  <!-- ── COVER SLIDE ── -->
+  <div class="hero">
+    <div class="hero-eyebrow">{{ service_type_label }} · {{ sector_label }}</div>
+    <h1 class="hero-title">{{ presentation_title|replace(highlight_word, '<span>' ~ highlight_word ~ '</span>') }}</h1>
+    <p class="hero-subtitle">{{ presentation_subtitle }}</p>
+    <div class="hero-tags">
+      {% for tag in presentation_tags %}
+      <span class="hero-tag">{{ tag }}</span>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% else %}
+  <!-- ── CONTENT SLIDE ── -->
+  <div class="slide-body">
+
+    <!-- SIDE NAV -->
+    <nav class="side-nav">
+      <div class="nav-section">Sommario</div>
+      {% for section in toc %}
+      <div class="nav-item {% if section.active %}active{% endif %}">
+        <div class="nav-dot"></div>
+        {{ section.title }}
+      </div>
+      {% endfor %}
+    </nav>
+
+    <!-- MAIN -->
+    <div class="main-area">
+      <div class="section-header">
+        <div class="section-number">0{{ current_section_index }}</div>
+        <div class="section-title-wrap">
+          <div class="section-eyebrow">{{ section_eyebrow }}</div>
+          <div class="section-title">{{ section_title }}</div>
+        </div>
+      </div>
+
+      {% if show_key_points %}
+      <div class="key-points-grid">
+        {% for point in key_points %}
+        <div class="key-point">
+          <div class="kp-icon">{{ point.icon }}</div>
+          <div>
+            <div class="kp-title">{{ point.title }}</div>
+            <div class="kp-body">{{ point.body }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if show_stats %}
+      <div class="stats-row">
+        {% for stat in stats %}
+        <div class="stat">
+          <div class="stat-value">{{ stat.value }}</div>
+          <div class="stat-label">{{ stat.label }}</div>
+          {% if stat.delta %}
+          <div class="stat-delta">{{ stat.delta }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="f-left">{{ operator_name }} · Confidenziale</div>
+    <div class="progress-bar">
+      <div class="progress-fill" style="--progress-width: {{ progress_percent }}%"></div>
+    </div>
+    <div class="f-right">{{ presentation_date }}</div>
+  </footer>
+
+</div>
+</body>
+</html>

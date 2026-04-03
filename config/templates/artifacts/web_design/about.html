@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Chi Siamo – {{ business_name }}</title>
+<style>
+  :root {
+    --brand-primary: {{ brand_primary }};
+    --brand-accent: {{ brand_accent }};
+    --brand-primary-08: {{ brand_primary }}08;
+    --brand-accent-10: {{ brand_accent }}10;
+    --brand-primary-15: {{ brand_primary }}15;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1440px; height: 900px; overflow: hidden;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    background: #ffffff; color: #1e293b;
+  }
+
+  /* ── NAV ── */
+  nav {
+    height: 70px; background: white;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 80px;
+    position: relative; z-index: 10;
+  }
+  .logo { font-size: 20px; font-weight: 800; color: var(--brand-primary); letter-spacing: -0.5px; }
+  .nav-links { display: flex; gap: 32px; }
+  .nav-links a { font-size: 14px; color: #64748b; text-decoration: none; font-weight: 500; }
+  .nav-links a.active { color: var(--brand-primary); font-weight: 700; }
+  .nav-cta {
+    background: var(--brand-primary); color: white; padding: 10px 24px;
+    border-radius: 8px; font-size: 14px; font-weight: 600; text-decoration: none;
+  }
+
+  /* ── HERO CHI SIAMO ── */
+  .hero-about {
+    background: linear-gradient(135deg, var(--brand-primary-08) 0%, var(--brand-accent-10) 100%);
+    padding: 56px 80px;
+    display: flex; gap: 80px; align-items: center;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .hero-about-text { flex: 1; }
+  .page-label {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--brand-primary); margin-bottom: 16px;
+  }
+  .hero-title { font-size: 38px; font-weight: 800; line-height: 1.2; letter-spacing: -1px; margin-bottom: 20px; }
+  .hero-title em { font-style: normal; color: var(--brand-primary); }
+  .hero-desc { font-size: 16px; color: #64748b; line-height: 1.7; max-width: 520px; }
+
+  .hero-stats { display: flex; flex-direction: column; gap: 20px; flex-shrink: 0; }
+  .stat-card {
+    background: white; border-radius: 12px; padding: 20px 28px;
+    border: 1px solid #e2e8f0; min-width: 180px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .stat-value { font-size: 36px; font-weight: 800; color: var(--brand-primary); line-height: 1; }
+  .stat-label { font-size: 13px; color: #94a3b8; margin-top: 4px; }
+
+  /* ── VALORI ── */
+  .values-section { padding: 48px 80px; }
+  .section-title-row { display: flex; align-items: baseline; gap: 16px; margin-bottom: 32px; }
+  .section-title { font-size: 24px; font-weight: 700; }
+  .section-line { flex: 1; height: 1px; background: #e2e8f0; }
+
+  .values-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .value-card {
+    background: #f8fafc; border-radius: 16px; padding: 28px 24px;
+    border: 1px solid #e2e8f0; transition: transform 0.2s;
+  }
+  .value-icon {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: var(--brand-primary-15); display: flex; align-items: center; justify-content: center;
+    font-size: 20px; margin-bottom: 16px;
+  }
+  .value-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+  .value-desc { font-size: 13px; color: #64748b; line-height: 1.6; }
+
+  /* ── TEAM ── */
+  .team-section { padding: 0 80px 48px; }
+  .team-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .team-card {
+    background: white; border-radius: 16px; overflow: hidden;
+    border: 1px solid #e2e8f0; display: flex; gap: 20px; padding: 24px; align-items: flex-start;
+  }
+  .team-avatar {
+    width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--brand-primary) 0%, var(--brand-accent) 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700; color: white;
+  }
+  .team-name { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
+  .team-role { font-size: 12px; color: var(--brand-primary); font-weight: 600; margin-bottom: 8px; }
+  .team-bio { font-size: 12px; color: #64748b; line-height: 1.6; }
+
+  /* ── FOOTER ── */
+  footer {
+    background: #1e293b; color: white; padding: 16px 80px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .footer-logo { font-size: 16px; font-weight: 700; }
+  .footer-text { font-size: 12px; color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="logo">{{ business_name }}</div>
+  <div class="nav-links">
+    <a href="#">Home</a>
+    <a href="#" class="active">Chi Siamo</a>
+    <a href="#">Servizi</a>
+    <a href="#">Contatti</a>
+  </div>
+  <a href="#" class="nav-cta">Contattaci</a>
+</nav>
+
+<!-- HERO CHI SIAMO -->
+<div class="hero-about">
+  <div class="hero-about-text">
+    <div class="page-label">La nostra storia</div>
+    <h1 class="hero-title">
+      Passione, <em>competenza</em><br>e risultati concreti
+    </h1>
+    <p class="hero-desc">{{ about_description }}</p>
+  </div>
+  <div class="hero-stats">
+    {% for stat in hero_stats %}
+    <div class="stat-card">
+      <div class="stat-value">{{ stat.value }}</div>
+      <div class="stat-label">{{ stat.label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- VALORI -->
+<div class="values-section">
+  <div class="section-title-row">
+    <h2 class="section-title">I nostri valori</h2>
+    <div class="section-line"></div>
+  </div>
+  <div class="values-grid">
+    {% for value in company_values %}
+    <div class="value-card">
+      <div class="value-icon">{{ value.icon }}</div>
+      <div class="value-title">{{ value.title }}</div>
+      <div class="value-desc">{{ value.description }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% if team_members %}
+<!-- TEAM -->
+<div class="team-section">
+  <div class="section-title-row">
+    <h2 class="section-title">Il nostro team</h2>
+    <div class="section-line"></div>
+  </div>
+  <div class="team-grid">
+    {% for member in team_members %}
+    <div class="team-card">
+      <div class="team-avatar">{{ member.initials }}</div>
+      <div>
+        <div class="team-name">{{ member.name }}</div>
+        <div class="team-role">{{ member.role }}</div>
+        <div class="team-bio">{{ member.bio }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">{{ business_name }}</div>
+  <div class="footer-text">{{ footer_tagline }}</div>
+  <div class="footer-text">{{ business_city }} · {{ business_phone }}</div>
+</footer>
+
+</body>
+</html>

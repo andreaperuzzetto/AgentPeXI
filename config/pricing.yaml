@@ -1,0 +1,184 @@
+# Configurazione prezzi per servizio
+#
+# Usato da: Proposal Agent (sezione pricing del PDF)
+# Tutti i prezzi sono in EUR, per progetto (nessun prezzo orario).
+# I range rappresentano Mini / Standard / Premium in base a scope e complessità.
+# Il Proposal Agent sceglie la fascia basandosi sull'estimated_value_eur del lead
+# e sulla complessità rilevata dall'Analyst.
+#
+# Struttura amount_cents: importo in centesimi (es. 150000 = 1500 EUR)
+
+# ── Consulenza ────────────────────────────────────────────────────────────────
+consulting:
+  description: "Analisi operativa, workshop, roadmap, report"
+
+  # Il prezzo dipende dal numero di sessioni/giornate e dai deliverable
+  tiers:
+    mini:
+      label: "Analisi Express"
+      description: "1 sessione di analisi + report sintetico"
+      timeline_weeks: 2
+      amount_min_cents: 80000     # 800 EUR
+      amount_max_cents: 150000    # 1.500 EUR
+      deliverables:
+        - "Report di analisi (10-15 pagine)"
+        - "1 call di presentazione risultati"
+
+    standard:
+      label: "Piano Operativo"
+      description: "Analisi approfondita + 2 workshop + roadmap"
+      timeline_weeks: 4
+      amount_min_cents: 200000    # 2.000 EUR
+      amount_max_cents: 450000    # 4.500 EUR
+      deliverables:
+        - "Report di analisi (20-30 pagine)"
+        - "2 workshop operativi (mezza giornata ciascuno)"
+        - "Roadmap con timeline e responsabilità"
+        - "Sessione di follow-up a 30 giorni"
+
+    premium:
+      label: "Trasformazione Operativa"
+      description: "Analisi, workshop multipli, roadmap dettagliata, supporto implementazione"
+      timeline_weeks: 8
+      amount_min_cents: 500000    # 5.000 EUR
+      amount_max_cents: 1200000   # 12.000 EUR
+      deliverables:
+        - "Report diagnostico completo"
+        - "4+ workshop operativi"
+        - "Roadmap dettagliata 12 mesi"
+        - "Schemi processo as-is / to-be"
+        - "Supporto supervisione implementazione (4 settimane)"
+
+  # Moltiplicatori settore per consulenza
+  sector_price_multipliers:
+    professional_services: 1.20
+    healthcare: 1.15
+    manufacturing_craft: 0.90
+    horeca: 0.85
+
+# ── Web Design ────────────────────────────────────────────────────────────────
+web_design:
+  description: "Progettazione e realizzazione siti web, landing page, branding digitale"
+
+  tiers:
+    mini:
+      label: "Landing Page Professionale"
+      description: "Singola pagina ottimizzata per conversioni"
+      timeline_weeks: 2
+      amount_min_cents: 60000     # 600 EUR
+      amount_max_cents: 120000    # 1.200 EUR
+      deliverables:
+        - "Landing page responsive (desktop + mobile)"
+        - "Copy professionale in italiano"
+        - "Integrazione modulo di contatto"
+        - "Setup hosting base e dominio"
+
+    standard:
+      label: "Sito Web Completo"
+      description: "Sito multi-pagina con identità visiva curata"
+      timeline_weeks: 4
+      amount_min_cents: 150000    # 1.500 EUR
+      amount_max_cents: 350000    # 3.500 EUR
+      deliverables:
+        - "Sito web 4-6 pagine responsive"
+        - "Home, Chi siamo, Servizi, Contatti (+ eventuali sezioni)"
+        - "Branding base (palette, tipografia)"
+        - "SEO on-page essenziale"
+        - "Pannello CMS per aggiornamenti autonomi"
+        - "Setup dominio e hosting 1 anno incluso"
+
+    premium:
+      label: "Presenza Digitale Completa"
+      description: "Sito avanzato con e-commerce o prenotazioni + branding completo"
+      timeline_weeks: 6
+      amount_min_cents: 400000    # 4.000 EUR
+      amount_max_cents: 900000    # 9.000 EUR
+      deliverables:
+        - "Sito web 8-12 pagine responsive"
+        - "Modulo e-commerce o prenotazioni online"
+        - "Branding completo (logo, palette, guida stile)"
+        - "SEO tecnico + ottimizzazione performance"
+        - "Integrazione Google Analytics / Search Console"
+        - "Formazione utilizzo pannello (2h)"
+
+  sector_price_multipliers:
+    healthcare: 1.10
+    real_estate: 1.10
+    professional_services: 1.15
+    horeca: 1.00
+    retail: 0.95
+
+# ── Manutenzione Digitale ─────────────────────────────────────────────────────
+digital_maintenance:
+  description: "Aggiornamenti software, performance, sicurezza, monitoraggio continuativo"
+
+  # La manutenzione ha due modelli: una tantum (audit/bonifica) + canone mensile
+  tiers:
+    mini:
+      label: "Audit e Bonifica"
+      description: "Analisi stato attuale + intervento di ottimizzazione"
+      timeline_weeks: 2
+      amount_min_cents: 50000     # 500 EUR (una tantum)
+      amount_max_cents: 120000    # 1.200 EUR
+      deliverables:
+        - "Audit performance e sicurezza"
+        - "Report stato attuale con priorità"
+        - "Intervento di bonifica (aggiornamenti, ottimizzazioni)"
+        - "Report post-intervento"
+
+    standard:
+      label: "Manutenzione Continuativa"
+      description: "Canone mensile: aggiornamenti, sicurezza, monitoraggio"
+      timeline_weeks: null        # servizio ricorrente
+      billing_model: "monthly"
+      amount_min_cents: 15000     # 150 EUR/mese
+      amount_max_cents: 35000     # 350 EUR/mese
+      deliverables:
+        - "Aggiornamenti CMS/plugin mensili"
+        - "Monitoraggio uptime 24/7"
+        - "Backup settimanali automatici"
+        - "Report mensile performance e sicurezza"
+        - "Interventi veloci (< 4h lavorative)"
+
+    premium:
+      label: "Gestione Digitale Completa"
+      description: "Canone mensile: manutenzione + ottimizzazione continuativa + priorità"
+      timeline_weeks: null
+      billing_model: "monthly"
+      amount_min_cents: 40000     # 400 EUR/mese
+      amount_max_cents: 80000     # 800 EUR/mese
+      deliverables:
+        - "Tutto del piano Standard"
+        - "Ottimizzazione performance mensile"
+        - "Security scanning settimanale"
+        - "Gestione aggiornamenti contenuti (4h/mese)"
+        - "Priorità di risposta (SLA 2h lavorative)"
+        - "Call mensile di review"
+
+  sector_price_multipliers:
+    healthcare: 1.20
+    professional_services: 1.15
+    e_commerce: 1.10
+    horeca: 0.90
+
+# ── Milestone fatturazione (default) ─────────────────────────────────────────
+# Override possibile per-deal tramite deals.deposit_pct / deals.payment_terms_days
+billing_milestones:
+  project:             # per tiers: mini, standard, premium di consulting e web_design
+    deposit_pct: 30    # al kickoff_confirmed
+    delivery_pct: 60   # al delivery_approved
+    trailing_pct: 10   # +30 giorni da delivery_approved
+    trailing_days: 30
+
+  monthly:             # per digital_maintenance standard e premium
+    # Fattura mensile dopo conferma kickoff; non split deposit/delivery
+    billing_model: monthly
+    first_invoice_trigger: kickoff_confirmed
+    invoice_day_of_month: 1    # primo del mese
+    payment_terms_days: 15
+
+# ── Tasse ────────────────────────────────────────────────────────────────────
+tax:
+  default_rate_pct: 22.00      # IVA standard italiana
+  # Nota: alcune categorie professionali (es. regime forfettario) possono avere
+  # regimi diversi — gestire manualmente per ora, non automatizzare

@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Proposta — {{ business_name }}</title>
+  <style>
+    /* ── Reset e base ──────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    body {
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      font-size: 10pt;
+      color: #1a1a2e;
+      background: #ffffff;
+    }
+
+    /* ── Utilities ────────────────────────────────────────────────────── */
+    .page-break { page-break-after: always; }
+    .text-center { text-align: center; }
+    .text-right  { text-align: right; }
+    .fw-bold     { font-weight: 700; }
+    .mt-4  { margin-top: 1rem; }
+    .mt-8  { margin-top: 2rem; }
+    .mt-12 { margin-top: 3rem; }
+    .mb-2  { margin-bottom: 0.5rem; }
+    .mb-4  { margin-bottom: 1rem; }
+
+    /* ── Cover ─────────────────────────────────────────────────────────── */
+    .cover {
+      width: 100%;
+      height: 100%;
+      min-height: 297mm;
+      background: linear-gradient(150deg, #0f172a 0%, #1e3a5f 60%, #0ea5e9 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 40mm 30mm 24mm 30mm;
+      color: #ffffff;
+    }
+
+    .cover-logo {
+      font-size: 13pt;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      opacity: 0.9;
+    }
+
+    .cover-main { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+
+    .cover-tag {
+      font-size: 9pt;
+      font-weight: 500;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #7dd3fc;
+      margin-bottom: 12pt;
+    }
+
+    .cover-title {
+      font-size: 28pt;
+      font-weight: 800;
+      line-height: 1.15;
+      margin-bottom: 8pt;
+    }
+
+    .cover-subtitle {
+      font-size: 14pt;
+      font-weight: 400;
+      opacity: 0.8;
+      margin-bottom: 20pt;
+    }
+
+    .cover-divider {
+      width: 60pt;
+      height: 3pt;
+      background: #0ea5e9;
+      border-radius: 2pt;
+      margin-bottom: 20pt;
+    }
+
+    .cover-sector-badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1pt solid rgba(255,255,255,0.3);
+      border-radius: 20pt;
+      padding: 4pt 12pt;
+      font-size: 8.5pt;
+      font-weight: 500;
+    }
+
+    .cover-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      font-size: 8pt;
+      opacity: 0.6;
+    }
+
+    /* ── Layout pagine interne ───────────────────────────────────────────── */
+    .page {
+      width: 210mm;
+      min-height: 297mm;
+      padding: 18mm 22mm 16mm 22mm;
+      position: relative;
+    }
+
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 8pt;
+      border-bottom: 1.5pt solid #e2e8f0;
+      margin-bottom: 20pt;
+      font-size: 8pt;
+      color: #94a3b8;
+    }
+
+    .page-header-brand { font-weight: 700; color: #1e3a5f; font-size: 9pt; }
+
+    .page-footer {
+      position: absolute;
+      bottom: 10mm;
+      left: 22mm;
+      right: 22mm;
+      display: flex;
+      justify-content: space-between;
+      font-size: 7.5pt;
+      color: #94a3b8;
+      border-top: 0.5pt solid #e2e8f0;
+      padding-top: 5pt;
+    }
+
+    /* ── Tipografia sezioni ──────────────────────────────────────────────── */
+    .section-number {
+      font-size: 8pt;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #0ea5e9;
+      margin-bottom: 4pt;
+    }
+
+    h1 {
+      font-size: 18pt;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1.2;
+      margin-bottom: 10pt;
+    }
+
+    h2 {
+      font-size: 13pt;
+      font-weight: 700;
+      color: #1e3a5f;
+      margin-bottom: 8pt;
+      padding-bottom: 4pt;
+      border-bottom: 1pt solid #dbeafe;
+    }
+
+    h3 {
+      font-size: 10.5pt;
+      font-weight: 700;
+      color: #1e3a5f;
+      margin-bottom: 5pt;
+    }
+
+    p {
+      line-height: 1.6;
+      color: #374151;
+      margin-bottom: 8pt;
+    }
+
+    /* ── Callout / Highlight box ─────────────────────────────────────────── */
+    .callout {
+      background: #f0f9ff;
+      border-left: 3pt solid #0ea5e9;
+      border-radius: 0 6pt 6pt 0;
+      padding: 10pt 14pt;
+      margin: 12pt 0;
+    }
+
+    .callout-label {
+      font-size: 7.5pt;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #0284c7;
+      margin-bottom: 4pt;
+    }
+
+    .callout p {
+      margin-bottom: 0;
+      font-size: 9.5pt;
+      color: #1e3a5f;
+    }
+
+    /* ── Card deliverable ────────────────────────────────────────────────── */
+    .deliverable-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8pt;
+      margin: 10pt 0;
+    }
+
+    .deliverable-card {
+      background: #f8fafc;
+      border: 1pt solid #e2e8f0;
+      border-radius: 6pt;
+      padding: 10pt 12pt;
+    }
+
+    .deliverable-card-icon {
+      font-size: 14pt;
+      margin-bottom: 4pt;
+    }
+
+    .deliverable-card h3 {
+      font-size: 9.5pt;
+      margin-bottom: 3pt;
+    }
+
+    .deliverable-card p {
+      font-size: 8.5pt;
+      color: #64748b;
+      margin-bottom: 0;
+    }
+
+    /* ── Pricing ─────────────────────────────────────────────────────────── */
+    .pricing-box {
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+      border-radius: 8pt;
+      padding: 18pt 22pt;
+      color: #ffffff;
+      margin: 16pt 0;
+    }
+
+    .pricing-label {
+      font-size: 8pt;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #7dd3fc;
+      margin-bottom: 6pt;
+    }
+
+    .pricing-amount {
+      font-size: 28pt;
+      font-weight: 800;
+      margin-bottom: 4pt;
+    }
+
+    .pricing-note {
+      font-size: 8pt;
+      opacity: 0.7;
+    }
+
+    .pricing-breakdown {
+      margin-top: 12pt;
+      padding-top: 12pt;
+      border-top: 1pt solid rgba(255,255,255,0.2);
+      display: flex;
+      gap: 24pt;
+    }
+
+    .pricing-milestone {
+      flex: 1;
+    }
+
+    .pricing-milestone-label {
+      font-size: 7.5pt;
+      opacity: 0.7;
+      margin-bottom: 2pt;
+    }
+
+    .pricing-milestone-value {
+      font-size: 11pt;
+      font-weight: 700;
+    }
+
+    /* ── Timeline ────────────────────────────────────────────────────────── */
+    .timeline {
+      position: relative;
+      padding-left: 20pt;
+      margin: 10pt 0;
+    }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 5pt;
+      top: 6pt;
+      bottom: 6pt;
+      width: 1.5pt;
+      background: #e2e8f0;
+    }
+
+    .timeline-item {
+      position: relative;
+      margin-bottom: 14pt;
+    }
+
+    .timeline-dot {
+      position: absolute;
+      left: -18pt;
+      top: 2pt;
+      width: 8pt;
+      height: 8pt;
+      border-radius: 50%;
+      background: #0ea5e9;
+      border: 1.5pt solid #ffffff;
+      box-shadow: 0 0 0 1.5pt #0ea5e9;
+    }
+
+    .timeline-week {
+      font-size: 7.5pt;
+      font-weight: 700;
+      color: #0ea5e9;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 2pt;
+    }
+
+    .timeline-title {
+      font-size: 9.5pt;
+      font-weight: 700;
+      color: #1e3a5f;
+      margin-bottom: 2pt;
+    }
+
+    .timeline-desc {
+      font-size: 8.5pt;
+      color: #64748b;
+    }
+
+    /* ── ROI / Metriche ──────────────────────────────────────────────────── */
+    .metrics-row {
+      display: flex;
+      gap: 10pt;
+      margin: 10pt 0;
+    }
+
+    .metric-card {
+      flex: 1;
+      background: #f8fafc;
+      border: 1pt solid #e2e8f0;
+      border-top: 3pt solid #0ea5e9;
+      border-radius: 6pt;
+      padding: 10pt 12pt;
+      text-align: center;
+    }
+
+    .metric-value {
+      font-size: 18pt;
+      font-weight: 800;
+      color: #1e3a5f;
+    }
+
+    .metric-label {
+      font-size: 7.5pt;
+      color: #64748b;
+      margin-top: 2pt;
+    }
+
+    /* ── CTA finale ───────────────────────────────────────────────────────── */
+    .cta-box {
+      background: #f0f9ff;
+      border: 1.5pt solid #bae6fd;
+      border-radius: 8pt;
+      padding: 16pt 20pt;
+      text-align: center;
+      margin: 16pt 0;
+    }
+
+    .cta-title {
+      font-size: 13pt;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 6pt;
+    }
+
+    .cta-desc {
+      font-size: 9pt;
+      color: #475569;
+      margin-bottom: 10pt;
+    }
+
+    .cta-button {
+      display: inline-block;
+      background: #0ea5e9;
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 9pt;
+      padding: 7pt 20pt;
+      border-radius: 20pt;
+      text-decoration: none;
+    }
+
+    .cta-url {
+      margin-top: 6pt;
+      font-size: 8pt;
+      color: #0284c7;
+      word-break: break-all;
+    }
+
+    /* ── Lista ────────────────────────────────────────────────────────────── */
+    ul.check-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    ul.check-list li {
+      padding: 4pt 0 4pt 16pt;
+      position: relative;
+      font-size: 9.5pt;
+      color: #374151;
+      line-height: 1.5;
+      border-bottom: 0.5pt solid #f1f5f9;
+    }
+
+    ul.check-list li:last-child { border-bottom: none; }
+
+    ul.check-list li::before {
+      content: '✓';
+      position: absolute;
+      left: 0;
+      color: #0ea5e9;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- 1. COVER                                                              -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div class="cover page-break">
+    <div class="cover-logo">{{ operator_name }}</div>
+
+    <div class="cover-main">
+      <div class="cover-tag">Proposta commerciale</div>
+      <div class="cover-title">{{ business_name }}</div>
+      <div class="cover-subtitle">{{ service_type_label }}</div>
+      <div class="cover-divider"></div>
+      <div class="cover-sector-badge">{{ sector_label }}</div>
+    </div>
+
+    <div class="cover-footer">
+      <span>Preparata da {{ operator_name }}</span>
+      <span>{{ proposal_date }}</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- 2. PROBLEMA IDENTIFICATO                                              -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div class="page page-break">
+    <div class="page-header">
+      <span class="page-header-brand">{{ operator_name }}</span>
+      <span>Proposta per {{ business_name }}</span>
+    </div>
+
+    <div class="section-number">01 — Analisi della situazione</div>
+    <h1>Abbiamo identificato<br>un'opportunità per voi</h1>
+
+    <div class="callout">
+      <div class="callout-label">Gap identificato</div>
+      <p>{{ gap_summary }}</p>
+    </div>
+
+    <p class="mt-8">
+      Nell'analisi che abbiamo condotto su <strong>{{ business_name }}</strong> 
+      nel settore <em>{{ sector_label }}</em>, abbiamo rilevato che i principali
+      competitors della vostra zona stanno ottenendo risultati migliori grazie a:
+    </p>
+
+    <ul class="check-list mt-4">
+      {% for signal in gap_signals %}
+      <li>{{ signal }}</li>
+      {% endfor %}
+    </ul>
+
+    <div class="page-footer">
+      <span>{{ operator_name }} — Confidenziale</span>
+      <span>2</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- 3. SOLUZIONE PROPOSTA                                                 -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div class="page page-break">
+    <div class="page-header">
+      <span class="page-header-brand">{{ operator_name }}</span>
+      <span>Proposta per {{ business_name }}</span>
+    </div>
+
+    <div class="section-number">02 — La nostra proposta</div>
+    <h1>La soluzione</h1>
+
+    <p>{{ solution_summary }}</p>
+
+    <h2 class="mt-8">Cosa includiamo</h2>
+
+    <div class="deliverable-grid">
+      {% for d in deliverables %}
+      <div class="deliverable-card">
+        <h3>{{ d.title }}</h3>
+        <p>{{ d.description }}</p>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="page-footer">
+      <span>{{ operator_name }} — Confidenziale</span>
+      <span>3</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- 4. ARTEFATTI (mockup, roadmap, schemi — inject from artifact_paths)  -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  {% if artifact_paths %}
+  <div class="page page-break">
+    <div class="page-header">
+      <span class="page-header-brand">{{ operator_name }}</span>
+      <span>Proposta per {{ business_name }}</span>
+    </div>
+
+    <div class="section-number">03 — Anteprima</div>
+    <h1>{{ artifact_section_title }}</h1>
+    <p>{{ artifact_section_desc }}</p>
+
+    {% for path in artifact_paths %}
+    <img src="{{ path }}" style="width:100%; border-radius:6pt; margin-top:10pt; border:1pt solid #e2e8f0;" alt="Anteprima artefatto">
+    {% endfor %}
+
+    <div class="page-footer">
+      <span>{{ operator_name }} — Confidenziale</span>
+      <span>4</span>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- 5. ROI / VALORE                                                       -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div class="page page-break">
+    <div class="page-header">
+      <span class="page-header-brand">{{ operator_name }}</span>
+      <span>Proposta per {{ business_name }}</span>
+    </div>
+
+    <div class="section-number">0{{ "4" if artifact_paths else "3" }} — Valore atteso</div>
+    <h1>Risultati concreti</h1>
+
+    <p>{{ roi_summary }}</p>
+
+    <div class="metrics-row mt-8">
+      {% for metric in roi_metrics %}
+      <div class="metric-card">
+        <div class="metric-value">{{ metric.value }}</div>
+        <div class="metric-label">{{ metric.label }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="page-footer">
+      <span>{{ operator_name }} — Confidenziale</span>
+      <span>{{ "5" if artifact_paths else "4" }}</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- 6. PRICING                                                            -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div class="page page-break">
+    <div class="page-header">
+      <span class="page-header-brand">{{ operator_name }}</span>
+      <span>Proposta per {{ business_name }}</span>
+    </div>
+
+    <div class="section-number">0{{ "5" if artifact_paths else "4" }} — Investimento</div>
+    <h1>Pricing</h1>
+
+    <div class="pricing-box">
+      <div class="pricing-label">Investimento totale</div>
+      <div class="pricing-amount">€ {{ total_price_formatted }}</div>
+      <div class="pricing-note">IVA 22% non inclusa · Pagamento per progetto</div>
+      <div class="pricing-breakdown">
+        <div class="pricing-milestone">
+          <div class="pricing-milestone-label">Acconto al kickoff</div>
+          <div class="pricing-milestone-value">€ {{ deposit_amount_formatted }} (30%)</div>
+        </div>
+        <div class="pricing-milestone">
+          <div class="pricing-milestone-label">Saldo alla consegna</div>
+          <div class="pricing-milestone-value">€ {{ delivery_amount_formatted }} (60%)</div>
+        </div>
+        <div class="pricing-milestone">
+          <div class="pricing-milestone-label">Saldo +30 giorni</div>
+          <div class="pricing-milestone-value">€ {{ trailing_amount_formatted }} (10%)</div>
+        </div>
+      </div>
+    </div>
+
+    <p style="font-size:8.5pt; color:#64748b;">
+      Il preventivo è valido per 30 giorni dalla data di emissione.
+      I prezzi sono espressi in EUR, IVA esclusa.
+    </p>
+
+    <div class="page-footer">
+      <span>{{ operator_name }} — Confidenziale</span>
+      <span>{{ "6" if artifact_paths else "5" }}</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- 7. TIMELINE                                                           -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div class="page page-break">
+    <div class="page-header">
+      <span class="page-header-brand">{{ operator_name }}</span>
+      <span>Proposta per {{ business_name }}</span>
+    </div>
+
+    <div class="section-number">0{{ "6" if artifact_paths else "5" }} — Tempi</div>
+    <h1>Timeline di esecuzione</h1>
+    <p>Durata stimata: <strong>{{ timeline_weeks }} settimane</strong> dall'approvazione.</p>
+
+    <div class="timeline mt-8">
+      {% for milestone in milestones %}
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div class="timeline-week">Settimana {{ milestone.week }}</div>
+        <div class="timeline-title">{{ milestone.title }}</div>
+        <div class="timeline-desc">{{ milestone.description }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="page-footer">
+      <span>{{ operator_name }} — Confidenziale</span>
+      <span>{{ "7" if artifact_paths else "6" }}</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- 8. PROSSIMI PASSI / CTA                                              -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div class="page">
+    <div class="page-header">
+      <span class="page-header-brand">{{ operator_name }}</span>
+      <span>Proposta per {{ business_name }}</span>
+    </div>
+
+    <div class="section-number">0{{ "7" if artifact_paths else "6" }} — Prossimi passi</div>
+    <h1>Come procedere</h1>
+
+    <div class="timeline mt-4">
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div class="timeline-week">Passo 1</div>
+        <div class="timeline-title">Revisione proposta</div>
+        <div class="timeline-desc">Esaminate la proposta e condividete eventuali domande o osservazioni.</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div class="timeline-week">Passo 2</div>
+        <div class="timeline-title">Approvazione via portale</div>
+        <div class="timeline-desc">Cliccate il link nella email per approvare la proposta. L'intero processo richiede meno di un minuto.</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div class="timeline-week">Passo 3</div>
+        <div class="timeline-title">Kickoff</div>
+        <div class="timeline-desc">Vi contatteremo entro 24 ore per pianificare il kickoff e le prime attività.</div>
+      </div>
+    </div>
+
+    <div class="cta-box mt-8">
+      <div class="cta-title">Pronto ad iniziare?</div>
+      <div class="cta-desc">
+        Approvate la proposta direttamente online — bastano pochi secondi.
+      </div>
+      <div class="cta-button">Visualizza e approva la proposta</div>
+      <div class="cta-url">{{ portal_url }}</div>
+    </div>
+
+    <p class="text-center" style="font-size:8pt; color:#94a3b8; margin-top:14pt;">
+      Per qualsiasi domanda: {{ operator_email }} · {{ operator_phone }}
+    </p>
+
+    <div class="page-footer">
+      <span>{{ operator_name }} — Confidenziale</span>
+      <span>{{ "8" if artifact_paths else "7" }}</span>
+    </div>
+  </div>
+
+</body>
+</html>

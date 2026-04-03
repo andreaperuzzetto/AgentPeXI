@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Piano di Aggiornamento – {{ business_name }}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1440px; height: 900px; overflow: hidden;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    background: #0f172a; color: #e2e8f0;
+  }
+  .page { width: 100%; height: 100%; display: flex; flex-direction: column; }
+
+  /* ── HEADER ── */
+  header {
+    background: linear-gradient(135deg, #065f46 0%, #059669 100%);
+    padding: 24px 56px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 22px; font-weight: 700; }
+  header .meta { font-size: 13px; opacity: 0.8; text-align: right; line-height: 1.6; }
+  .tag {
+    background: rgba(255,255,255,0.2); padding: 4px 12px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+    display: inline-block; margin-top: 4px;
+  }
+
+  /* ── BODY ── */
+  .body { flex: 1; display: flex; gap: 0; overflow: hidden; }
+
+  /* ── SIDEBAR ── */
+  .sidebar { width: 320px; background: #1e293b; border-right: 1px solid #334155; overflow: hidden; }
+  .sidebar-header {
+    padding: 20px 24px; border-bottom: 1px solid #334155;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #64748b;
+  }
+  .system-item {
+    padding: 16px 24px; border-bottom: 1px solid #1e293b;
+    display: flex; align-items: flex-start; gap: 12px;
+  }
+  .system-status-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px;
+  }
+  .dot-critical { background: #ef4444; }
+  .dot-warning  { background: #f59e0b; }
+  .dot-ok       { background: #22c55e; }
+  .sys-name { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+  .sys-version { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .sys-badge {
+    margin-left: auto; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .badge-critical { background: rgba(239,68,68,0.15); color: #f87171; }
+  .badge-warning  { background: rgba(245,158,11,0.15); color: #fbbf24; }
+  .badge-ok       { background: rgba(34,197,94,0.15);  color: #4ade80; }
+
+  /* ── MAIN ── */
+  .main { flex: 1; padding: 28px 40px; display: flex; flex-direction: column; gap: 20px; overflow: hidden; }
+
+  /* ── OVERVIEW CARDS ── */
+  .overview-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .ov-card {
+    background: #1e293b; border-radius: 10px; padding: 16px 20px;
+    border: 1px solid #334155;
+  }
+  .ov-value { font-size: 26px; font-weight: 800; }
+  .ov-label { font-size: 11px; color: #64748b; margin-top: 4px; }
+  .ov-value.red { color: #f87171; }
+  .ov-value.yellow { color: #fbbf24; }
+  .ov-value.green { color: #4ade80; }
+  .ov-value.blue { color: #60a5fa; }
+
+  /* ── PIANO AGGIORNAMENTI ── */
+  .plan-section h3 { font-size: 14px; font-weight: 700; color: #94a3b8; margin-bottom: 12px; }
+  .plan-table { width: 100%; border-collapse: collapse; }
+  .plan-table th {
+    text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; color: #64748b; padding: 8px 16px; border-bottom: 1px solid #334155;
+  }
+  .plan-table td { padding: 10px 16px; font-size: 13px; border-bottom: 1px solid #1e293b; }
+  .plan-table tr:hover td { background: #1e293b; }
+
+  .priority-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+  }
+  .p-critical { background: rgba(239,68,68,0.15); color: #f87171; }
+  .p-high     { background: rgba(245,158,11,0.15); color: #fbbf24; }
+  .p-medium   { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .p-low      { background: rgba(100,116,139,0.15); color: #94a3b8; }
+
+  .phase-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; color: #94a3b8; background: #334155;
+  }
+
+  /* ── TIMELINE MINI ── */
+  .timeline-section h3 { font-size: 14px; font-weight: 700; color: #94a3b8; margin-bottom: 12px; }
+  .timeline-row { display: flex; align-items: center; gap: 0; }
+  .tl-phase {
+    flex: 1; background: #1e293b; border-radius: 8px; padding: 12px 16px;
+    border: 1px solid #334155; margin-right: 4px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .tl-month { font-size: 10px; color: #64748b; font-weight: 700; text-transform: uppercase; }
+  .tl-items { font-size: 12px; color: #94a3b8; line-height: 1.5; }
+  .tl-arrow { color: #334155; font-size: 16px; margin: 0 2px; flex-shrink: 0; }
+
+  .downtime-ok   { color: #4ade80; }
+  .downtime-warn  { color: #fbbf24; }
+
+  /* ── FOOTER ── */
+  footer {
+    background: #1e293b; border-top: 1px solid #334155;
+    padding: 12px 56px; display: flex; align-items: center; justify-content: space-between;
+  }
+  footer .f-note { font-size: 11px; color: #64748b; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HEADER -->
+  <header>
+    <div>
+      <h1>Piano di Aggiornamento — {{ business_name }}</h1>
+      <div style="font-size:13px;opacity:0.8;margin-top:4px;">{{ sector_label }} · Piano {{ plan_period }}</div>
+    </div>
+    <div class="meta">
+      <div>Analisi: {{ analysis_date }}</div>
+      <div>Prossima revisione: {{ next_review_date }}</div>
+      <div class="tag">Manutenzione Digitale</div>
+    </div>
+  </header>
+
+  <!-- BODY -->
+  <div class="body">
+
+    <!-- SIDEBAR: SISTEMI -->
+    <aside class="sidebar">
+      <div class="sidebar-header">Sistemi rilevati</div>
+      {% for system in systems %}
+      <div class="system-item">
+        <div class="system-status-dot dot-{{ system.status }}"></div>
+        <div>
+          <div class="sys-name">{{ system.name }}</div>
+          <div class="sys-version">{{ system.current_version }} → {{ system.target_version }}</div>
+        </div>
+        <span class="sys-badge badge-{{ system.status }}">{{ system.status_label }}</span>
+      </div>
+      {% endfor %}
+    </aside>
+
+    <!-- MAIN -->
+    <main class="main">
+
+      <!-- OVERVIEW -->
+      <div class="overview-row">
+        <div class="ov-card">
+          <div class="ov-value red">{{ critical_count }}</div>
+          <div class="ov-label">Aggiornamenti critici</div>
+        </div>
+        <div class="ov-card">
+          <div class="ov-value yellow">{{ high_count }}</div>
+          <div class="ov-label">Priorità alta</div>
+        </div>
+        <div class="ov-card">
+          <div class="ov-value blue">{{ medium_count }}</div>
+          <div class="ov-label">Pianificati</div>
+        </div>
+        <div class="ov-card">
+          <div class="ov-value green">{{ completed_count }}</div>
+          <div class="ov-label">Completati (ytd)</div>
+        </div>
+      </div>
+
+      <!-- PIANO AGGIORNAMENTI -->
+      <div class="plan-section">
+        <h3>Piano interventi dettagliato</h3>
+        <table class="plan-table">
+          <thead>
+            <tr>
+              <th style="width:200px">Sistema</th>
+              <th>Intervento</th>
+              <th style="width:110px">Priorità</th>
+              <th style="width:110px">Fase</th>
+              <th style="width:90px">Stima</th>
+              <th style="width:100px">Downtime</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in update_items %}
+            <tr>
+              <td style="font-weight:600">{{ item.system }}</td>
+              <td>{{ item.description }}</td>
+              <td><span class="priority-badge p-{{ item.priority }}">{{ item.priority_label }}</span></td>
+              <td><span class="phase-badge">{{ item.phase }}</span></td>
+              <td style="color:#94a3b8">{{ item.estimate }}</td>
+              <td class="{% if item.downtime == 'Nessuno' %}downtime-ok{% else %}downtime-warn{% endif %}">{{ item.downtime }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- TIMELINE -->
+      <div class="timeline-section">
+        <h3>Roadmap mensile</h3>
+        <div class="timeline-row">
+          {% for phase in monthly_phases %}
+          <div class="tl-phase">
+            <div class="tl-month">{{ phase.month }}</div>
+            <div class="tl-items">{{ phase.items | join(', ') }}</div>
+          </div>
+          {% if not loop.last %}
+          <div class="tl-arrow">›</div>
+          {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="f-note">Generato da {{ operator_name }} · Piano soggetto a revisione mensile</div>
+    <div class="f-note">Test e staging prima di ogni deploy in produzione</div>
+  </footer>
+
+</div>
+</body>
+</html>

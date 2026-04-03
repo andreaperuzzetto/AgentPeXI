@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Mockup Landing — {{ business_name }}</title>
+  <style>
+    :root {
+      --brand-primary: {{ brand_primary | default('#0f172a') }};
+      --brand-accent: {{ brand_accent | default('#0ea5e9') }};
+      --brand-secondary: {{ brand_secondary | default('#1e3a5f') }};
+      --brand-accent-20: {{ brand_accent | default('#0ea5e9') }}20;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      background: #f1f5f9;
+      width: 1440px;
+      min-height: 900px;
+    }
+
+    /* Navigazione */
+    nav {
+      background: var(--brand-primary);
+      padding: 0 80px;
+      height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav-logo {
+      font-size: 19px;
+      font-weight: 800;
+      color: #ffffff;
+      letter-spacing: -0.02em;
+    }
+    .nav-links {
+      display: flex;
+      gap: 32px;
+      list-style: none;
+    }
+    .nav-links li a {
+      font-size: 13px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.75);
+      text-decoration: none;
+    }
+    .nav-cta {
+      background: var(--brand-accent);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 9px 22px;
+      border-radius: 6px;
+      text-decoration: none;
+    }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(135deg,
+        var(--brand-primary) 0%,
+        var(--brand-secondary) 100%);
+      padding: 80px 80px 70px;
+      display: flex;
+      align-items: center;
+      gap: 80px;
+    }
+    .hero-text { flex: 1; }
+    .hero-badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #bbd6ff;
+      margin-bottom: 20px;
+      letter-spacing: 0.05em;
+    }
+    .hero h1 {
+      font-size: 48px;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1.1;
+      margin-bottom: 18px;
+    }
+    .hero p {
+      font-size: 16px;
+      color: rgba(255,255,255,0.7);
+      line-height: 1.6;
+      margin-bottom: 32px;
+      max-width: 480px;
+    }
+    .hero-cta {
+      display: inline-block;
+      background: var(--brand-accent);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      padding: 14px 32px;
+      border-radius: 8px;
+      text-decoration: none;
+    }
+    .hero-image {
+      flex: 0 0 440px;
+      height: 300px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      color: rgba(255,255,255,0.4);
+    }
+
+    /* Servizi */
+    .services { background: #fff; padding: 64px 80px; }
+    .section-tag {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--brand-accent);
+      margin-bottom: 10px;
+    }
+    .section-title {
+      font-size: 30px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 40px;
+    }
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+    .service-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .service-icon {
+      width: 44px; height: 44px;
+      background: var(--brand-accent-20);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      margin-bottom: 14px;
+    }
+    .service-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 8px;
+    }
+    .service-desc {
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.6;
+    }
+
+    /* CTA finale */
+    .cta-section {
+      background: var(--brand-primary);
+      padding: 64px 80px;
+      text-align: center;
+    }
+    .cta-section h2 {
+      font-size: 32px;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 14px;
+    }
+    .cta-section p {
+      font-size: 15px;
+      color: rgba(255,255,255,0.6);
+      margin-bottom: 28px;
+    }
+    .cta-main {
+      display: inline-block;
+      background: var(--brand-accent);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      padding: 14px 36px;
+      border-radius: 8px;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="nav-logo">{{ business_name }}</div>
+    <ul class="nav-links">
+      {% for link in nav_links %}
+      <li><a href="#">{{ link }}</a></li>
+      {% endfor %}
+    </ul>
+    <a href="#" class="nav-cta">Contattaci</a>
+  </nav>
+
+  <section class="hero">
+    <div class="hero-text">
+      <div class="hero-badge">{{ sector_label }}</div>
+      <h1>{{ hero_headline }}</h1>
+      <p>{{ hero_subtext }}</p>
+      <a href="#" class="hero-cta">{{ hero_cta_label }}</a>
+    </div>
+    <div class="hero-image">[ Immagine principale ]</div>
+  </section>
+
+  <section class="services">
+    <div class="section-tag">I Nostri Servizi</div>
+    <div class="section-title">{{ services_title }}</div>
+    <div class="services-grid">
+      {% for service in services %}
+      <div class="service-card">
+        <div class="service-icon">{{ service.icon }}</div>
+        <div class="service-title">{{ service.title }}</div>
+        <div class="service-desc">{{ service.description }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="cta-section">
+    <h2>{{ cta_headline }}</h2>
+    <p>{{ cta_subtext }}</p>
+    <a href="#" class="cta-main">{{ cta_button_label }}</a>
+  </section>
+</body>
+</html>

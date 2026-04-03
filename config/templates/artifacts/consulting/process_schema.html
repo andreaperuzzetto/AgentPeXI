@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Schema Processo — {{ business_name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      background: #f8fafc;
+      color: #1e293b;
+      width: 1440px;
+      min-height: 900px;
+      padding: 60px 80px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 56px;
+    }
+    .tag { font-size: 10px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: #0ea5e9; margin-bottom: 6px; }
+    h1 { font-size: 32px; font-weight: 800; color: #0f172a; }
+    .badge {
+      background: #0f172a; color: #fff;
+      border-radius: 20px; padding: 8px 20px;
+      font-size: 12px; font-weight: 600;
+    }
+
+    /* Colonne AS-IS / TO-BE */
+    .columns { display: flex; gap: 24px; margin-bottom: 40px; }
+    .column { flex: 1; }
+    .column-header {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 16px;
+    }
+    .column-label {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; padding: 4px 12px;
+      border-radius: 4px;
+    }
+    .col-asis .column-label { background: #fee2e2; color: #991b1b; }
+    .col-tobe .column-label { background: #dcfce7; color: #166534; }
+
+    .arrow-divider {
+      display: flex; align-items: center; justify-content: center;
+      width: 48px; margin-top: 48px;
+      font-size: 28px; color: #0ea5e9; font-weight: 300;
+    }
+
+    /* Step cards */
+    .step {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 12px;
+      position: relative;
+    }
+    .col-asis .step { border-left: 4px solid #f87171; }
+    .col-tobe .step { border-left: 4px solid #4ade80; }
+
+    .step-number {
+      position: absolute; top: 14px; right: 16px;
+      width: 24px; height: 24px; border-radius: 50%;
+      background: #f1f5f9;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; color: #64748b;
+    }
+    .step-title { font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+    .step-desc { font-size: 11px; color: #64748b; line-height: 1.5; }
+    .step-tag {
+      display: inline-block; margin-top: 8px;
+      font-size: 9px; font-weight: 700; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 4px;
+    }
+    .tag-problema { background: #fee2e2; color: #991b1b; }
+    .tag-miglioramento { background: #dcfce7; color: #166534; }
+
+    /* Impatto */
+    .impact-row { display: flex; gap: 16px; }
+    .impact-card {
+      flex: 1; background: #0f172a; border-radius: 10px; padding: 20px 24px;
+      color: #fff; text-align: center;
+    }
+    .impact-value { font-size: 32px; font-weight: 800; color: #38bdf8; }
+    .impact-label { font-size: 11px; color: #64748b; margin-top: 4px; }
+
+    .footer {
+      display: flex; justify-content: space-between;
+      margin-top: 32px; padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 11px; color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="tag">Analisi dei processi</div>
+      <h1>Schema Operativo — {{ business_name }}</h1>
+    </div>
+    <div class="badge">{{ sector_label }}</div>
+  </div>
+
+  <div class="columns">
+    <div class="column col-asis">
+      <div class="column-header">
+        <span class="column-label">Situazione attuale (AS-IS)</span>
+      </div>
+      {% for step in asis_steps %}
+      <div class="step">
+        <div class="step-number">{{ loop.index }}</div>
+        <div class="step-title">{{ step.title }}</div>
+        <div class="step-desc">{{ step.description }}</div>
+        {% if step.problem %}
+        <span class="step-tag tag-problema">⚠ {{ step.problem }}</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="arrow-divider">→</div>
+
+    <div class="column col-tobe">
+      <div class="column-header">
+        <span class="column-label">Situazione ottimizzata (TO-BE)</span>
+      </div>
+      {% for step in tobe_steps %}
+      <div class="step">
+        <div class="step-number">{{ loop.index }}</div>
+        <div class="step-title">{{ step.title }}</div>
+        <div class="step-desc">{{ step.description }}</div>
+        {% if step.improvement %}
+        <span class="step-tag tag-miglioramento">✓ {{ step.improvement }}</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="impact-row">
+    {% for impact in impacts %}
+    <div class="impact-card">
+      <div class="impact-value">{{ impact.value }}</div>
+      <div class="impact-label">{{ impact.label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="footer">
+    <span>{{ operator_name }}</span>
+    <span>Schema processi per {{ business_name }}</span>
+  </div>
+</body>
+</html>

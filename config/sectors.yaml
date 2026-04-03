@@ -1,0 +1,216 @@
+# Settori di business target
+#
+# Usato da:
+#   - Scout Agent: valida che il settore richiesto sia in lista
+#   - Market Analyst Agent: contestualizza lo scoring e i gap signals
+#   - Template email: popola {{sector_label}}
+#
+# Struttura:
+#   key:    identificatore snake_case (usato in DB e payload)
+#   label:  nome italiano leggibile (usato in email e proposte)
+#   service_affinity: quali servizi sono più probabili per questo settore
+#                     (orienta l'Analyst ma non esclude altri servizi)
+#   keywords: parole chiave per la ricerca su Google Maps Places
+
+sectors:
+
+  horeca:
+    label: "Ristorazione e Ospitalità"
+    service_affinity: [web_design, digital_maintenance, consulting]
+    keywords:
+      - ristorante
+      - pizzeria
+      - bar
+      - trattoria
+      - osteria
+      - caffetteria
+      - pub
+      - birreria
+      - gelateria
+      - pasticceria
+
+  hotel_tourism:
+    label: "Turismo e Ricettività"
+    service_affinity: [web_design, digital_maintenance, consulting]
+    keywords:
+      - hotel
+      - albergo
+      - b&b
+      - bed and breakfast
+      - agriturismo
+      - affittacamere
+      - residence
+      - campeggio
+      - ostello
+
+  retail:
+    label: "Commercio al Dettaglio"
+    service_affinity: [web_design, digital_maintenance]
+    keywords:
+      - negozio
+      - boutique
+      - abbigliamento
+      - calzature
+      - gioielleria
+      - libreria
+      - ferramenta
+      - elettronica
+      - arredamento
+      - articoli sportivi
+
+  food_retail:
+    label: "Alimentari e Gastronomia"
+    service_affinity: [web_design, digital_maintenance]
+    keywords:
+      - macelleria
+      - salumeria
+      - pescheria
+      - forno
+      - panetteria
+      - alimentari
+      - vinoteca
+      - enoteca
+      - gastronomia
+
+  beauty_wellness:
+    label: "Bellezza e Benessere"
+    service_affinity: [web_design, digital_maintenance]
+    keywords:
+      - parrucchiere
+      - barbiere
+      - estetista
+      - centro estetico
+      - spa
+      - centro benessere
+      - nail studio
+      - tatuaggi
+
+  fitness_sport:
+    label: "Sport e Fitness"
+    service_affinity: [web_design, digital_maintenance, consulting]
+    keywords:
+      - palestra
+      - centro sportivo
+      - piscina
+      - yoga
+      - pilates
+      - crossfit
+      - arti marziali
+      - tennis
+      - padel
+
+  healthcare:
+    label: "Salute e Medicina"
+    service_affinity: [web_design, digital_maintenance]
+    keywords:
+      - studio medico
+      - ambulatorio
+      - dentista
+      - odontoiatra
+      - fisioterapista
+      - osteopata
+      - psicologo
+      - farmacia
+      - ottico
+      - veterinario
+
+  education:
+    label: "Formazione e Istruzione"
+    service_affinity: [web_design, consulting, digital_maintenance]
+    keywords:
+      - scuola privata
+      - centro formazione
+      - scuola guida
+      - autoscuola
+      - corsi di lingua
+      - tutoring
+      - doposcuola
+      - accademia
+
+  professional_services:
+    label: "Servizi Professionali"
+    service_affinity: [consulting, web_design, digital_maintenance]
+    keywords:
+      - studio legale
+      - avvocato
+      - commercialista
+      - consulente fiscale
+      - notaio
+      - architetto
+      - ingegnere
+      - geometra
+      - studio di progettazione
+      - agenzia assicurativa
+
+  real_estate:
+    label: "Agenzie Immobiliari"
+    service_affinity: [web_design, digital_maintenance, consulting]
+    keywords:
+      - agenzia immobiliare
+      - immobiliare
+      - affitti
+      - vendita immobili
+
+  automotive:
+    label: "Auto e Motori"
+    service_affinity: [web_design, digital_maintenance]
+    keywords:
+      - officina meccanica
+      - autofficina
+      - carrozzeria
+      - concessionaria
+      - vendita auto
+      - gommista
+      - autolavaggio
+      - noleggio auto
+
+  construction:
+    label: "Edilizia e Impiantistica"
+    service_affinity: [web_design, consulting, digital_maintenance]
+    keywords:
+      - impresa edile
+      - ristrutturazioni
+      - idraulico
+      - elettricista
+      - imbianchino
+      - falegname
+      - serramentista
+      - climatizzazione
+      - impiantista
+
+  manufacturing_craft:
+    label: "Artigianato e Piccola Produzione"
+    service_affinity: [web_design, consulting, digital_maintenance]
+    keywords:
+      - artigiano
+      - officina
+      - laboratorio artigianale
+      - sartoria
+      - ceramica
+      - tipografia
+      - stamperia
+      - produzione alimentare
+
+  logistics_transport:
+    label: "Logistica e Trasporti"
+    service_affinity: [consulting, digital_maintenance]
+    keywords:
+      - trasporto merci
+      - corriere
+      - spedizioni
+      - magazzino
+      - traslochi
+      - taxi
+      - noleggio con conducente
+
+  creative_media:
+    label: "Creatività e Media"
+    service_affinity: [web_design, consulting]
+    keywords:
+      - studio fotografico
+      - agenzia di comunicazione
+      - web agency
+      - grafico
+      - fotografo
+      - videomaker
+      - studio di registrazione

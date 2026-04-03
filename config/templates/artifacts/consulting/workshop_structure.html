@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Workshop – {{ business_name }}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1440px; height: 900px; overflow: hidden;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    background: #0f172a; color: #e2e8f0;
+  }
+  .page {
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+  }
+
+  /* ── HEADER ── */
+  header {
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+    padding: 28px 56px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
+  header .meta { font-size: 13px; opacity: 0.8; text-align: right; line-height: 1.6; }
+  .tag {
+    background: rgba(255,255,255,0.2);
+    padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-top: 6px; display: inline-block;
+  }
+
+  /* ── LAYOUT ── */
+  .body {
+    flex: 1; display: flex; gap: 0; overflow: hidden;
+  }
+
+  /* ── SIDEBAR MODULI ── */
+  .sidebar {
+    width: 300px; background: #1e293b; border-right: 1px solid #334155;
+    display: flex; flex-direction: column; padding: 24px 0;
+  }
+  .sidebar-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: #64748b; padding: 0 24px 16px;
+  }
+  .module-item {
+    padding: 14px 24px; cursor: pointer;
+    display: flex; align-items: flex-start; gap: 12px;
+    border-left: 3px solid transparent; transition: all 0.2s;
+  }
+  .module-item.active {
+    border-left-color: #3b82f6; background: rgba(59,130,246,0.08);
+  }
+  .module-number {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: #334155; color: #94a3b8; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .module-item.active .module-number { background: #3b82f6; color: white; }
+  .module-info .mod-title { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+  .module-info .mod-duration { font-size: 11px; color: #64748b; margin-top: 2px; }
+
+  /* ── CONTENT AREA ── */
+  .content {
+    flex: 1; padding: 32px 48px; display: flex; flex-direction: column; gap: 24px; overflow: hidden;
+  }
+
+  /* ── OVERVIEW CARDS ── */
+  .overview-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+  }
+  .overview-card {
+    background: #1e293b; border-radius: 12px; padding: 20px;
+    border: 1px solid #334155;
+  }
+  .overview-card .oc-value {
+    font-size: 28px; font-weight: 700; color: #3b82f6;
+  }
+  .overview-card .oc-label { font-size: 12px; color: #64748b; margin-top: 4px; }
+
+  /* ── AGENDA TABLE ── */
+  .agenda-section { flex: 1; }
+  .agenda-section h3 { font-size: 15px; font-weight: 700; margin-bottom: 16px; color: #94a3b8; }
+  .agenda-table { width: 100%; border-collapse: collapse; }
+  .agenda-table th {
+    text-align: left; font-size: 11px; font-weight: 700; color: #64748b;
+    text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 16px;
+    border-bottom: 1px solid #334155;
+  }
+  .agenda-table td {
+    padding: 12px 16px; font-size: 13px; border-bottom: 1px solid #1e293b;
+    vertical-align: top;
+  }
+  .agenda-table tr:hover td { background: #1e293b; }
+
+  .slot-time { color: #94a3b8; font-weight: 600; white-space: nowrap; }
+  .slot-title { font-weight: 600; color: #e2e8f0; }
+  .slot-desc { font-size: 12px; color: #64748b; margin-top: 3px; }
+  .slot-type {
+    display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+  }
+  .type-lecture { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .type-exercise { background: rgba(16,185,129,0.15); color: #34d399; }
+  .type-break { background: rgba(100,116,139,0.15); color: #94a3b8; }
+  .type-workshop { background: rgba(168,85,247,0.15); color: #c084fc; }
+  .type-qa { background: rgba(245,158,11,0.15); color: #fbbf24; }
+
+  /* ── OBIETTIVI ── */
+  .objectives-panel {
+    background: #1e293b; border-radius: 12px; padding: 20px;
+    border: 1px solid #334155;
+  }
+  .objectives-panel h3 { font-size: 13px; font-weight: 700; color: #94a3b8; margin-bottom: 12px; }
+  .obj-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+  .obj-icon { color: #22c55e; font-size: 14px; flex-shrink: 0; }
+  .obj-text { font-size: 13px; color: #e2e8f0; line-height: 1.5; }
+
+  /* ── FOOTER ── */
+  footer {
+    background: #1e293b; border-top: 1px solid #334155;
+    padding: 12px 56px; display: flex; align-items: center; justify-content: space-between;
+  }
+  footer .footer-note { font-size: 11px; color: #64748b; }
+  .participants-badges { display: flex; gap: 8px; }
+  .badge-p {
+    background: #334155; border-radius: 6px; padding: 4px 10px;
+    font-size: 11px; font-weight: 600; color: #94a3b8;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HEADER -->
+  <header>
+    <div>
+      <h1>Workshop: {{ workshop_title }}</h1>
+      <div style="font-size:13px; opacity:0.8; margin-top:4px;">{{ business_name }} · {{ sector_label }}</div>
+    </div>
+    <div class="meta">
+      <div>Data: {{ workshop_date }}</div>
+      <div>Durata totale: {{ total_duration }}</div>
+      <div class="tag">{{ service_type_label }}</div>
+    </div>
+  </header>
+
+  <!-- BODY -->
+  <div class="body">
+
+    <!-- SIDEBAR MODULI -->
+    <aside class="sidebar">
+      <div class="sidebar-title">Moduli</div>
+      {% for module in modules %}
+      <div class="module-item {% if loop.first %}active{% endif %}">
+        <div class="module-number">{{ loop.index }}</div>
+        <div class="module-info">
+          <div class="mod-title">{{ module.title }}</div>
+          <div class="mod-duration">{{ module.duration }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </aside>
+
+    <!-- CONTENT -->
+    <main class="content">
+
+      <!-- OVERVIEW -->
+      <div class="overview-grid">
+        <div class="overview-card">
+          <div class="oc-value">{{ participants_count }}</div>
+          <div class="oc-label">Partecipanti</div>
+        </div>
+        <div class="overview-card">
+          <div class="oc-value">{{ modules_count }}</div>
+          <div class="oc-label">Moduli formativi</div>
+        </div>
+        <div class="overview-card">
+          <div class="oc-value">{{ exercises_count }}</div>
+          <div class="oc-label">Esercitazioni pratiche</div>
+        </div>
+        <div class="overview-card">
+          <div class="oc-value">{{ deliverables_count }}</div>
+          <div class="oc-label">Output concreti</div>
+        </div>
+      </div>
+
+      <!-- AGENDA -->
+      <div class="agenda-section">
+        <h3>Agenda del giorno</h3>
+        <table class="agenda-table">
+          <thead>
+            <tr>
+              <th style="width:100px">Orario</th>
+              <th>Sessione</th>
+              <th style="width:120px">Tipo</th>
+              <th style="width:100px">Durata</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for slot in agenda %}
+            <tr>
+              <td class="slot-time">{{ slot.time }}</td>
+              <td>
+                <div class="slot-title">{{ slot.title }}</div>
+                {% if slot.description %}
+                <div class="slot-desc">{{ slot.description }}</div>
+                {% endif %}
+              </td>
+              <td>
+                <span class="slot-type type-{{ slot.type }}">{{ slot.type_label }}</span>
+              </td>
+              <td style="color:#94a3b8; font-size:12px;">{{ slot.duration }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- OBIETTIVI -->
+      <div class="objectives-panel">
+        <h3>Obiettivi di apprendimento</h3>
+        {% for obj in learning_objectives %}
+        <div class="obj-item">
+          <span class="obj-icon">✓</span>
+          <span class="obj-text">{{ obj }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+    </main>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-note">Materiali e registrazioni condivisi entro 24h · {{ operator_name }}</div>
+    <div class="participants-badges">
+      {% for role in participant_roles %}
+      <span class="badge-p">{{ role }}</span>
+      {% endfor %}
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

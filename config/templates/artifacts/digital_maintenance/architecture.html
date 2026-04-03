@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Schema Architetturale — {{ business_name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      width: 1440px;
+      min-height: 900px;
+      padding: 60px 80px;
+    }
+    .header { margin-bottom: 48px; }
+    .tag { font-size: 10px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: #22d3ee; margin-bottom: 8px; }
+    h1 { font-size: 32px; font-weight: 800; color: #f1f5f9; margin-bottom: 4px; }
+    .subtitle { font-size: 14px; color: #64748b; }
+
+    /* Stato attuale */
+    .state-section { margin-bottom: 40px; }
+    .state-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; padding: 4px 12px; border-radius: 4px;
+      display: inline-block; margin-bottom: 16px;
+    }
+    .state-current { background: #7f1d1d; color: #fca5a5; }
+    .state-target  { background: #14532d; color: #86efac; }
+
+    .system-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .system-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px;
+      position: relative;
+    }
+    .system-card.outdated {
+      border-color: #7f1d1d;
+      background: #1c1412;
+    }
+    .system-card.updated {
+      border-color: #14532d;
+      background: #0d1f17;
+    }
+    .system-card-icon { font-size: 22px; margin-bottom: 8px; }
+    .system-card-name { font-size: 13px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px; }
+    .system-card-version { font-size: 10px; color: #64748b; margin-bottom: 8px; }
+    .system-card-issues {
+      list-style: none;
+    }
+    .system-card-issues li {
+      font-size: 10px;
+      padding: 3px 0;
+      border-bottom: 1px solid #1e293b;
+      color: #94a3b8;
+    }
+    .system-card-issues li:last-child { border-bottom: none; }
+    .system-card-issues li::before { content: '• '; color: #ef4444; }
+    .system-card.updated .system-card-issues li::before { color: #22c55e; }
+
+    .risk-badge {
+      position: absolute; top: 10px; right: 10px;
+      font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
+    }
+    .risk-high   { background: #7f1d1d; color: #fca5a5; }
+    .risk-medium { background: #78350f; color: #fcd34d; }
+    .risk-fixed  { background: #14532d; color: #86efac; }
+
+    /* Piano interventi */
+    .plan { display: flex; gap: 16px; }
+    .plan-step {
+      flex: 1;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 20px;
+      position: relative;
+    }
+    .plan-step-number {
+      position: absolute; top: -12px; left: 16px;
+      width: 24px; height: 24px; border-radius: 50%;
+      background: #22d3ee; color: #0f172a;
+      font-size: 11px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .plan-step-title { font-size: 13px; font-weight: 700; color: #f1f5f9; margin-bottom: 6px; margin-top: 8px; }
+    .plan-step-desc { font-size: 11px; color: #64748b; line-height: 1.5; margin-bottom: 10px; }
+    .plan-step-tag {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.05em;
+      text-transform: uppercase; padding: 3px 8px; border-radius: 4px;
+      background: #0e7490; color: #cffafe;
+    }
+
+    .footer {
+      display: flex; justify-content: space-between;
+      margin-top: 40px; padding-top: 16px;
+      border-top: 1px solid #1e293b;
+      font-size: 11px; color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="tag">Analisi infrastruttura digitale</div>
+    <h1>Schema Architetturale — {{ business_name }}</h1>
+    <div class="subtitle">Stato attuale · Criticità · Piano di intervento</div>
+  </div>
+
+  <!-- Stato attuale -->
+  <div class="state-section">
+    <span class="state-label state-current">Stato attuale — Criticità rilevate</span>
+    <div class="system-grid">
+      {% for system in current_systems %}
+      <div class="system-card {{ 'outdated' if system.has_issues else '' }}">
+        {% if system.risk %}
+        <span class="risk-badge risk-{{ system.risk }}">{{ system.risk | upper }}</span>
+        {% endif %}
+        <div class="system-card-icon">{{ system.icon }}</div>
+        <div class="system-card-name">{{ system.name }}</div>
+        <div class="system-card-version">{{ system.version }}</div>
+        <ul class="system-card-issues">
+          {% for issue in system.issues %}
+          <li>{{ issue }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Piano interventi -->
+  <div>
+    <span class="state-label state-target">Piano di intervento</span>
+    <div class="plan">
+      {% for step in intervention_steps %}
+      <div class="plan-step">
+        <div class="plan-step-number">{{ loop.index }}</div>
+        <div class="plan-step-title">{{ step.title }}</div>
+        <div class="plan-step-desc">{{ step.description }}</div>
+        <span class="plan-step-tag">{{ step.timeframe }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>{{ operator_name }}</span>
+    <span>Piano manutenzione per {{ business_name }}</span>
+  </div>
+</body>
+</html>
