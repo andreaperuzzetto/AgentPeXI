@@ -25,7 +25,7 @@ def get_checkpointer():
     return AsyncPostgresSaver.from_conn_string(postgres_url)
 
 
-def build_graph() -> StateGraph:
+def build_graph(checkpointer) -> StateGraph:  # type: ignore[type-arg]
     """
     Costruisce e compila il grafo LangGraph principale di AgentPeXI.
 
@@ -166,4 +166,4 @@ def build_graph() -> StateGraph:
     g.add_edge("dispatch_account_manager", "dispatch_billing")
     g.add_edge("dispatch_billing", END)
 
-    return g.compile(checkpointer=get_checkpointer())
+    return g.compile(checkpointer=checkpointer)

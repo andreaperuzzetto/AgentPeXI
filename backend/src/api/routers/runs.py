@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,6 @@ from api.deps import get_current_operator, get_db
 from api.schemas.run import RunCreate, RunCreateResponse, RunDetail, RunListResponse, RunSummary
 from db.models.run import Run
 from db.models.task import Task
-from orchestrator.graph import build_graph
 from orchestrator.state import AgentState
 
 log = structlog.get_logger()
@@ -78,6 +77,7 @@ async def list_runs(
 
 @router.post("", response_model=RunCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_run(
+    request: Request,
     body: RunCreate,
     db: AsyncSession = Depends(get_db),
     _operator: str = Depends(get_current_operator),
@@ -142,7 +142,7 @@ async def create_run(
 
     # Avvia il grafo in modo asincrono (fire-and-forget) —
     # il grafo persiste il proprio stato tramite checkpointer PostgreSQL
-    graph = build_graph()
+    graph = request.app.state.graph
     import asyncio
     asyncio.create_task(
         graph.ainvoke(

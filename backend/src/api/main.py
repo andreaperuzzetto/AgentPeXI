@@ -18,17 +18,18 @@ from api.routers import (
     tasks,
     webhooks,
 )
-from orchestrator.graph import get_checkpointer
+from orchestrator.graph import build_graph, get_checkpointer
 
 log = structlog.get_logger()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
-    checkpointer = get_checkpointer()
-    await checkpointer.setup()
-    log.info("api.startup", checkpointer="postgres")
-    yield
+    async with get_checkpointer() as checkpointer:
+        await checkpointer.setup()
+        app.state.graph = build_graph(checkpointer)
+        log.info("api.startup", checkpointer="postgres")
+        yield
     log.info("api.shutdown")
 
 

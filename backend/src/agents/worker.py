@@ -33,6 +33,7 @@ app.conf.update(
     worker_prefetch_multiplier=1,   # un task alla volta — safe con acks_late
     task_time_limit=600,            # hard kill dopo 10 minuti
     task_soft_time_limit=300,       # SIGTERM dopo 5 minuti (gestibile)
+    broker_connection_retry_on_startup=True,  # Celery 6.0 compat
 )
 
 # Alias per import dall'Orchestrator

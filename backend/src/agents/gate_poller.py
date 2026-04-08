@@ -106,11 +106,12 @@ async def _try_resume(run_id: str, deal_id: str, gate_type: str) -> None:
 
     # Riprendi il grafo LangGraph dal checkpoint
     # Import lazy per evitare circolarità all'avvio del worker
-    from orchestrator.graph import build_graph  # noqa: PLC0415
+    from orchestrator.graph import build_graph, get_checkpointer  # noqa: PLC0415
 
-    graph = build_graph()
-    config = {"configurable": {"thread_id": run_id}}
-    await graph.ainvoke(None, config=config)
+    async with get_checkpointer() as checkpointer:
+        graph = build_graph(checkpointer)
+        config = {"configurable": {"thread_id": run_id}}
+        await graph.ainvoke(None, config=config)
 
     # Aggiorna runs.status → 'running'
     async with get_db_session() as db:
