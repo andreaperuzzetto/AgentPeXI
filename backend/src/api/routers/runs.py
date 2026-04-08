@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -87,7 +87,7 @@ async def create_run(
     Tipi supportati: discovery | proposal | delivery | post_sale | support
     """
     run_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     # Determina fase e deal_id dal payload
     phase_map: dict[str, str] = {
@@ -236,7 +236,7 @@ async def cancel_run(
     await db.execute(
         update(Run)
         .where(Run.run_id == run_id)
-        .values(status="cancelled", updated_at=datetime.now(timezone.utc))
+        .values(status="cancelled", updated_at=datetime.utcnow())
     )
     log.info("api.runs.cancelled", run_id=run_id)
     return {"run_id": run_id, "status": "cancelled"}

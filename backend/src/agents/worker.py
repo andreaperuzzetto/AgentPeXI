@@ -47,6 +47,39 @@ celery_app = app
 log = structlog.get_logger()
 
 
+# ── Fix asyncpg + fork ────────────────────────────────────────────────────────
+# asyncpg lega l'engine all'event loop al momento della creazione.
+# Dopo il fork(), il worker figlio eredita un engine con il loop del padre
+# (già chiuso). La soluzione è ricreare completamente engine e factory
+# usando NullPool: nessun pooling, ogni asyncio.run() apre/chiude connessioni
+# fresche senza mai riutilizzare connessioni di altri loop.
+from celery.signals import worker_process_init
+
+
+@worker_process_init.connect
+def _recreate_engine_after_fork(**kwargs: object) -> None:
+    import os
+    import db.engine as db_engine
+    from sqlalchemy.ext.asyncio import (
+        create_async_engine,
+        async_sessionmaker,
+        AsyncSession,
+    )
+    from sqlalchemy.pool import NullPool
+
+    db_engine.engine = create_async_engine(
+        os.environ["DATABASE_URL"],
+        echo=False,
+        poolclass=NullPool,
+    )
+    db_engine.AsyncSessionFactory = async_sessionmaker(
+        bind=db_engine.engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autobegin=True,
+    )
+
+
 # ── Pubblicazione risultati su Redis ──────────────────────────────────────────
 
 async def _publish_result(result: AgentResult) -> None:

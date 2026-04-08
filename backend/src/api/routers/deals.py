@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -136,7 +136,7 @@ async def gate_proposal_approve(
     _operator: str = Depends(get_current_operator),
 ) -> DealGateResponse:
     await _get_or_404(deal_id, db)
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     await update_deal(
         uuid.UUID(deal_id),
         {"proposal_human_approved": True, "proposal_approved_at": now},
@@ -190,7 +190,7 @@ async def gate_kickoff_confirm(
     _operator: str = Depends(get_current_operator),
 ) -> DealGateResponse:
     await _get_or_404(deal_id, db)
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     await update_deal(
         uuid.UUID(deal_id),
         {"kickoff_confirmed": True, "kickoff_confirmed_at": now},
@@ -215,7 +215,7 @@ async def gate_delivery_approve(
     _operator: str = Depends(get_current_operator),
 ) -> DealGateResponse:
     deal = await _get_or_404(deal_id, db)
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     if deal.service_type == "consulting":
         update_data = {"consulting_approved": True, "consulting_approved_at": now}

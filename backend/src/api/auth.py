@@ -3,14 +3,12 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 import jwt as _jwt
 from jwt.exceptions import InvalidTokenError
-from passlib.context import CryptContext
 
 # Re-export per compatibilità nei dipendenti
 JWTError = InvalidTokenError
-
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_HOURS = 24
@@ -23,7 +21,9 @@ def _secret_key() -> str:
 def verify_password(plain: str) -> bool:
     """Verifica la password rispetto all'hash bcrypt in OPERATOR_PASSWORD_HASH."""
     stored_hash = os.environ.get("OPERATOR_PASSWORD_HASH", "")
-    return _pwd_context.verify(plain, stored_hash)
+    if not stored_hash:
+        return False
+    return bcrypt.checkpw(plain.encode(), stored_hash.encode())
 
 
 def create_access_token(email: str) -> str:

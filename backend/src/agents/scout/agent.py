@@ -101,6 +101,7 @@ class ScoutAgent(BaseAgent):
         # ── Write leads to DB (skip if dry_run) ───────────────────────────────
         leads_written = 0
         skipped_duplicates = 0
+        written_lead_ids: list[str] = []
 
         for place in places:
             # Deduplication: check existing lead by google_place_id before writing.
@@ -128,12 +129,12 @@ class ScoutAgent(BaseAgent):
                 "website_url": place.get("website_url"),
                 "phone": place.get("phone"),
                 "sector": sector,
-                "source": "google_maps",
             }
 
             try:
-                await create_lead(lead_data, db)
+                lead = await create_lead(lead_data, db)
                 leads_written += 1
+                written_lead_ids.append(str(lead.id))
             except LeadAlreadyExistsError:
                 # Race condition between check and insert — treat as duplicate.
                 skipped_duplicates += 1
@@ -154,6 +155,7 @@ class ScoutAgent(BaseAgent):
             output={
                 "leads_found": len(places),
                 "leads_written": leads_written,
+                "lead_ids": written_lead_ids,
                 "skipped_duplicates": skipped_duplicates,
                 "zone_searched": zone,
                 "radius_used_km": current_radius,

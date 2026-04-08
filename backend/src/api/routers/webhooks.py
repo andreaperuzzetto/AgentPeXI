@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
@@ -95,7 +95,7 @@ async def portal_client_approve(
             detail={"error": "token_expired", "message": "Token scaduto o non valido", "detail": {}},
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     async with get_db_session() as db:
         proposal = await _get_proposal_or_400(body.proposal_id, db)
@@ -153,7 +153,7 @@ async def portal_client_reject(
             detail={"error": "token_expired", "message": "Token scaduto o non valido", "detail": {}},
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     async with get_db_session() as db:
         proposal = await _get_proposal_or_400(body.proposal_id, db)
@@ -220,7 +220,7 @@ async def portal_client_delivery_confirm(
             detail={"error": "invalid_gate", "message": "Il token non è di tipo delivery", "detail": {}},
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     async with get_db_session() as db:
         proposal = await _get_proposal_or_400(body.proposal_id, db)
