@@ -14,6 +14,7 @@ from api.routers import (
     leads,
     proposals,
     runs,
+    sse,
     stats,
     tasks,
     webhooks,
@@ -51,6 +52,7 @@ app.add_middleware(ErrorHandlerMiddleware)
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(runs.router)
+app.include_router(sse.router)
 app.include_router(leads.router)
 app.include_router(deals.router)
 app.include_router(clients.router)
