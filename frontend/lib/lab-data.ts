@@ -42,6 +42,24 @@ export const ZONE_ICONS: Record<Zone, string> = {
   post_sale: "POST",
 };
 
+export type EventType =
+  | "task_started"
+  | "task_completed"
+  | "task_failed"
+  | "task_blocked"
+  | "gate_pending"
+  | "gate_approved"
+  | "run_completed"
+
+export interface PipelineEvent {
+  id:        string
+  type:      EventType
+  agent:     string
+  timestamp: number
+  message:   string
+  dealId?:   string
+}
+
 export const initialAgents: Agent[] = [
   {
     id: "scout",
@@ -303,21 +321,4 @@ export const pipelineSteps: PipelineStep[] = [
   },
 ];
 
-// Tile di fallback per le workstation (usato solo se tilemap.json non è ancora caricato)
-export const WORKSTATION_TILES: Record<string, { col: number; row: number }> = {
-  scout:                 { col: 2,  row: 5 },
-  lead_profiler:         { col: 3,  row: 5 },
-  analyst:               { col: 4,  row: 5 },
-  design:                { col: 10, row: 5 },
-  proposal:              { col: 11, row: 5 },
-  sales:                 { col: 12, row: 5 },
-  delivery_orchestrator: { col: 2,  row: 9 },
-  doc_generator:         { col: 3,  row: 9 },
-  delivery_tracker:      { col: 4,  row: 9 },
-  account_manager:       { col: 10, row: 9 },
-  billing:               { col: 11, row: 9 },
-  support:               { col: 12, row: 9 },
-};
 
-// Posizione della lavagna verde nell'immagine (percentuale del container)
-export const BLACKBOARD_POS = { x: 62, y: 42 };

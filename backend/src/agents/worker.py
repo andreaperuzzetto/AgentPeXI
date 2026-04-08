@@ -13,7 +13,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parents[3] / ".env")
 
 import redis.asyncio as aioredis
 import structlog
