@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { AnimatePresence } from "framer-motion";
-import { LabMap } from "@/components/lab/lab-map";
+import { GameCanvas } from "@/components/lab/game-canvas";
 import { HUDHeader, SidePanel, AgentDialog, DealOverlay } from "@/components/lab/hud";
 import {
   type Agent,
@@ -138,7 +138,7 @@ export default function LabDashboard() {
 
       {/* Lab Map */}
       <div className="pt-10">
-        <LabMap
+        <GameCanvas
           agents={agents}
           deal={deal}
           onAgentClick={handleAgentClick}

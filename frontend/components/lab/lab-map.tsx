@@ -4,7 +4,23 @@ import { type RefObject } from "react";
 import { motion } from "framer-motion";
 import { NPCSprite } from "./npc-sprite";
 import type { Agent, Deal } from "@/lib/lab-data";
-import { AGENT_POSITIONS, BLACKBOARD_POS } from "@/lib/lab-data";
+import { BLACKBOARD_POS } from "@/lib/lab-data";
+
+// Posizioni legacy — mantenute per retrocompatibilità (componente non più montato)
+const AGENT_POSITIONS: Record<string, { x: number; y: number }> = {
+  scout:            { x: 12, y: 20 },
+  lead_profiler:    { x: 25, y: 20 },
+  analyst:          { x: 38, y: 20 },
+  design:           { x: 58, y: 20 },
+  proposal:         { x: 72, y: 20 },
+  sales:            { x: 86, y: 20 },
+  delivery_orchestrator: { x: 12, y: 68 },
+  doc_generator:    { x: 25, y: 68 },
+  delivery_tracker: { x: 38, y: 68 },
+  account_manager:  { x: 58, y: 68 },
+  billing:          { x: 72, y: 68 },
+  support:          { x: 86, y: 68 },
+};
 
 interface LabMapProps {
   agents: Agent[];

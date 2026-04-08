@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import type { Agent, Deal, Zone } from "@/lib/lab-data";
-import { ZONE_LABELS, AGENT_POSITIONS } from "@/lib/lab-data";
+import { ZONE_LABELS } from "@/lib/lab-data";
 
 interface HUDHeaderProps {
   deal: Deal;

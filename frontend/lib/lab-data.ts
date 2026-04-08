@@ -303,25 +303,21 @@ export const pipelineSteps: PipelineStep[] = [
   },
 ];
 
-// Agent positions in the lab (percentage coordinates, 0–100 on both axes)
-export const AGENT_POSITIONS: Record<string, { x: number; y: number }> = {
-  // Discovery zone — top left
-  scout:            { x: 12, y: 20 },
-  lead_profiler:    { x: 25, y: 20 },
-  analyst:          { x: 38, y: 20 },
-  // Proposal zone — top right
-  design:           { x: 58, y: 20 },
-  proposal:         { x: 72, y: 20 },
-  sales:            { x: 86, y: 20 },
-  // Delivery zone — bottom left
-  delivery_orchestrator: { x: 12, y: 68 },
-  doc_generator:    { x: 25, y: 68 },
-  delivery_tracker: { x: 38, y: 68 },
-  // Post-sale zone — bottom right
-  account_manager:  { x: 58, y: 68 },
-  billing:          { x: 72, y: 68 },
-  support:          { x: 86, y: 68 },
+// Tile di fallback per le workstation (usato solo se tilemap.json non è ancora caricato)
+export const WORKSTATION_TILES: Record<string, { col: number; row: number }> = {
+  scout:                 { col: 2,  row: 5 },
+  lead_profiler:         { col: 3,  row: 5 },
+  analyst:               { col: 4,  row: 5 },
+  design:                { col: 10, row: 5 },
+  proposal:              { col: 11, row: 5 },
+  sales:                 { col: 12, row: 5 },
+  delivery_orchestrator: { col: 2,  row: 9 },
+  doc_generator:         { col: 3,  row: 9 },
+  delivery_tracker:      { col: 4,  row: 9 },
+  account_manager:       { col: 10, row: 9 },
+  billing:               { col: 11, row: 9 },
+  support:               { col: 12, row: 9 },
 };
 
-// Posizione della lavagna verde nell'immagine (lato destro, centro verticale)
+// Posizione della lavagna verde nell'immagine (percentuale del container)
 export const BLACKBOARD_POS = { x: 62, y: 42 };
