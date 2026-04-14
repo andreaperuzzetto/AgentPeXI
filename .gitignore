@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+
+# Database & storage
+*.db
+chromadb/
+storage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend build
+apps/frontend/node_modules/
+apps/frontend/dist/
+
+# Playwright
+playwright/.cache/
+
+# Logs
+*.log
+
+# Notes private
+plan.md
+NOTES.md

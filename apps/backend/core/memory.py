@@ -1,0 +1,639 @@
+"""MemoryManager — SQLite + ChromaDB per AgentPeXI.
+
+Schema: 9 tabelle SQLite (conversations, agent_logs, agent_steps, llm_calls,
+tool_calls, etsy_listings, scheduled_tasks, error_log, production_queue).
+ChromaDB collection `pepe_memory` con Voyage AI voyage-3-lite embeddings.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime, timedelta
+from typing import Any
+
+import aiosqlite
+
+from apps.backend.core.config import settings
+
+# ---------------------------------------------------------------------------
+# Schema SQL
+# ---------------------------------------------------------------------------
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_name TEXT NOT NULL,
+    task_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'running',
+    input_data TEXT,
+    output_data TEXT,
+    tokens_used INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0.0,
+    total_llm_calls INTEGER NOT NULL DEFAULT 0,
+    total_tool_calls INTEGER NOT NULL DEFAULT 0,
+    total_steps INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd REAL NOT NULL DEFAULT 0.0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES agent_logs(task_id),
+    agent_name TEXT NOT NULL,
+    step_number INTEGER NOT NULL,
+    step_type TEXT NOT NULL,
+    description TEXT,
+    input_data TEXT,
+    output_data TEXT,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES agent_logs(task_id),
+    step_id INTEGER REFERENCES agent_steps(id),
+    agent_name TEXT NOT NULL,
+    model TEXT NOT NULL,
+    system_prompt TEXT,
+    messages TEXT,
+    response TEXT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0.0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES agent_logs(task_id),
+    step_id INTEGER REFERENCES agent_steps(id),
+    agent_name TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    action TEXT NOT NULL,
+    input_params TEXT,
+    output_result TEXT,
+    status TEXT NOT NULL DEFAULT 'success',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS etsy_listings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id TEXT UNIQUE,
+    title TEXT NOT NULL,
+    product_type TEXT,
+    niche TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    price REAL,
+    views INTEGER NOT NULL DEFAULT 0,
+    favorites INTEGER NOT NULL DEFAULT 0,
+    sales INTEGER NOT NULL DEFAULT 0,
+    revenue REAL NOT NULL DEFAULT 0.0,
+    file_path TEXT,
+    tags TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    cron_expression TEXT,
+    agent_name TEXT,
+    task_data TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_run TEXT,
+    next_run TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS error_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_name TEXT NOT NULL,
+    error_type TEXT NOT NULL,
+    message TEXT NOT NULL,
+    task_id TEXT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS production_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_type TEXT NOT NULL,
+    niche TEXT NOT NULL,
+    title_seed TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned',
+    agent_log_id INTEGER REFERENCES agent_logs(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_logs_task_id ON agent_logs(task_id);
+CREATE INDEX IF NOT EXISTS idx_agent_logs_agent_name ON agent_logs(agent_name);
+CREATE INDEX IF NOT EXISTS idx_agent_steps_task_id ON agent_steps(task_id);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_task_id ON llm_calls(task_id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_task_id ON tool_calls(task_id);
+CREATE INDEX IF NOT EXISTS idx_error_log_agent_name ON error_log(agent_name);
+CREATE INDEX IF NOT EXISTS idx_production_queue_status ON production_queue(status);
+"""
+
+
+def _json_dumps(obj: Any) -> str | None:
+    if obj is None:
+        return None
+    return json.dumps(obj, ensure_ascii=False, default=str)
+
+
+def _json_loads(raw: str | None) -> Any:
+    if raw is None:
+        return None
+    return json.loads(raw)
+
+
+class MemoryManager:
+    """Gestore unificato SQLite + ChromaDB."""
+
+    def __init__(self) -> None:
+        self._db_path = os.path.join(settings.STORAGE_PATH, "agentpexi.db")
+        self._chromadb_path = os.path.join(settings.STORAGE_PATH, "chromadb")
+        self._db: aiosqlite.Connection | None = None
+        self._chroma_collection = None
+
+    # ------------------------------------------------------------------
+    # Init / shutdown
+    # ------------------------------------------------------------------
+
+    async def init(self) -> None:
+        """Inizializza DB SQLite (schema) e ChromaDB collection."""
+        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+        self._db = await aiosqlite.connect(self._db_path)
+        self._db.row_factory = aiosqlite.Row
+        await self._db.executescript(_SCHEMA)
+        await self._db.commit()
+
+        # ChromaDB + Voyage AI (lazy: fallisce silenziosamente se non disponibile)
+        try:
+            import chromadb
+            from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+
+            import voyageai  # noqa: F401 — verifica disponibilità
+
+            chroma_client = chromadb.PersistentClient(path=self._chromadb_path)
+
+            # Voyage AI embedding function tramite wrapper compatibile
+            voyage_ef = _VoyageEmbeddingFunction(
+                api_key=settings.VOYAGE_API_KEY,
+                model="voyage-3-lite",
+            )
+            self._chroma_collection = chroma_client.get_or_create_collection(
+                name="pepe_memory",
+                embedding_function=voyage_ef,
+            )
+        except Exception:
+            # ChromaDB/Voyage non disponibile — continua solo con SQLite
+            self._chroma_collection = None
+
+    async def close(self) -> None:
+        if self._db:
+            await self._db.close()
+            self._db = None
+
+    # ------------------------------------------------------------------
+    # Conversations
+    # ------------------------------------------------------------------
+
+    async def save_conversation(self, role: str, content: str) -> None:
+        await self._db.execute(
+            "INSERT INTO conversations (role, content) VALUES (?, ?)",
+            (role, content),
+        )
+        await self._db.commit()
+
+    async def get_recent_conversations(self, limit: int = 20) -> list[dict]:
+        cursor = await self._db.execute(
+            "SELECT role, content, timestamp FROM conversations ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+    # ------------------------------------------------------------------
+    # Agent logs
+    # ------------------------------------------------------------------
+
+    async def log_agent_task(
+        self,
+        agent_name: str,
+        task_id: str,
+        status: str = "running",
+        input_data: Any = None,
+        output_data: Any = None,
+        tokens: int = 0,
+        cost: float = 0.0,
+    ) -> None:
+        await self._db.execute(
+            """INSERT INTO agent_logs
+               (agent_name, task_id, status, input_data, output_data, tokens_used, cost_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                agent_name,
+                task_id,
+                status,
+                _json_dumps(input_data),
+                _json_dumps(output_data),
+                tokens,
+                cost,
+            ),
+        )
+        await self._db.commit()
+
+    async def finalize_agent_task(
+        self,
+        task_id: str,
+        status: str = "completed",
+        output_data: Any = None,
+        tokens_used: int = 0,
+        cost_usd: float = 0.0,
+        total_llm_calls: int = 0,
+        total_tool_calls: int = 0,
+        total_steps: int = 0,
+        total_cost_usd: float = 0.0,
+    ) -> None:
+        await self._db.execute(
+            """UPDATE agent_logs SET
+               status = ?, output_data = ?, tokens_used = ?, cost_usd = ?,
+               total_llm_calls = ?, total_tool_calls = ?, total_steps = ?,
+               total_cost_usd = ?, updated_at = datetime('now')
+               WHERE task_id = ?""",
+            (
+                status,
+                _json_dumps(output_data),
+                tokens_used,
+                cost_usd,
+                total_llm_calls,
+                total_tool_calls,
+                total_steps,
+                total_cost_usd,
+                task_id,
+            ),
+        )
+        await self._db.commit()
+
+    async def get_task_by_id(self, task_id: str) -> dict | None:
+        cursor = await self._db.execute(
+            "SELECT * FROM agent_logs WHERE task_id = ?", (task_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["input_data"] = _json_loads(d.get("input_data"))
+        d["output_data"] = _json_loads(d.get("output_data"))
+        return d
+
+    async def get_last_failed_task(self, agent_name: str | None = None) -> dict | None:
+        if agent_name:
+            cursor = await self._db.execute(
+                """SELECT * FROM agent_logs
+                   WHERE status = 'failed' AND agent_name = ?
+                   ORDER BY updated_at DESC LIMIT 1""",
+                (agent_name,),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM agent_logs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 1"
+            )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["input_data"] = _json_loads(d.get("input_data"))
+        d["output_data"] = _json_loads(d.get("output_data"))
+        return d
+
+    # ------------------------------------------------------------------
+    # Error log
+    # ------------------------------------------------------------------
+
+    async def log_error(
+        self,
+        agent_name: str,
+        error_type: str,
+        message: str,
+        task_id: str | None = None,
+    ) -> None:
+        await self._db.execute(
+            "INSERT INTO error_log (agent_name, error_type, message, task_id) VALUES (?, ?, ?, ?)",
+            (agent_name, error_type, message, task_id),
+        )
+        await self._db.commit()
+
+    async def get_agent_error_count(self, agent_name: str, hours: int = 1) -> int:
+        since = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM error_log WHERE agent_name = ? AND timestamp >= ?",
+            (agent_name, since),
+        )
+        row = await cursor.fetchone()
+        return row[0]
+
+    # ------------------------------------------------------------------
+    # Observability — agent_steps, llm_calls, tool_calls
+    # ------------------------------------------------------------------
+
+    async def log_step(
+        self,
+        task_id: str,
+        agent_name: str,
+        step_number: int,
+        step_type: str,
+        description: str | None,
+        input_data: Any = None,
+        output_data: Any = None,
+        duration_ms: int = 0,
+    ) -> int:
+        cursor = await self._db.execute(
+            """INSERT INTO agent_steps
+               (task_id, agent_name, step_number, step_type, description,
+                input_data, output_data, duration_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                task_id,
+                agent_name,
+                step_number,
+                step_type,
+                description,
+                _json_dumps(input_data),
+                _json_dumps(output_data),
+                duration_ms,
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def log_llm_call(
+        self,
+        task_id: str,
+        step_id: int | None,
+        agent_name: str,
+        model: str,
+        system_prompt: str | None,
+        messages: Any,
+        response: str | None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        cost_usd: float = 0.0,
+        duration_ms: int = 0,
+    ) -> int:
+        cursor = await self._db.execute(
+            """INSERT INTO llm_calls
+               (task_id, step_id, agent_name, model, system_prompt, messages,
+                response, input_tokens, output_tokens, cache_read_tokens,
+                cache_write_tokens, cost_usd, duration_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                task_id,
+                step_id,
+                agent_name,
+                model,
+                system_prompt,
+                _json_dumps(messages),
+                response,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                cost_usd,
+                duration_ms,
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def log_tool_call(
+        self,
+        task_id: str,
+        step_id: int | None,
+        agent_name: str,
+        tool_name: str,
+        action: str,
+        input_params: Any = None,
+        output_result: Any = None,
+        status: str = "success",
+        duration_ms: int = 0,
+        cost_usd: float | None = None,
+    ) -> int:
+        cursor = await self._db.execute(
+            """INSERT INTO tool_calls
+               (task_id, step_id, agent_name, tool_name, action,
+                input_params, output_result, status, duration_ms, cost_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                task_id,
+                step_id,
+                agent_name,
+                tool_name,
+                action,
+                _json_dumps(input_params),
+                _json_dumps(output_result),
+                status,
+                duration_ms,
+                cost_usd,
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_task_timeline(self, task_id: str) -> list[dict]:
+        """Restituisce tutti gli step + llm_calls + tool_calls per un task, ordinati per timestamp."""
+        results: list[dict] = []
+
+        cursor = await self._db.execute(
+            "SELECT *, 'step' as _type FROM agent_steps WHERE task_id = ?",
+            (task_id,),
+        )
+        for row in await cursor.fetchall():
+            d = dict(row)
+            d["input_data"] = _json_loads(d.get("input_data"))
+            d["output_data"] = _json_loads(d.get("output_data"))
+            results.append(d)
+
+        cursor = await self._db.execute(
+            "SELECT *, 'llm_call' as _type FROM llm_calls WHERE task_id = ?",
+            (task_id,),
+        )
+        for row in await cursor.fetchall():
+            d = dict(row)
+            d["messages"] = _json_loads(d.get("messages"))
+            results.append(d)
+
+        cursor = await self._db.execute(
+            "SELECT *, 'tool_call' as _type FROM tool_calls WHERE task_id = ?",
+            (task_id,),
+        )
+        for row in await cursor.fetchall():
+            d = dict(row)
+            d["input_params"] = _json_loads(d.get("input_params"))
+            d["output_result"] = _json_loads(d.get("output_result"))
+            results.append(d)
+
+        results.sort(key=lambda x: x.get("timestamp", ""))
+        return results
+
+    async def get_cost_breakdown(self, period_days: int = 30) -> dict:
+        """Cost breakdown per agente, per tool, per giorno, e totale."""
+        since = (datetime.utcnow() - timedelta(days=period_days)).strftime("%Y-%m-%d %H:%M:%S")
+
+        # Per agente (da agent_logs)
+        cursor = await self._db.execute(
+            """SELECT agent_name, SUM(total_cost_usd) as cost
+               FROM agent_logs WHERE updated_at >= ? AND status = 'completed'
+               GROUP BY agent_name""",
+            (since,),
+        )
+        per_agent = {row["agent_name"]: row["cost"] or 0.0 for row in await cursor.fetchall()}
+
+        # Per tool (da tool_calls)
+        cursor = await self._db.execute(
+            """SELECT tool_name, SUM(cost_usd) as cost
+               FROM tool_calls WHERE timestamp >= ? AND cost_usd IS NOT NULL
+               GROUP BY tool_name""",
+            (since,),
+        )
+        per_tool = {row["tool_name"]: row["cost"] or 0.0 for row in await cursor.fetchall()}
+
+        # Per giorno (da llm_calls — costo LLM è la componente principale)
+        cursor = await self._db.execute(
+            """SELECT DATE(timestamp) as day, SUM(cost_usd) as cost
+               FROM llm_calls WHERE timestamp >= ?
+               GROUP BY DATE(timestamp) ORDER BY day""",
+            (since,),
+        )
+        per_day = {row["day"]: row["cost"] or 0.0 for row in await cursor.fetchall()}
+
+        # Totale
+        total = sum(per_agent.values())
+
+        return {
+            "per_agent": per_agent,
+            "per_tool": per_tool,
+            "per_day": per_day,
+            "total": total,
+        }
+
+    # ------------------------------------------------------------------
+    # Production queue (deduplicazione pipeline)
+    # ------------------------------------------------------------------
+
+    async def add_to_production_queue(
+        self, product_type: str, niche: str, title_seed: str
+    ) -> int:
+        cursor = await self._db.execute(
+            """INSERT INTO production_queue (product_type, niche, title_seed)
+               VALUES (?, ?, ?)""",
+            (product_type, niche, title_seed),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def check_duplicate(
+        self, product_type: str, niche: str, title_seed: str
+    ) -> bool:
+        """True se esiste già in production_queue (completed) o etsy_listings."""
+        cursor = await self._db.execute(
+            """SELECT 1 FROM production_queue
+               WHERE product_type = ? AND niche = ? AND title_seed = ?
+               AND status = 'completed' LIMIT 1""",
+            (product_type, niche, title_seed),
+        )
+        if await cursor.fetchone():
+            return True
+
+        cursor = await self._db.execute(
+            """SELECT 1 FROM etsy_listings
+               WHERE product_type = ? AND niche = ? LIMIT 1""",
+            (product_type, niche),
+        )
+        return (await cursor.fetchone()) is not None
+
+    async def update_production_status(
+        self, queue_id: int, status: str, agent_log_id: int | None = None
+    ) -> None:
+        if agent_log_id is not None:
+            await self._db.execute(
+                "UPDATE production_queue SET status = ?, agent_log_id = ? WHERE id = ?",
+                (status, agent_log_id, queue_id),
+            )
+        else:
+            await self._db.execute(
+                "UPDATE production_queue SET status = ? WHERE id = ?",
+                (status, queue_id),
+            )
+        await self._db.commit()
+
+    # ------------------------------------------------------------------
+    # ChromaDB — insights semantici
+    # ------------------------------------------------------------------
+
+    async def store_insight(self, text: str, metadata: dict | None = None) -> None:
+        if self._chroma_collection is None:
+            return
+        import uuid
+
+        doc_id = str(uuid.uuid4())
+        self._chroma_collection.add(
+            documents=[text],
+            metadatas=[metadata or {}],
+            ids=[doc_id],
+        )
+
+    async def query_insights(self, query: str, n_results: int = 5) -> list[dict]:
+        if self._chroma_collection is None:
+            return []
+        results = self._chroma_collection.query(
+            query_texts=[query],
+            n_results=n_results,
+        )
+        out = []
+        for i, doc in enumerate(results.get("documents", [[]])[0]):
+            meta = (results.get("metadatas", [[]])[0][i]) if results.get("metadatas") else {}
+            out.append({"document": doc, "metadata": meta})
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Voyage AI embedding function per ChromaDB
+# ---------------------------------------------------------------------------
+
+class _VoyageEmbeddingFunction:
+    """Wrapper Voyage AI compatibile con l'interfaccia EmbeddingFunction di ChromaDB."""
+
+    def __init__(self, api_key: str, model: str = "voyage-3-lite") -> None:
+        self._api_key = api_key
+        self._model = model
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            import voyageai
+            self._client = voyageai.Client(api_key=self._api_key)
+        return self._client
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        client = self._get_client()
+        result = client.embed(input, model=self._model)
+        return result.embeddings
