@@ -71,10 +71,11 @@ pepe = None  # apps.backend.core.pepe.Pepe — assegnato in lifespan
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: MemoryManager, Pepe, workers. Shutdown: graceful stop."""
+    """Startup: MemoryManager, Pepe, workers, Telegram bot. Shutdown: graceful stop."""
     global memory, pepe
 
     from apps.backend.core.pepe import Pepe
+    from apps.backend.telegram.bot import TelegramBot
 
     # 1. MemoryManager
     memory = MemoryManager()
@@ -86,9 +87,14 @@ async def lifespan(app: FastAPI):
     await pepe.start()
     logger.info("Pepe avviato")
 
+    # 3. Bot Telegram (stesso event loop di FastAPI)
+    telegram_bot = TelegramBot(pepe=pepe)
+    await telegram_bot.start()
+
     yield
 
-    # Shutdown
+    # Shutdown (ordine inverso)
+    await telegram_bot.stop()
     if pepe is not None:
         await pepe.stop()
         logger.info("Pepe fermato")
