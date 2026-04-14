@@ -7,7 +7,7 @@ set -euo pipefail
 PROJECT_DIR="/Volumes/Progetti/AgentPeXI"
 VENV_DIR="$PROJECT_DIR/.venv"
 LOG_DIR="$PROJECT_DIR/logs"
-STORAGE_PATH="${STORAGE_PATH:-/Volumes/NomeSSD/agentpexi-storage}"
+STORAGE_PATH="${STORAGE_PATH:-/Volumes/Progetti/agentpexi-storage}"
 
 mkdir -p "$LOG_DIR"
 

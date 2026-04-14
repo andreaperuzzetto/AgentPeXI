@@ -2,7 +2,7 @@
 
 # LLM & AI
 anthropic>=0.40.0
-voyageai>=0.3.0
+voyageai>=0.2.3
 replicate>=1.0.0
 
 # Web framework

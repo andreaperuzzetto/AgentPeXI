@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str = ""
 
     # Storage & Security
-    STORAGE_PATH: str = "/Volumes/NomeSSD/agentpexi-storage"
+    STORAGE_PATH: str = "/Volumes/Progetti/agentpexi-storage"
     SECRET_KEY: str = ""
 
     # System
