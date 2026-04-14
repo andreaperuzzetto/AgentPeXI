@@ -39,6 +39,9 @@ playwright/.cache/
 # Logs
 *.log
 
+# Skills / agent config
+.github/
+
 # Notes private
 plan.md
 NOTES.md
