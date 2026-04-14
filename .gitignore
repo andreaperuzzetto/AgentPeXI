@@ -37,6 +37,7 @@ apps/frontend/dist/
 playwright/.cache/
 
 # Logs
+logs/
 *.log
 
 # Skills / agent config
