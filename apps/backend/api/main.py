@@ -75,6 +75,7 @@ async def lifespan(app: FastAPI):
     global memory, pepe
 
     from apps.backend.core.pepe import Pepe
+    from apps.backend.core.scheduler import Scheduler
     from apps.backend.telegram.bot import TelegramBot
 
     # 1. MemoryManager
@@ -87,7 +88,12 @@ async def lifespan(app: FastAPI):
     await pepe.start()
     logger.info("Pepe avviato")
 
-    # 3. Bot Telegram (stesso event loop di FastAPI)
+    # 3. Scheduler APScheduler
+    scheduler = Scheduler(memory=memory, ws_broadcaster=ws_manager.broadcast, pepe=pepe)
+    await scheduler.start()
+    logger.info("Scheduler avviato")
+
+    # 4. Bot Telegram (stesso event loop di FastAPI)
     telegram_bot = TelegramBot(pepe=pepe)
     await telegram_bot.start()
 
@@ -95,6 +101,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown (ordine inverso)
     await telegram_bot.stop()
+    await scheduler.stop()
     if pepe is not None:
         await pepe.stop()
         logger.info("Pepe fermato")
