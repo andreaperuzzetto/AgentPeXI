@@ -11,116 +11,14 @@ from typing import Any, Callable, Coroutine
 import anthropic
 
 from apps.backend.core.config import MODEL_SONNET, MODEL_HAIKU, settings
+from apps.backend.core.domains import DomainContext, DOMAIN_ETSY
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentResult, AgentStatus, AgentTask, TaskStatus
 from apps.backend.agents.base import AgentBase
 
 logger = logging.getLogger("agentpexi.pepe")
 
-# ------------------------------------------------------------------
-# System prompt per l'orchestratore — generato dinamicamente
-# ------------------------------------------------------------------
 
-
-def _build_system_prompt(
-    agent_statuses: dict[str, str],
-    production_queue_summary: str = "",
-    recent_analytics: str = "",
-    current_month: int | None = None,
-) -> str:
-    from datetime import datetime as _dt
-
-    month = current_month or _dt.utcnow().month
-
-    # Contesto stagionale
-    seasonal_map = {
-        1: "Gennaio: picco pianificatori anno nuovo, tracker abitudini, budget annuali",
-        2: "Febbraio: Valentine's Day, wedding planning inizia, self-love journals",
-        3: "Marzo: spring cleaning organizers, Easter, inizio anno accademico AU/NZ",
-        4: "Aprile: spring planners, Easter printables, tax season trackers",
-        5: "Maggio: Mother's Day, wedding season inizia, summer planning",
-        6: "Giugno: summer planners, wedding season picco, back-to-school prep inizia",
-        7: "Luglio: summer activities kids, mid-year review planners",
-        8: "Agosto: back-to-school PICCO (massima opportunità), teacher resources",
-        9: "Settembre: back-to-school, autumn planners, Q4 prep business",
-        10: "Ottobre: Halloween, Christmas prep inizia, holiday planners",
-        11: "Novembre: Black Friday, Christmas PICCO, gift guides, advent",
-        12: "Dicembre: Christmas, New Year prep, anno nuovo planners",
-    }
-    seasonal_context = seasonal_map.get(month, "")
-
-    agent_status_str = ", ".join(f"{n}: {s}" for n, s in agent_statuses.items())
-
-    pipeline_section = ""
-    if production_queue_summary:
-        pipeline_section = f"\n\nStato pipeline attuale:\n{production_queue_summary}"
-
-    analytics_section = ""
-    if recent_analytics:
-        analytics_section = f"\n\nPerformance recente:\n{recent_analytics}"
-
-    return f"""\
-Sei Pepe, orchestratore di AgentPeXI — sistema automatizzato per vendere digital \
-products su Etsy. Il tuo proprietario è Andrea. Rispondi sempre in italiano.
-
-Il tuo obiettivo non è gestire agenti — è vendere prodotti digitali su Etsy.
-Ogni decisione che prendi deve essere orientata a massimizzare le vendite reali.
-
-## Contesto attuale
-Mese: {month} — {seasonal_context}
-Stato agenti: {agent_status_str}{pipeline_section}{analytics_section}
-
-## Regole di business Etsy (NON negoziabili)
-- Prezzo minimo accettabile: $2.99 (sotto questa soglia il margine è negativo dopo fee Etsy)
-- Prezzo sweet spot digital products: $3.99-$7.99 per entry, $9.99-$14.99 per bundle
-- Competition level "high" accettabile SOLO se demand level è "high" e c'è un gap chiaro
-- Nicchie declining + high competition: non entrare mai
-- Stagionalità: pubblica 6-8 settimane prima del picco per indicizzazione Etsy
-- 13 tag Etsy sono obbligatori per ogni listing: mix 60% long-tail + 40% high-volume
-- I primi 7 giorni di un listing sono critici per l'algoritmo Etsy
-
-## Regole di decisione autonoma
-- Confidence ≥ 0.85 + viable = true: procedi al passo successivo SENZA chiedere
-- Confidence 0.60-0.84: proponi ad Andrea con raccomandazione chiara, aspetta conferma
-- Confidence < 0.60: NON procedere, rilancia ricerca con query raffinate automaticamente
-- Se confidence < 0.50 dopo secondo tentativo: blocca e spiega cosa manca
-
-## Regole di chiarimento
-Prima di delegare al Research Agent, verifica di avere:
-- Nicchia specifica (non "qualcosa di profittevole")
-- Tipo prodotto indicativo (PDF/PNG/SVG o "decidi tu")
-- Eventuali vincoli (prezzo, stile, target audience)
-
-Se mancano informazioni critiche, fai domande SPECIFICHE una alla volta.
-Continua a chiedere finché non hai contesto sufficiente per una ricerca accurata.
-Quando hai tutto, dichiara esplicitamente le assunzioni che stai facendo.
-
-## Agenti disponibili
-Quando deleghi, il campo "input" DEVE contenere i parametri specificati:
-
-- **research**: analisi nicchia Etsy con selling focus
-  input: {{"niches": ["nicchia"], "product_type": "printable_pdf|digital_art_png|svg_bundle", "constraints": {{}}}}
-
-- **design**: creazione prodotti digitali
-  input: {{"product_type": "...", "niche": "...", "research_context": {{...output research...}}}}
-
-- **publisher**: pubblicazione listing Etsy
-  input: {{"file_paths": [...], "niche": "...", "research_context": {{...}}}}
-
-- **analytics**: analisi performance listing
-  input: {{"period_days": 7}}
-
-- **customer_service**: gestione messaggi clienti
-  input: {{}}
-
-- **finance**: report finanziari
-  input: {{"period_days": 7}}
-
-## Formato risposta
-Rispondi SEMPRE con JSON di delega (nessun testo aggiuntivo) oppure in linguaggio naturale.
-JSON di delega: {{"delegate": "<agent>", "task_type": "<tipo>", "input": {{...}}}}
-MAI testo + JSON insieme — o uno o l'altro.\
-"""
 
 
 class Pepe:
@@ -130,9 +28,11 @@ class Pepe:
         self,
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
+        active_domain: DomainContext = DOMAIN_ETSY,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
+        self.domain = active_domain
 
         # Anthropic client
         self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -194,6 +94,62 @@ class Pepe:
         return False
 
     # ------------------------------------------------------------------
+    # System prompt — costruito dal DomainContext attivo
+    # ------------------------------------------------------------------
+
+    def _build_system_prompt(
+        self,
+        agent_statuses: dict[str, str],
+        production_queue_summary: str = "",
+        recent_analytics: str = "",
+        current_month: int | None = None,
+    ) -> str:
+        import calendar
+        month_name = calendar.month_name[current_month] if current_month else ""
+
+        # Identità — invariante, non viene dal dominio
+        identity = (
+            "Sei Pepe, orchestratore di AgentPeXI. "
+            "Il tuo proprietario è Andrea. Rispondi sempre in italiano. "
+            "Il tuo obiettivo non è gestire agenti — è raggiungere i risultati "
+            "di business del dominio attivo."
+        )
+
+        # Obiettivo — dal dominio
+        objective = f"## Obiettivo attuale ({self.domain.name})\n{self.domain.objective}"
+
+        # Regole di business — dal dominio
+        rules = "## Regole di business (NON negoziabili)\n"
+        rules += "\n".join(f"- {r}" for r in self.domain.business_rules)
+
+        # Agenti disponibili — dal dominio
+        agents_section = "## Agenti disponibili\n"
+        for agent_name, schema in self.domain.agents.items():
+            agents_section += f"- **{agent_name}**: {schema}\n"
+
+        # Sezioni extra — dal dominio (es. stagionalità)
+        extras = ""
+        if self.domain.extra_sections:
+            extras = "\n\n".join(
+                f"## {title}\n{body}"
+                for title, body in self.domain.extra_sections.items()
+            )
+            if month_name:
+                extras += f"\n\nMese corrente: {month_name}."
+
+        # Contesto runtime — invariante
+        agent_status_str = ", ".join(f"{n}: {s}" for n, s in agent_statuses.items())
+        runtime = f"## Stato sistema\nAgenti: {agent_status_str}"
+        if production_queue_summary:
+            runtime += f"\nPipeline: {production_queue_summary}"
+        if recent_analytics:
+            runtime += f"\nPerformance recente: {recent_analytics}"
+
+        return "\n\n".join(filter(bool, [
+            identity, objective, rules, agents_section, extras, runtime
+        ]))
+
+    # ------------------------------------------------------------------
     # Entry point — messaggio utente
     # ------------------------------------------------------------------
 
@@ -242,7 +198,7 @@ class Pepe:
         history.append({"role": "user", "content": user_content})
 
         # System prompt dinamico con contesto iniettato
-        system = _build_system_prompt(
+        system = self._build_system_prompt(
             agent_statuses={n: s.value for n, s in self._agent_status.items()},
             production_queue_summary=pipeline_summary,
             recent_analytics=analytics_summary,
@@ -615,14 +571,17 @@ class Pepe:
         if not missing:
             return None  # Contesto sufficiente, procedi
 
-        # Genera domanda specifica tramite LLM
+        # Genera domanda specifica tramite LLM, usando pool domande dal dominio
+        questions_pool = self.domain.clarification_questions
+        questions_hint = "\n".join(f"- {q}" for q in questions_pool) if questions_pool else ""
+
         clarification_prompt = await self.client.messages.create(
             model=MODEL_HAIKU,
             system=(
-                "Sei Pepe, assistente di Andrea per il suo business Etsy. "
+                f"Sei Pepe, assistente di Andrea per il dominio {self.domain.name}. "
                 "Devi fare UNA domanda specifica per ottenere le informazioni mancanti. "
                 "La domanda deve essere diretta, concisa, e aiutare a capire esattamente "
-                "cosa vuole vendere. Rispondi solo con la domanda, niente altro."
+                "cosa vuole. Rispondi solo con la domanda, niente altro."
             ),
             messages=[
                 *history,
@@ -631,10 +590,8 @@ class Pepe:
                     "content": (
                         f"L'utente ha scritto: '{user_message}'\n"
                         f"Per fare una ricerca accurata mancano: {', '.join(missing)}.\n"
-                        f"Genera UNA domanda specifica per ottenere queste informazioni. "
-                        f"Esempio: se manca la nicchia chiedi quale categoria specifica. "
-                        f"Se manca il tipo prodotto chiedi se vuole PDF stampabile, "
-                        f"arte digitale PNG, o bundle SVG."
+                        f"Genera UNA domanda specifica per ottenere queste informazioni.\n"
+                        f"Domande di riferimento:\n{questions_hint}"
                     ),
                 },
             ],
@@ -940,8 +897,8 @@ class Pepe:
             await self._broadcast({"type": "pepe_message", "content": reply, "source": source})
             return reply
 
-        # confidence None o >= 0.85: procedi autonomamente
-        if confidence is None or confidence >= 0.85:
+        # confidence None o >= threshold: procedi autonomamente
+        if confidence is None or confidence >= self.domain.confidence_threshold:
             final_reply = await self._synthesize_reply(user_message, agent_name, result)
 
             # Triggera passo successivo pipeline se in modalità autonoma
@@ -951,8 +908,8 @@ class Pepe:
             await self._broadcast({"type": "pepe_message", "content": final_reply, "source": source})
             return final_reply
 
-        # confidence 0.60-0.84: procedi con disclaimer e proposta
-        if confidence >= 0.60:
+        # confidence >= disclaimer threshold: procedi con disclaimer e proposta
+        if confidence >= self.domain.confidence_disclaimer:
             final_reply = await self._synthesize_reply(user_message, agent_name, result)
             disclaimer = (
                 f"\n\n⚠️ **Nota**: analisi basata su dati parziali "
@@ -971,10 +928,10 @@ class Pepe:
             f"❌ Dati insufficienti per procedere con sicurezza "
             f"(confidence: {confidence:.0%}).\n\n"
             f"**Mancano**: {missing_str}\n\n"
-            f"**Causa principale**: senza Etsy API attiva, i dati di pricing e keyword "
-            f"provengono da inferenza LLM invece che da listing reali.\n\n"
+            f"**Causa principale**: i dati di pricing e keyword "
+            f"provengono da inferenza LLM invece che da fonti dirette.\n\n"
             f"**Cosa puoi fare**:\n"
-            f"• Attendere l'approvazione Etsy API per dati reali\n"
+            f"• Attendere l'attivazione delle API di dominio per dati reali\n"
             f"• Specificare una nicchia più narrow per migliorare la ricerca\n"
             f"• Procedere lo stesso accettando il rischio di dati parziali"
         )
@@ -995,7 +952,7 @@ class Pepe:
     ) -> str:
         """Sintetizza errore in linguaggio naturale per l'utente."""
         error_system = (
-            "Sei Pepe, orchestratore di un sistema AI per Etsy. Un agente ha riscontrato "
+            f"Sei Pepe, orchestratore di AgentPeXI per il dominio {self.domain.name}. Un agente ha riscontrato "
             "un problema. Spiega all'utente cosa è successo in modo chiaro e professionale, "
             "proponi 2-3 soluzioni concrete e pratiche. Sii diretto, non tecnico, non "
             "mostrare stack trace o codice. Max 150 parole."
@@ -1069,8 +1026,21 @@ class Pepe:
             days_live = listing.get("days_live", 0)
             failure_type = listing.get("failure_type")
 
-            # Bestseller: sales >= 10 → proposta varianti
+            # Determina segnale dal dato
+            signal = None
             if sales >= 10:
+                signal = "bestseller"
+            elif failure_type == "no_views" and days_live >= 7:
+                signal = "no_views"
+            elif failure_type == "no_conversion" and days_live >= 45 and views > 0:
+                signal = "no_conversion"
+
+            if signal is None:
+                continue
+
+            action = self.domain.learning_triggers.get(signal)
+
+            if action == "propose_variant":
                 proposal_msg = (
                     f"🌟 **Bestseller rilevato**: {listing.get('title', listing_id)}\n"
                     f"📊 {sales} vendite, {views} views\n\n"
@@ -1090,8 +1060,7 @@ class Pepe:
                     },
                 )
 
-            # 0 views dopo 7 giorni → fix tag
-            elif failure_type == "no_views" and days_live >= 7:
+            elif action == "fix_tags":
                 fix_task = AgentTask(
                     agent_name="research",
                     input_data={
@@ -1109,8 +1078,7 @@ class Pepe:
                     f"0 views dopo {days_live} giorni."
                 )
 
-            # 0 conversioni dopo 45 giorni → revisione prezzo
-            elif failure_type == "no_conversion" and days_live >= 45 and views > 0:
+            elif action == "fix_pricing":
                 fix_task = AgentTask(
                     agent_name="research",
                     input_data={
@@ -1127,3 +1095,6 @@ class Pepe:
                     f"💰 Avviata analisi prezzo automatica: {listing.get('title', listing_id)}\n"
                     f"{views} views ma 0 vendite dopo {days_live} giorni."
                 )
+
+            else:
+                logger.debug("Segnale '%s' non gestito nel dominio '%s'", signal, self.domain.name)
