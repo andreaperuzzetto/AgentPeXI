@@ -25,10 +25,12 @@ class Scheduler:
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
         pepe: Any = None,
+        storage: Any = None,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
         self.pepe = pepe
+        self.storage = storage
         self._scheduler = AsyncIOScheduler()
 
     # ------------------------------------------------------------------
@@ -121,33 +123,50 @@ class Scheduler:
     # ------------------------------------------------------------------
 
     async def _health_check_ssd(self) -> None:
-        """Verifica che STORAGE_PATH sia montato e accessibile."""
-        storage = settings.STORAGE_PATH
-        ok = os.path.isdir(storage)
+        """Verifica che STORAGE_PATH sia montato e accessibile tramite StorageManager."""
+        if not self.storage:
+            # Fallback senza StorageManager
+            storage = settings.STORAGE_PATH
+            ok = os.path.isdir(storage)
+            if not ok:
+                msg = f"⚠️ STORAGE_PATH non accessibile: {storage}"
+                logger.error(msg)
+                if self.pepe and hasattr(self.pepe, "notify_telegram"):
+                    await self.pepe.notify_telegram(msg, priority=True)
+            return
 
-        if not ok:
-            msg = f"⚠️ STORAGE_PATH non accessibile: {storage}"
+        health = self.storage.health_check()
+
+        if not health["available"]:
+            msg = f"⚠️ STORAGE_PATH non accessibile: {settings.STORAGE_PATH}"
             logger.error(msg)
             if self.pepe and hasattr(self.pepe, "notify_telegram"):
                 await self.pepe.notify_telegram(msg, priority=True)
             await self._broadcast({
                 "type": "system_status",
                 "event": "ssd_offline",
-                "storage_path": storage,
+                "storage_path": settings.STORAGE_PATH,
                 "timestamp": datetime.utcnow().isoformat(),
             })
         else:
-            # Verifica spazio disponibile
-            try:
-                stat = os.statvfs(storage)
-                free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
-                if free_gb < 1.0:
-                    msg = f"⚠️ Spazio SSD basso: {free_gb:.1f} GB rimasti"
-                    logger.warning(msg)
-                    if self.pepe and hasattr(self.pepe, "notify_telegram"):
-                        await self.pepe.notify_telegram(msg, priority=True)
-            except Exception:
-                pass
+            free_gb = health["free_gb"]
+            if free_gb < 1.0:
+                msg = f"⚠️ Spazio SSD basso: {free_gb:.1f} GB rimasti"
+                logger.warning(msg)
+                if self.pepe and hasattr(self.pepe, "notify_telegram"):
+                    await self.pepe.notify_telegram(msg, priority=True)
+
+            logger.debug(
+                "SSD OK — %.1f GB liberi, %d file pending",
+                free_gb,
+                health["pending_count"],
+            )
+            await self._broadcast({
+                "type": "system_status",
+                "event": "ssd_health",
+                "health": health,
+                "timestamp": datetime.utcnow().isoformat(),
+            })
 
     async def _sync_agent_status(self) -> None:
         """Broadcast stato agenti via WebSocket."""

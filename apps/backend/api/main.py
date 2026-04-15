@@ -62,6 +62,8 @@ ws_manager = ConnectionManager()
 
 memory: MemoryManager | None = None
 pepe = None  # apps.backend.core.pepe.Pepe — assegnato in lifespan
+storage = None  # apps.backend.core.storage.StorageManager — assegnato in lifespan
+etsy_api = None  # apps.backend.tools.etsy_api.EtsyAPI — assegnato in lifespan
 
 
 # ------------------------------------------------------------------
@@ -72,17 +74,24 @@ pepe = None  # apps.backend.core.pepe.Pepe — assegnato in lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: MemoryManager, Pepe, workers, Telegram bot. Shutdown: graceful stop."""
-    global memory, pepe
+    global memory, pepe, storage, etsy_api
 
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.scheduler import Scheduler
+    from apps.backend.core.storage import StorageManager
     from apps.backend.telegram.bot import TelegramBot
+    from apps.backend.tools.etsy_api import EtsyAPI
     from apps.backend.agents.research import ResearchAgent
 
     # 1. MemoryManager
     memory = MemoryManager()
     await memory.init()
     logger.info("MemoryManager inizializzato")
+
+    # 1b. StorageManager (singleton)
+    storage = StorageManager()
+    storage.ensure_dirs()
+    logger.info("StorageManager inizializzato")
 
     # 2. Pepe orchestratore
     pepe = Pepe(memory=memory, ws_broadcaster=ws_manager.broadcast)
@@ -98,8 +107,17 @@ async def lifespan(app: FastAPI):
     await pepe.start()
     logger.info("Pepe avviato")
 
+    # 2c. EtsyAPI
+    etsy_api = EtsyAPI(memory=memory, pepe=pepe)
+    logger.info("EtsyAPI inizializzato")
+
     # 3. Scheduler APScheduler
-    scheduler = Scheduler(memory=memory, ws_broadcaster=ws_manager.broadcast, pepe=pepe)
+    scheduler = Scheduler(
+        memory=memory,
+        ws_broadcaster=ws_manager.broadcast,
+        pepe=pepe,
+        storage=storage,
+    )
     await scheduler.start()
     logger.info("Scheduler avviato")
 
@@ -112,6 +130,9 @@ async def lifespan(app: FastAPI):
     # Shutdown (ordine inverso)
     await telegram_bot.stop()
     await scheduler.stop()
+    if etsy_api is not None:
+        await etsy_api.close()
+        logger.info("EtsyAPI chiuso")
     if pepe is not None:
         await pepe.stop()
         logger.info("Pepe fermato")
@@ -205,6 +226,33 @@ async def post_chat(body: dict) -> dict:
         return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
     reply = await pepe.handle_user_message(message, source="web")
     return {"reply": reply}
+
+
+# ------------------------------------------------------------------
+# Etsy endpoints
+# ------------------------------------------------------------------
+
+
+@app.post("/api/etsy/auth/status")
+async def etsy_auth_status() -> dict:
+    """Verifica se i token Etsy sono validi."""
+    if not etsy_api:
+        return JSONResponse(status_code=503, content={"error": "EtsyAPI non inizializzato"})
+    return await etsy_api.check_auth_status()
+
+
+@app.get("/api/etsy/shop")
+async def etsy_shop_info() -> dict:
+    """Info shop Etsy (test connessione)."""
+    if not etsy_api:
+        return JSONResponse(status_code=503, content={"error": "EtsyAPI non inizializzato"})
+    try:
+        shop = await etsy_api.get_shop()
+        return {"shop": shop}
+    except RuntimeError as exc:
+        return JSONResponse(status_code=401, content={"error": str(exc)})
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
 
 
 # ------------------------------------------------------------------

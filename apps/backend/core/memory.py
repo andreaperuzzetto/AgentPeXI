@@ -147,6 +147,18 @@ CREATE INDEX IF NOT EXISTS idx_llm_calls_task_id ON llm_calls(task_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_task_id ON tool_calls(task_id);
 CREATE INDEX IF NOT EXISTS idx_error_log_agent_name ON error_log(agent_name);
 CREATE INDEX IF NOT EXISTS idx_production_queue_status ON production_queue(status);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL DEFAULT 'etsy',
+    access_token_encrypted TEXT NOT NULL,
+    refresh_token_encrypted TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_tokens_provider ON oauth_tokens(provider);
 """
 
 
@@ -583,6 +595,56 @@ class MemoryManager:
                 "UPDATE production_queue SET status = ? WHERE id = ?",
                 (status, queue_id),
             )
+        await self._db.commit()
+
+    # ------------------------------------------------------------------
+    # OAuth tokens
+    # ------------------------------------------------------------------
+
+    async def save_oauth_tokens(
+        self,
+        provider: str,
+        access_token_enc: str,
+        refresh_token_enc: str,
+        expires_at: str,
+    ) -> None:
+        """Salva token cifrati. Usa UPSERT per evitare duplicati."""
+        await self._db.execute(
+            """INSERT INTO oauth_tokens
+               (provider, access_token_encrypted, refresh_token_encrypted, expires_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(provider) DO UPDATE SET
+               access_token_encrypted = excluded.access_token_encrypted,
+               refresh_token_encrypted = excluded.refresh_token_encrypted,
+               expires_at = excluded.expires_at,
+               updated_at = CURRENT_TIMESTAMP""",
+            (provider, access_token_enc, refresh_token_enc, expires_at),
+        )
+        await self._db.commit()
+
+    async def get_oauth_tokens(self, provider: str) -> dict | None:
+        """Ritorna token cifrati per provider, o None se non esistono."""
+        cursor = await self._db.execute(
+            "SELECT * FROM oauth_tokens WHERE provider = ?", (provider,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_oauth_tokens(
+        self,
+        provider: str,
+        access_token_enc: str,
+        refresh_token_enc: str,
+        expires_at: str,
+    ) -> None:
+        """Aggiorna token cifrati esistenti."""
+        await self._db.execute(
+            """UPDATE oauth_tokens SET
+               access_token_encrypted = ?, refresh_token_encrypted = ?,
+               expires_at = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE provider = ?""",
+            (access_token_enc, refresh_token_enc, expires_at, provider),
+        )
         await self._db.commit()
 
     # ------------------------------------------------------------------
