@@ -22,6 +22,8 @@ from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.core.storage import StorageManager
 from apps.backend.tools.file_gen import ColorScheme, PDFGenerator
+from apps.backend.tools.image_gen import ImageGenerator
+from apps.backend.tools.svg_gen import SVGGenerator
 from apps.backend.tools.playwright_export import generate_pdf_thumbnail
 
 logger = logging.getLogger("agentpexi.design")
@@ -816,6 +818,8 @@ class DesignAgent(AgentBase):
         )
         self.storage = storage
         self._pdf_gen = PDFGenerator()
+        self._image_gen = ImageGenerator()
+        self._svg_gen = SVGGenerator()
 
     # ------------------------------------------------------------------
     # Input validation (Intervento 19)
@@ -959,19 +963,14 @@ class DesignAgent(AgentBase):
         color_schemes = normalized_input["color_schemes"]
         size = normalized_input.get("size", "A4")
 
-        # Solo printable_pdf supportato al momento
-        if product_type != "printable_pdf":
-            return AgentResult(
-                task_id=task.task_id,
-                agent_name=self.name,
-                status=TaskStatus.FAILED,
-                output_data={"error": f"{product_type} non ancora supportato"},
-                confidence=0.0,
-                missing_data=[f"{product_type} generator non implementato"],
-            )
-
         # --- 3. Estrai research context (Intervento 17) ---
         research_context = self._extract_research_context(normalized_input)
+
+        # --- Route per product_type non-PDF ---
+        if product_type == "digital_art_png":
+            return await self._run_digital_art(task, normalized_input, research_context)
+        if product_type == "svg_bundle":
+            return await self._run_svg_bundle(task, normalized_input, research_context)
 
         # --- 4. Lookup failure patterns da ChromaDB (Intervento 16) ---
         failure_patterns = await self._lookup_failure_patterns(niche, product_type)
@@ -1205,4 +1204,171 @@ class DesignAgent(AgentBase):
             },
             confidence=confidence,
             missing_data=missing_data,
+        )
+
+    # ------------------------------------------------------------------
+    # Digital Art PNG pipeline
+    # ------------------------------------------------------------------
+
+    async def _run_digital_art(
+        self,
+        task: AgentTask,
+        normalized_input: dict,
+        research_context: dict | None,
+    ) -> AgentResult:
+        """Genera Digital Art PNG via ImageGenerator (Flux Pro / placeholder)."""
+        niche = normalized_input["niche"]
+        num_variants = normalized_input["num_variants"]
+        pq_task_id: str | None = normalized_input.get("production_queue_task_id")
+
+        if pq_task_id:
+            await self.memory.update_production_queue_status(pq_task_id, "in_progress")
+
+        output_dir = self.storage.base_path / "pending" / task.task_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        slug = _niche_slug(niche)
+        art_type = normalized_input.get("art_type", "wall_art")
+        style_preset = normalized_input.get("style_preset", "minimal")
+
+        await self._log_step(
+            "thinking",
+            f"Generazione {num_variants} Digital Art PNG per niche '{niche}' "
+            f"(art_type={art_type}, api={'flux' if self._image_gen.is_available else 'placeholder'})",
+        )
+
+        generated: list[dict] = []
+        color_schemes = normalized_input.get("color_schemes", ["neutral", "warm"])
+
+        for i in range(num_variants):
+            brief = {
+                "niche": niche,
+                "art_type": art_type,
+                "style_preset": style_preset,
+                "colors": normalized_input.get("colors", {}),
+                "quote": normalized_input.get("quote", ""),
+            }
+            out_path = output_dir / f"{slug}_art_{i + 1}.png"
+            try:
+                path = await self._image_gen.generate_digital_art(brief, out_path)
+                generated.append({
+                    "file_path": str(path),
+                    "variant_index": i,
+                    "art_type": art_type,
+                    "file_size_kb": round(path.stat().st_size / 1024, 1),
+                    "used_replicate": self._image_gen.is_available,
+                })
+            except Exception as e:
+                logger.warning("Errore Digital Art variante %d: %s", i, e)
+
+        if not generated:
+            if pq_task_id:
+                await self.memory.update_production_queue_status(pq_task_id, "failed")
+            return AgentResult(
+                task_id=task.task_id, agent_name=self.name,
+                status=TaskStatus.FAILED,
+                output_data={"error": "All digital art variants failed"},
+                confidence=0.0,
+                missing_data=["No digital art generated"],
+            )
+
+        confidence = len(generated) / num_variants
+        if not self._image_gen.is_available:
+            confidence *= 0.6  # placeholder = fiducia ridotta
+
+        if pq_task_id:
+            file_paths = [v["file_path"] for v in generated]
+            await self.memory.update_production_queue_status(
+                pq_task_id, "completed", file_paths=file_paths,
+            )
+
+        await self._log_step(
+            "file_operation",
+            f"Digital Art: {len(generated)}/{num_variants} PNG generati, confidence={confidence:.2f}",
+        )
+
+        return AgentResult(
+            task_id=task.task_id, agent_name=self.name,
+            status=TaskStatus.COMPLETED,
+            output_data={
+                "variants": generated,
+                "niche": niche,
+                "product_type": "digital_art_png",
+                "art_type": art_type,
+                "used_replicate": self._image_gen.is_available,
+            },
+            confidence=confidence,
+        )
+
+    # ------------------------------------------------------------------
+    # SVG Bundle pipeline
+    # ------------------------------------------------------------------
+
+    async def _run_svg_bundle(
+        self,
+        task: AgentTask,
+        normalized_input: dict,
+        research_context: dict | None,
+    ) -> AgentResult:
+        """Genera SVG bundle via SVGGenerator."""
+        niche = normalized_input["niche"]
+        pq_task_id: str | None = normalized_input.get("production_queue_task_id")
+
+        if pq_task_id:
+            await self.memory.update_production_queue_status(pq_task_id, "in_progress")
+
+        output_dir = self.storage.base_path / "pending" / task.task_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        svg_type = normalized_input.get("svg_type", "geometric")
+        brief = {
+            "niche": niche,
+            "svg_type": svg_type,
+            "complexity": normalized_input.get("complexity", 2),
+            "quote": normalized_input.get("quote", ""),
+            "color_variants": normalized_input.get("color_variants", []),
+        }
+
+        await self._log_step(
+            "thinking",
+            f"Generazione SVG bundle '{svg_type}' per niche '{niche}'",
+        )
+
+        try:
+            paths = await self._svg_gen.generate_bundle(brief, output_dir)
+        except Exception as e:
+            logger.error("SVG bundle generation failed: %s", e)
+            if pq_task_id:
+                await self.memory.update_production_queue_status(pq_task_id, "failed")
+            return AgentResult(
+                task_id=task.task_id, agent_name=self.name,
+                status=TaskStatus.FAILED,
+                output_data={"error": f"SVG generation failed: {e}"},
+                confidence=0.0,
+                missing_data=["SVG generation error"],
+            )
+
+        file_paths_str = [str(p) for p in paths]
+
+        if pq_task_id:
+            await self.memory.update_production_queue_status(
+                pq_task_id, "completed", file_paths=file_paths_str,
+            )
+
+        await self._log_step(
+            "file_operation",
+            f"SVG bundle: {len(paths)} file generati (type={svg_type})",
+        )
+
+        return AgentResult(
+            task_id=task.task_id, agent_name=self.name,
+            status=TaskStatus.COMPLETED,
+            output_data={
+                "svg_files": file_paths_str,
+                "niche": niche,
+                "product_type": "svg_bundle",
+                "svg_type": svg_type,
+                "num_files": len(paths),
+            },
+            confidence=1.0,
         )
