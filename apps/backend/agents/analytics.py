@@ -470,10 +470,12 @@ class AnalyticsAgent(AgentBase):
         Ritorna "" se ChromaDB è vuoto o la query fallisce.
         """
         try:
-            results = await self.memory.query_chromadb(
+            results = await self.memory.query_chromadb_recent(
                 query=f"FAILURE {failure_type} niche {niche}",
                 n_results=3,
                 where={"type": "failure_analysis", "failure_type": failure_type},
+                primary_days=90,
+                fallback_days=180,
             )
             if not results:
                 return ""
@@ -587,12 +589,31 @@ class AnalyticsAgent(AgentBase):
         bestsellers = []
         for lst in top:
             lid = lst["listing_id"]
+            niche = lst.get("niche", "")
+            template = lst.get("template", "")
+            color_scheme = lst.get("color_scheme", "")
             bestsellers.append({
                 "listing_id": lid,
                 "title": lst.get("title", ""),
                 "sales": lst.get("sales", 0),
                 "revenue_eur": lst.get("revenue_eur", 0),
             })
+
+            # Salva success_pattern in ChromaDB per il learning loop
+            await self.memory.store_insight(
+                text=(
+                    f"SUCCESS niche: {niche} | template: {template} | "
+                    f"color_scheme: {color_scheme} | sales: {lst.get('sales', 0)} | "
+                    f"revenue: {lst.get('revenue_eur', 0)}"
+                ),
+                metadata={
+                    "type": "success_pattern",
+                    "niche": niche,
+                    "template": template,
+                    "color_scheme": color_scheme,
+                    "date": datetime.utcnow().strftime("%Y-%m-%d"),
+                },
+            )
 
             # Controlla se già esiste un pending_action per questo listing
             existing = await self.memory.get_pending_action("production_queue_proposal")
@@ -631,6 +652,31 @@ class AnalyticsAgent(AgentBase):
             await self._notify_telegram(msg)
 
         return bestsellers
+
+    async def _write_design_outcomes(
+        self,
+        niche: str,
+        template: str,
+        color_scheme: str,
+        performance: str,
+        summary: str,
+    ) -> str | None:
+        """Salva design outcome in ChromaDB per il learning loop."""
+        return await self.memory.store_insight(
+            text=(
+                f"DESIGN_OUTCOME niche: {niche} | template: {template} | "
+                f"color_scheme: {color_scheme} | performance: {performance} | "
+                f"{summary}"
+            ),
+            metadata={
+                "type": "design_outcome",
+                "niche": niche,
+                "template": template,
+                "color_scheme": color_scheme,
+                "performance": performance,
+                "date": datetime.utcnow().strftime("%Y-%m-%d"),
+            },
+        )
 
     # ------------------------------------------------------------------
     # Passo 5 — Report aggregato

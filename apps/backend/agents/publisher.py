@@ -637,7 +637,47 @@ class PublisherAgent(AgentBase):
             logger.info("Research ha applicato failure constraints per: %s", failure_reasons)
             adjustments["failure_constraints_active"] = failure_reasons
 
-        # 2. Analytics DB — niche simili con 0 vendite dopo views
+        # 2. ChromaDB — failure analysis recenti per niche simili
+        try:
+            failures = await self.memory.query_chromadb_recent(
+                query=f"niche {niche}",
+                n_results=20,
+                where={"type": "failure_analysis"},
+                primary_days=90,
+                fallback_days=180,
+            )
+            if failures:
+                adjustments["chromadb_failures"] = [
+                    {
+                        "document": f.get("document", ""),
+                        "failure_type": f.get("metadata", {}).get("failure_type", ""),
+                    }
+                    for f in failures[:5]
+                ]
+        except Exception:
+            pass
+
+        # 3. ChromaDB — success pattern recenti per niche simili
+        try:
+            successes = await self.memory.query_chromadb_recent(
+                query=f"niche {niche} success",
+                n_results=2,
+                where={"type": "success_pattern"},
+                primary_days=90,
+                fallback_days=180,
+            )
+            if successes:
+                adjustments["chromadb_successes"] = [
+                    {
+                        "document": s.get("document", ""),
+                        "niche": s.get("metadata", {}).get("niche", ""),
+                    }
+                    for s in successes
+                ]
+        except Exception:
+            pass
+
+        # 4. Analytics DB — niche simili con 0 vendite dopo views
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
@@ -669,7 +709,7 @@ class PublisherAgent(AgentBase):
                     )
                     adjustments["similar_failures"] = similar_failures
                     adjustments["warning"] = (
-                        "Niche simili non hanno convertito \u2014 valutare pricing o SEO diverso"
+                        "Niche simili non hanno convertito — valutare pricing o SEO diverso"
                     )
         except Exception as exc:
             logger.warning("Errore consultazione failure history: %s", exc)

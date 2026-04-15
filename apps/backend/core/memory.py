@@ -8,6 +8,7 @@ ChromaDB collection `pepe_memory` con Voyage AI voyage-3-lite embeddings.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timedelta
 from typing import Any
@@ -15,6 +16,8 @@ from typing import Any
 import aiosqlite
 
 from apps.backend.core.config import settings
+
+logger = logging.getLogger("agentpexi.memory")
 
 # ---------------------------------------------------------------------------
 # Schema SQL
@@ -1137,6 +1140,69 @@ class MemoryManager:
             doc_id = (results.get("ids", [[]])[0][i]) if results.get("ids") else None
             out.append({"document": doc, "metadata": meta, "id": doc_id})
         return out
+
+    async def query_chromadb_recent(
+        self,
+        query: str,
+        n_results: int = 5,
+        where: dict | None = None,
+        primary_days: int = 90,
+        fallback_days: int = 180,
+    ) -> list[dict]:
+        """Come query_chromadb() ma con filtro temporale a scalini.
+
+        1. Prova con finestra primary_days (default 90)
+        2. Se vuoto, prova con finestra fallback_days (default 180)
+        3. Se ancora vuoto, ritorna [] — non usare dati troppo vecchi
+
+        I documenti ChromaDB devono avere metadata["date"] in formato YYYY-MM-DD.
+        """
+
+        def _build_where(base_where: dict | None, cutoff_date: str) -> dict:
+            date_filter = {"date": {"$gte": cutoff_date}}
+            if base_where:
+                return {"$and": [base_where, date_filter]}
+            return date_filter
+
+        # Tentativo 1 — finestra primaria
+        cutoff_primary = (
+            datetime.utcnow() - timedelta(days=primary_days)
+        ).strftime("%Y-%m-%d")
+
+        try:
+            results = await self.query_chromadb(
+                query=query,
+                n_results=n_results,
+                where=_build_where(where, cutoff_primary),
+            )
+            if results:
+                return results
+        except Exception:
+            pass
+
+        # Tentativo 2 — finestra allargata
+        cutoff_fallback = (
+            datetime.utcnow() - timedelta(days=fallback_days)
+        ).strftime("%Y-%m-%d")
+
+        try:
+            results = await self.query_chromadb(
+                query=query,
+                n_results=n_results,
+                where=_build_where(where, cutoff_fallback),
+            )
+            if results:
+                logger.debug(
+                    "query_chromadb_recent: dati primari vuoti, "
+                    "usata finestra fallback %d giorni per query '%s'",
+                    fallback_days, query[:50],
+                )
+                return results
+        except Exception:
+            pass
+
+        # Nessun dato recente disponibile
+        return []
 
 
 # ---------------------------------------------------------------------------

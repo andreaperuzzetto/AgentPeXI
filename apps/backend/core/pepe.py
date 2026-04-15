@@ -682,11 +682,14 @@ class Pepe:
         )
 
         if niche and agent_name in ("research", "design", "publisher"):
-            # Failure history da ChromaDB
+            # Failure history da ChromaDB (con decadimento temporale)
             try:
-                failure_docs = await self.memory.query_insights(
-                    f"failure analysis {niche}",
+                failure_docs = await self.memory.query_chromadb_recent(
+                    query=f"FAILURE niche {niche}",
                     n_results=3,
+                    where={"type": "failure_analysis"},
+                    primary_days=90,
+                    fallback_days=180,
                 )
                 if failure_docs:
                     enriched["failure_history"] = [
@@ -695,6 +698,46 @@ class Pepe:
                             "metadata": d.get("metadata", {}),
                         }
                         for d in failure_docs
+                    ]
+            except Exception:
+                pass
+
+            # Success pattern recenti da ChromaDB
+            try:
+                successes = await self.memory.query_chromadb_recent(
+                    query=f"SUCCESS niche {niche}",
+                    n_results=2,
+                    where={"type": "success_pattern"},
+                    primary_days=90,
+                    fallback_days=180,
+                )
+                if successes:
+                    enriched["success_patterns"] = [
+                        {
+                            "document": d.get("document", ""),
+                            "metadata": d.get("metadata", {}),
+                        }
+                        for d in successes
+                    ]
+            except Exception:
+                pass
+
+            # Design outcome recenti da ChromaDB
+            try:
+                design_wins = await self.memory.query_chromadb_recent(
+                    query=f"DESIGN_OUTCOME niche {niche} performance high",
+                    n_results=2,
+                    where={"type": "design_outcome"},
+                    primary_days=90,
+                    fallback_days=180,
+                )
+                if design_wins:
+                    enriched["design_wins"] = [
+                        {
+                            "document": d.get("document", ""),
+                            "metadata": d.get("metadata", {}),
+                        }
+                        for d in design_wins
                     ]
             except Exception:
                 pass
@@ -720,9 +763,12 @@ class Pepe:
         # Per Design Agent: inietta sempre research_context se presente in sessione
         if agent_name == "design" and not enriched.get("research_context"):
             try:
-                cached = await self.memory.query_insights(
-                    f"Research report per nicchia '{niche}'",
+                cached = await self.memory.query_chromadb_recent(
+                    query=f"Research report per nicchia '{niche}'",
                     n_results=1,
+                    where={"type": "research_report"},
+                    primary_days=90,
+                    fallback_days=180,
                 )
                 if cached:
                     enriched["research_context"] = {

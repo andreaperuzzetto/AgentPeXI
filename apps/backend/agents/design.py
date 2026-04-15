@@ -879,20 +879,46 @@ class DesignAgent(AgentBase):
     # ------------------------------------------------------------------
 
     async def _lookup_failure_patterns(self, niche: str, template: str) -> dict | None:
-        """Cerca in ChromaDB pattern di fallimento precedenti."""
+        """Cerca in ChromaDB pattern di fallimento e design outcome precedenti."""
         try:
-            collection = self.memory.chroma_client.get_or_create_collection("failure_analyses")
-            results = collection.query(
-                query_texts=[f"design failure {niche} {template}"],
+            # Failure analysis recenti
+            failures = await self.memory.query_chromadb_recent(
+                query=f"FAILURE niche {niche} template {template}",
                 n_results=3,
-                where={"agent": "design"},
+                where={"type": "failure_analysis"},
+                primary_days=90,
+                fallback_days=180,
+            )
+            # Design outcome recenti
+            outcomes = await self.memory.query_chromadb_recent(
+                query=f"DESIGN_OUTCOME niche {niche}",
+                n_results=5,
+                where={"type": "design_outcome"},
+                primary_days=90,
+                fallback_days=180,
             )
 
-            if results["documents"] and results["documents"][0]:
-                return {
-                    "known_issues": results["documents"][0][:2],
-                    "avoid": [m.get("issue_type", "") for m in (results["metadatas"][0] or [])],
-                }
+            known_issues = [r["document"] for r in failures[:2]] if failures else []
+            avoid = []
+            for r in failures:
+                meta = r.get("metadata", {})
+                if meta.get("failure_type"):
+                    avoid.append(meta["failure_type"])
+
+            if known_issues or outcomes:
+                result: dict = {}
+                if known_issues:
+                    result["known_issues"] = known_issues
+                    result["avoid"] = avoid
+                if outcomes:
+                    result["recent_outcomes"] = [
+                        {
+                            "document": o["document"],
+                            "performance": o.get("metadata", {}).get("performance", ""),
+                        }
+                        for o in outcomes[:3]
+                    ]
+                return result
         except Exception:
             pass
         return None

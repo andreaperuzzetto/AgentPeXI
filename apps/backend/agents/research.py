@@ -151,10 +151,12 @@ class ResearchAgent(AgentBase):
     async def _single_research(self, task: AgentTask, query: str) -> AgentResult:
         """Ricerca generica basata su query libera — allineata a _single_niche_research."""
         # Step 0 — Failure analysis da ChromaDB
-        failure_context = await self.memory.query_chromadb(
+        failure_context = await self.memory.query_chromadb_recent(
             query=f"failure analysis {query}",
             n_results=3,
             where={"type": "failure_analysis"},
+            primary_days=90,
+            fallback_days=180,
         )
         failure_text = ""
         if failure_context:
@@ -317,10 +319,12 @@ class ResearchAgent(AgentBase):
                     pass
 
         # Step 0b — Failure analysis passate
-        failure_context = await self.memory.query_chromadb(
+        failure_context = await self.memory.query_chromadb_recent(
             query=f"failure analysis {niche}",
             n_results=3,
             where={"type": "failure_analysis"},
+            primary_days=90,
+            fallback_days=180,
         )
         failure_text = ""
         if failure_context:
