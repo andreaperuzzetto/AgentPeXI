@@ -33,6 +33,7 @@ class Scheduler:
         design_agent: Any = None,
         publisher_agent: Any = None,
         analytics_agent: Any = None,
+        finance_agent: Any = None,
         telegram_broadcaster: Callable | None = None,
     ) -> None:
         self.memory = memory
@@ -43,6 +44,7 @@ class Scheduler:
         self.design_agent = design_agent
         self.publisher_agent = publisher_agent
         self.analytics_agent = analytics_agent
+        self.finance_agent = finance_agent
         self._telegram_broadcast = telegram_broadcaster
         self._scheduler = AsyncIOScheduler()
 
@@ -107,7 +109,16 @@ class Scheduler:
             replace_existing=True,
         )
 
-        logger.info("Job predefiniti registrati (ssd_health_check, agent_status_sync, daily_pipeline, analytics_daily)")
+        # Finance report giornaliero alle 20:00 (dopo chiusura pipeline)
+        self._scheduler.add_job(
+            self._run_finance,
+            trigger=CronTrigger(hour=20, minute=0),
+            id="finance_daily",
+            name="Finance report giornaliero",
+            replace_existing=True,
+        )
+
+        logger.info("Job predefiniti registrati (ssd_health_check, agent_status_sync, daily_pipeline, analytics_daily, finance_daily)")
 
     # ------------------------------------------------------------------
     # Caricamento job da SQLite
@@ -611,6 +622,26 @@ class Scheduler:
         except Exception as exc:
             logger.error("Analytics fallito: %s", exc)
             await self._notify_telegram(f"⚠️ Analytics giornaliero fallito: {exc}")
+
+    async def _run_finance(self) -> None:
+        """Job giornaliero finance: costi, margini, ROI per nicchia."""
+        if not self.finance_agent:
+            logger.warning("Finance agent non disponibile, skip")
+            return
+
+        from apps.backend.core.models import AgentTask as _AgentTask
+
+        task = _AgentTask(
+            agent_name="finance",
+            input_data={"period_days": 30},
+            source="scheduler",
+        )
+        try:
+            await self.finance_agent.execute(task)
+            logger.info("Finance report giornaliero completato")
+        except Exception as exc:
+            logger.error("Finance report fallito: %s", exc)
+            await self._notify_telegram(f"⚠️ Finance report fallito: {exc}")
 
     async def _pick_niche(self) -> str | None:
         """Sceglie la prossima nicchia da produrre.

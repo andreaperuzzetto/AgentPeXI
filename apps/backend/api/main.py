@@ -85,6 +85,7 @@ async def lifespan(app: FastAPI):
     from apps.backend.agents.design import DesignAgent
     from apps.backend.agents.publisher import PublisherAgent
     from apps.backend.agents.analytics import AnalyticsAgent
+    from apps.backend.agents.finance import FinanceAgent
 
     # 1. MemoryManager
     memory = MemoryManager()
@@ -149,6 +150,15 @@ async def lifespan(app: FastAPI):
     )
     pepe.register_agent("analytics", analytics_agent)
 
+    # 2g. Finance Agent (no Etsy dependency)
+    finance_agent = FinanceAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        ws_broadcaster=ws_manager.broadcast,
+        telegram_broadcaster=telegram_broadcast,
+    )
+    pepe.register_agent("finance", finance_agent)
+
     # 3. Scheduler APScheduler
     scheduler = Scheduler(
         memory=memory,
@@ -159,6 +169,7 @@ async def lifespan(app: FastAPI):
         design_agent=design_agent,
         publisher_agent=publisher_agent,
         analytics_agent=analytics_agent,
+        finance_agent=finance_agent,
         telegram_broadcaster=telegram_broadcast,
     )
     await scheduler.start()
@@ -377,6 +388,37 @@ async def get_etsy_listings(status: str = "all", limit: int = 50) -> dict:
 # ------------------------------------------------------------------
 # Analytics endpoints
 # ------------------------------------------------------------------
+
+
+@app.get("/api/finance/report")
+async def get_finance_report(days: int = 30) -> dict:
+    """Ultimo report finance da ChromaDB + trigger run se mai eseguito."""
+    if not memory:
+        return {"report": None}
+    results = await memory.query_chromadb(
+        query="finance report revenue cost margin ROI",
+        n_results=1,
+        where={"type": "finance_report"},
+    )
+    return {"report": results[0] if results else None, "days": days}
+
+
+@app.post("/api/finance/run")
+async def run_finance_agent(body: dict | None = None) -> dict:
+    """Esegue il FinanceAgent manualmente (period_days dal body, default 30)."""
+    if not pepe:
+        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
+    period_days = (body or {}).get("period_days", 30)
+    import uuid
+    task_id = str(uuid.uuid4())
+    task = AgentTask(
+        task_id=task_id,
+        agent_name="finance",
+        input_data={"period_days": period_days},
+        source="web",
+    )
+    await pepe.dispatch_task(task)
+    return {"status": "dispatched", "task_id": task_id, "period_days": period_days}
 
 
 @app.get("/api/analytics/latest")
