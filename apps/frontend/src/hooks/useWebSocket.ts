@@ -33,15 +33,17 @@ export function useWebSocket() {
         })
         break
 
-      case 'agent_started':
-        store.setAgentStatus(data.agent, 'running', data.description)
+      case 'agent_started': {
+        const desc = data.description ?? `task ${data.task_id.slice(0, 8)}`
+        store.setAgentStatus(data.agent, 'running', desc)
         store.addMessage({
           id: crypto.randomUUID(),
           role: 'system',
-          content: `Agente ${data.agent} avviato: ${data.description}`,
+          content: `Agente ${data.agent} avviato: ${desc}`,
           timestamp: new Date().toISOString(),
         })
         break
+      }
 
       case 'agent_completed':
         store.setAgentStatus(data.agent, 'idle')

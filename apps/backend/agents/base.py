@@ -71,10 +71,13 @@ class AgentBase(ABC):
             status="running",
             input_data=task.input_data,
         )
+        # Deriva una descrizione leggibile dall'input del task
+        _desc = self._task_description(task)
         await self._broadcast({
             "type": "agent_started",
             "agent": self.name,
             "task_id": task.task_id,
+            "description": _desc,
         })
 
         try:
@@ -426,6 +429,24 @@ class AgentBase(ABC):
                 await self._ws_broadcast(event)
             except Exception:
                 pass  # Non bloccare l'agente per errori WS
+
+    @staticmethod
+    def _task_description(task: AgentTask) -> str:
+        """Costruisce una descrizione leggibile dal task input (max 80 char)."""
+        d = task.input_data
+        if not d:
+            return f"task {task.task_id[:8]}"
+        # Prova campi comuni in ordine di priorità
+        for key in ("query", "niches", "description", "action", "symbol", "message"):
+            val = d.get(key)
+            if val:
+                if isinstance(val, list):
+                    val = ", ".join(str(v) for v in val[:3])
+                txt = f"{key}: {val}"
+                return txt[:80]
+        # Fallback: primo valore qualsiasi
+        first_val = next(iter(d.values()), "")
+        return str(first_val)[:80]
 
     @staticmethod
     def _estimate_cost(

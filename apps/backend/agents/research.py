@@ -55,9 +55,24 @@ class ResearchAgent(AgentBase):
 
     async def run(self, task: AgentTask) -> AgentResult:
         """Analizza una o più nicchie Etsy e produce un report strutturato."""
-        input_data = task.input_data
+        input_data = task.input_data or {}
         niches: list[str] = input_data.get("niches", [])
         query: str = input_data.get("query", "")
+
+        # Fallback: se tutto vuoto usa qualsiasi stringa trovata nell'input
+        if not niches and not query:
+            for v in input_data.values():
+                if isinstance(v, str) and v not in ("generic", "niche_analysis"):
+                    query = v
+                    break
+
+        if not niches and not query:
+            return AgentResult(
+                task_id=task.task_id,
+                agent_name=self.name,
+                status=TaskStatus.FAILED,
+                output_data={"error": "Nessuna nicchia o query specificata nel task input."},
+            )
 
         # Se c'è una query generica senza nicchie specifiche, usala direttamente
         if not niches and query:

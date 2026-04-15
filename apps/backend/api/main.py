@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.scheduler import Scheduler
     from apps.backend.telegram.bot import TelegramBot
+    from apps.backend.agents.research import ResearchAgent
 
     # 1. MemoryManager
     memory = MemoryManager()
@@ -85,6 +86,15 @@ async def lifespan(app: FastAPI):
 
     # 2. Pepe orchestratore
     pepe = Pepe(memory=memory, ws_broadcaster=ws_manager.broadcast)
+
+    # 2b. Registra agenti disponibili
+    research_agent = ResearchAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        ws_broadcaster=ws_manager.broadcast,
+    )
+    pepe.register_agent("research", research_agent)
+
     await pepe.start()
     logger.info("Pepe avviato")
 
@@ -230,14 +240,8 @@ async def ws_chat(ws: WebSocket) -> None:
 async def _handle_ws_message(ws: WebSocket, message: str) -> None:
     """Processa messaggio utente via WS e invia risposta."""
     try:
-        reply = await pepe.handle_user_message(message, source="web")
-        # La risposta viene già broadcastata da Pepe via ws_broadcaster,
-        # ma inviamo anche un ack diretto al client che ha inviato
-        await ws.send_json({
-            "type": "pepe_message",
-            "content": reply,
-            "source": "web",
-        })
+        # La risposta viene broadcastata da Pepe via ws_broadcaster a tutti i client
+        await pepe.handle_user_message(message, source="web")
     except Exception as exc:
         logger.error("Errore WS message: %s", exc)
         await ws.send_json({

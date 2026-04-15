@@ -27,17 +27,30 @@ per automatizzare un business Etsy di prodotti digitali.
 
 Il tuo proprietario è Andrea. Rispondi sempre in italiano.
 
-Hai a disposizione questi agenti:
-- **research**: analisi di mercato, trend Etsy, nicchie, keyword, competitor
-- **design**: creazione prodotti digitali (PDF, PNG, SVG)
-- **publisher**: pubblicazione listing su Etsy (titoli SEO, tag, upload)
-- **analytics**: analisi performance listing, revenue, ottimizzazione
-- **customer_service**: risposte messaggi clienti Etsy
+Hai a disposizione questi agenti. Quando deleghi, il campo "input" DEVE contenere
+i parametri specificati per ogni agente:
+
+- **research**: analisi di mercato Etsy, trend, nicchie, keyword, competitor
+  input: {"query": "descrizione della ricerca"} OPPURE {"niches": ["nicchia1", "nicchia2"]}
+
+- **design**: creazione prodotti digitali (PDF printable, PNG art, SVG bundle)
+  input: {"product_type": "printable_pdf|digital_art_png|svg_bundle", "niche": "...", "style": "..."}
+
+- **publisher**: pubblicazione listing su Etsy
+  input: {"file_path": "...", "niche": "...", "keywords": ["..."]}
+
+- **analytics**: analisi performance listing e revenue
+  input: {"period_days": 7}
+
+- **customer_service**: gestione messaggi clienti Etsy
+  input: {}
+
 - **finance**: report finanziari, costi API, margini
+  input: {"period_days": 7}
 
 Quando l'utente chiede qualcosa:
 1. Se puoi rispondere direttamente (saluti, domande generali, stato sistema), fallo.
-2. Se serve un agente, rispondi con un JSON così:
+2. Se serve un agente, rispondi SOLO con questo JSON (nessun testo aggiuntivo):
    {"delegate": "<agent_name>", "task_type": "<tipo>", "input": {<parametri>}}
 3. Se non sei sicuro, chiedi chiarimenti.
 
@@ -343,23 +356,36 @@ class Pepe:
     @staticmethod
     def _parse_delegation(text: str) -> dict | None:
         """Cerca un blocco JSON di delega nella risposta di Pepe."""
-        # Cerca JSON nel testo (può essere inline o in un blocco code)
         import re
 
-        # Pattern: cerca {"delegate": ...}
-        patterns = [
-            r'```json\s*(\{.*?\})\s*```',  # blocco code
-            r'(\{"delegate"\s*:.*?\})',      # inline
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text, re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(match.group(1))
-                    if "delegate" in data:
-                        return data
-                except (json.JSONDecodeError, IndexError):
-                    continue
+        # Prima prova con blocco code markdown ```json ... ```
+        code_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
+        if code_match:
+            try:
+                data = json.loads(code_match.group(1))
+                if "delegate" in data:
+                    return data
+            except json.JSONDecodeError:
+                pass
+
+        # Poi cerca JSON raw contando le graffe (gestisce nesting correttamente)
+        for i, char in enumerate(text):
+            if char == "{":
+                depth = 0
+                for j, c in enumerate(text[i:], i):
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            candidate = text[i : j + 1]
+                            try:
+                                data = json.loads(candidate)
+                                if "delegate" in data:
+                                    return data
+                            except json.JSONDecodeError:
+                                break
+
         return None
 
     async def _broadcast(self, event: dict) -> None:

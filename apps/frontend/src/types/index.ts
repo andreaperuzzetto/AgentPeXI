@@ -10,7 +10,7 @@ export interface AgentStarted {
   type: 'agent_started'
   agent: string
   task_id: string
-  description: string
+  description?: string
 }
 
 export interface AgentCompleted {
