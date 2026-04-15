@@ -51,4 +51,4 @@ NOTES.md
 apps/backend/assets/fonts/*.ttf
 
 # Vite cache
-apps/frontend/.vite/
+.vite/
