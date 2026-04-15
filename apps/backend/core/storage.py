@@ -67,6 +67,11 @@ class StorageManager:
     # Status / health
     # ------------------------------------------------------------------
 
+    @property
+    def base_path(self) -> Path:
+        """Percorso base pubblico per il Design Agent."""
+        return self._base
+
     def is_available(self) -> bool:
         """True se STORAGE_PATH è montato e scrivibile."""
         return self._base.is_dir() and os.access(str(self._base), os.W_OK)

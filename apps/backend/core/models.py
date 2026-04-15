@@ -48,3 +48,5 @@ class AgentResult:
     tokens_used: int = 0
     cost_usd: float = 0.0
     duration_ms: int = 0
+    confidence: float = 0.0
+    missing_data: list[str] = field(default_factory=list)
