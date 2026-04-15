@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
+import aiosqlite
 import anthropic
 
 from apps.backend.agents.base import AgentBase
@@ -33,21 +35,6 @@ AB_PRICES = {
     "svg_bundle": {"A": 5.99, "B": 9.99},
 }
 
-_SEO_SYSTEM_PROMPT = """\
-Sei un esperto di Etsy SEO per prodotti digitali printable.
-Rispondi SOLO con JSON valido, nessun testo aggiuntivo:
-{"title": "...", "description": "...", "tags": ["...", ...]}
-
-Regole titolo: max 140 caratteri, keyword principale all'inizio,
-  includi tipo prodotto e formato (es. "A4 PDF Printable").
-Regole descrizione: 150-300 parole, prima riga con keyword principale,
-  3-5 bullet point benefici, menzione "instant download", call to action finale.
-  NON usare markdown nella descrizione — testo plain con a capo normali.
-Regole tag: esattamente 13 tag, max 20 caratteri ciascuno,
-  mix broad + long-tail, nessuna ripetizione tra tag e nessuna ripetizione
-  di parole già nel titolo ove possibile.\
-"""
-
 
 class PublisherAgent(AgentBase):
     """Pubblica file generati dal Design Agent su Etsy come draft listing."""
@@ -72,6 +59,7 @@ class PublisherAgent(AgentBase):
         self.storage = storage
         self.etsy_api = etsy_api
         self._telegram_broadcast = telegram_broadcaster
+        self.db_path = memory._db_path
 
     # ------------------------------------------------------------------
     # run()
@@ -107,8 +95,7 @@ class PublisherAgent(AgentBase):
         # --- Passo 2 — A/B assignment ---
         base_count = await self.memory.get_etsy_listings_count()
 
-        listing_ids: list[str] = []
-        ab_counts = {"A": 0, "B": 0}
+        publish_results: list[dict] = []
         errors: list[str] = []
         files_moved = 0
 
@@ -119,7 +106,7 @@ class PublisherAgent(AgentBase):
             color_scheme = color_schemes[idx] if idx < len(color_schemes) else ""
 
             try:
-                lid = await self._publish_single(
+                result = await self._publish_single(
                     file_path=file_path,
                     product_type=product_type,
                     template=template,
@@ -129,32 +116,50 @@ class PublisherAgent(AgentBase):
                     size=size,
                     ab_variant=ab_variant,
                     pq_task_id=pq_task_id,
+                    research_data=data,
                 )
-                listing_ids.append(lid)
-                ab_counts[ab_variant] += 1
+                publish_results.append(result)
 
-                # --- Passo 4 — Sposta file ---
-                try:
-                    self.storage.move_to_uploaded(Path(file_path))
-                    files_moved += 1
-                except Exception as exc:
-                    logger.warning("Errore spostamento file %s: %s", file_path, exc)
+                # --- Passo 4 — Sposta file (solo se listing creato) ---
+                if result.get("listing_id"):
+                    try:
+                        self.storage.move_to_uploaded(Path(file_path))
+                        files_moved += 1
+                    except Exception as exc:
+                        logger.warning("Errore spostamento file %s: %s", file_path, exc)
 
             except Exception as exc:
                 msg = f"Errore pubblicazione {Path(file_path).name}: {exc}"
                 logger.error(msg)
                 errors.append(msg)
+                publish_results.append({
+                    "niche": niche,
+                    "file_type": product_type,
+                    "status": "error",
+                    "listing_id": None,
+                    "images_uploaded": 0,
+                    "seo_validated": False,
+                    "error": str(exc),
+                })
 
         # --- Passo 5 — Aggiorna production_queue ---
+        listing_ids = [r["listing_id"] for r in publish_results if r.get("listing_id")]
         if pq_task_id and listing_ids:
             await self.memory.update_production_queue_status(pq_task_id, "completed")
 
-        # --- Passo 6 — AgentResult ---
+        # --- Passo 6 — Confidence + Status ---
+        confidence, missing_data = self._calculate_publish_confidence(publish_results, data)
+        status = self._calculate_status(publish_results)
+
         output = {
             "listings_created": len(listing_ids),
             "listing_ids": listing_ids,
-            "ab_variants": ab_counts,
+            "ab_variants": {
+                "A": sum(1 for r in publish_results if r.get("ab_variant") == "A" and r.get("listing_id")),
+                "B": sum(1 for r in publish_results if r.get("ab_variant") == "B" and r.get("listing_id")),
+            },
             "files_moved_to_uploaded": files_moved,
+            "publish_details": publish_results,
         }
         if errors:
             output["errors"] = errors
@@ -162,8 +167,10 @@ class PublisherAgent(AgentBase):
         return AgentResult(
             task_id=task.task_id,
             agent_name=self.name,
-            status=TaskStatus.COMPLETED,
+            status=status,
             output_data=output,
+            confidence=confidence,
+            missing_data=missing_data,
         )
 
     # ------------------------------------------------------------------
@@ -181,25 +188,56 @@ class PublisherAgent(AgentBase):
         size: str,
         ab_variant: str,
         pq_task_id: str | None,
-    ) -> str:
-        """Pubblica un singolo file come draft su Etsy. Ritorna listing_id."""
-        # 3a. Generazione SEO via LLM
+        research_data: dict,
+    ) -> dict:
+        """Pubblica un singolo file come draft su Etsy. Ritorna dict con dettagli."""
+        result: dict[str, Any] = {
+            "niche": niche,
+            "file_type": product_type,
+            "ab_variant": ab_variant,
+            "listing_id": None,
+            "images_uploaded": 0,
+            "seo_validated": False,
+            "price_source": "fallback_hardcoded",
+        }
+
+        # 3a. Thumbnail check — blocca se mancanti
+        thumbnails_ok, thumbnail_paths = await self._check_thumbnails(niche, product_type)
+        if not thumbnails_ok:
+            logger.error("SKIP: Listing %s non pubblicato — thumbnail mancanti", niche)
+            result["status"] = "skipped_no_thumbnails"
+            result["error"] = "Thumbnail non trovati — eseguire Playwright prima di pubblicare"
+            return result
+
+        # 3b. Failure history check
+        adjustments = await self._check_failure_history(niche, research_data)
+        if adjustments:
+            result["failure_adjustments"] = adjustments
+
+        # 3c. Generazione SEO via LLM (con dati Research)
         seo = await self._generate_seo(
             niche=niche,
             template=template,
             keywords=keywords,
             color_scheme=color_scheme,
             size=size,
+            research_data=research_data,
         )
 
         title = seo["title"]
         description = seo["description"]
         tags = seo["tags"]
+        result["seo_validated"] = seo.get("seo_validated", False)
+        if seo.get("seo_issues"):
+            result["seo_issues"] = seo["seo_issues"]
 
-        # 3b. Prezzo
-        price = AB_PRICES.get(product_type, AB_PRICES["printable_pdf"])[ab_variant]
+        # 3d. Prezzo research-driven
+        price = self._resolve_price(product_type, research_data, variant=ab_variant.lower())
+        result["price_source"] = (
+            "research" if research_data.get("pricing", {}).get("launch_price_usd") else "fallback_hardcoded"
+        )
 
-        # 3c. Crea draft su Etsy
+        # 3e. Crea draft su Etsy
         response = await self._call_tool(
             "etsy_api",
             "create_listing",
@@ -213,7 +251,7 @@ class PublisherAgent(AgentBase):
             state="draft",
             type="download",
             who_made="i_did",
-            when_made="2020_2025",
+            when_made=self._get_when_made(),
             is_digital=True,
             quantity=999,
         )
@@ -221,8 +259,9 @@ class PublisherAgent(AgentBase):
         listing_id = str(response.get("listing_id", ""))
         if not listing_id:
             raise RuntimeError(f"Etsy non ha restituito listing_id: {response}")
+        result["listing_id"] = listing_id
 
-        # 3d. Upload file
+        # 3f. Upload file
         await self._call_tool(
             "etsy_api",
             "upload_file",
@@ -233,7 +272,24 @@ class PublisherAgent(AgentBase):
             name=Path(file_path).name,
         )
 
-        # 3e. Salvataggio in SQLite
+        # 3g. Upload thumbnail
+        uploaded_count = 0
+        for thumb_path in thumbnail_paths:
+            try:
+                await self._call_tool(
+                    "etsy_api",
+                    "upload_image",
+                    {"listing_id": listing_id, "image": thumb_path.name},
+                    self.etsy_api.upload_image,
+                    listing_id=int(listing_id),
+                    file_path=str(thumb_path),
+                )
+                uploaded_count += 1
+            except Exception as exc:
+                logger.warning("Errore upload thumbnail %s: %s", thumb_path.name, exc)
+        result["images_uploaded"] = uploaded_count
+
+        # 3h. Salvataggio in SQLite
         await self.memory.add_etsy_listing(
             listing_id=listing_id,
             production_queue_task_id=pq_task_id,
@@ -249,24 +305,75 @@ class PublisherAgent(AgentBase):
             file_path=file_path,
         )
 
-        # 3f. Notifica Telegram
+        # 3i. Notifica Telegram
         msg = (
-            f"🆕 Draft Etsy creato!\n"
-            f"📦 {title[:70]}\n"
-            f"💰 Prezzo: €{price:.2f} (variante {ab_variant})\n"
-            f"🎨 Schema: {color_scheme}\n"
-            f"📋 Nicchia: {niche}\n\n"
-            f"✅ Approva: https://www.etsy.com/your-shop/tools/listings/drafts\n"
-            f"🔗 Listing ID: {listing_id}\n\n"
+            f"\U0001f195 Draft Etsy creato!\n"
+            f"\U0001f4e6 {title[:70]}\n"
+            f"\U0001f4b0 Prezzo: \u20ac{price:.2f} (variante {ab_variant})\n"
+            f"\U0001f3a8 Schema: {color_scheme}\n"
+            f"\U0001f4cb Nicchia: {niche}\n"
+            f"\U0001f5bc Immagini: {uploaded_count}\n"
+            f"\U0001f4ca SEO validato: {'\u2705' if result['seo_validated'] else '\u26a0\ufe0f'}\n"
+            f"\U0001f4b5 Prezzo da: {result['price_source']}\n\n"
+            f"\u2705 Approva: https://www.etsy.com/your-shop/tools/listings/drafts\n"
+            f"\U0001f517 Listing ID: {listing_id}\n\n"
             f"#draft #{template} #{color_scheme}"
         )
         await self._notify_telegram(msg)
 
-        return listing_id
+        result["status"] = "published"
+        return result
 
     # ------------------------------------------------------------------
     # SEO generation
     # ------------------------------------------------------------------
+
+    def _build_seo_system_prompt(self, selling_signals: dict) -> str:
+        """System prompt SEO dinamico con selling_signals e contesto stagionale."""
+        thumbnail_style = selling_signals.get("thumbnail_style", "clean mockup")
+        conversion_triggers = selling_signals.get("conversion_triggers", [])
+        bundle_vs_single = selling_signals.get("bundle_vs_single", "single")
+
+        trigger_instructions = ""
+        if conversion_triggers:
+            trigger_instructions = (
+                "\nLINGUAGGIO DI CONVERSIONE (usa questi concetti nella description):\n"
+                + "\n".join(f"- {t}" for t in conversion_triggers[:3])
+            )
+
+        bundle_instruction = ""
+        if bundle_vs_single == "bundle":
+            bundle_instruction = (
+                "\nEnfatizza il VALORE del bundle: più file, più risparmio "
+                "rispetto all'acquisto singolo."
+            )
+
+        seasonal = self._get_seasonal_context()
+        seasonal_instruction = ""
+        if seasonal["keywords"]:
+            seasonal_instruction = (
+                f"\nCONTESTO STAGIONALE ({seasonal['season']}):\n"
+                f"Se rilevante per la niche, considera di includere nel title o description:\n"
+                f"{', '.join(seasonal['keywords'][:3])}\n"
+                f"Non forzarlo se non c'entra con il prodotto."
+            )
+
+        return (
+            "Sei un copywriter Etsy specializzato in prodotti digitali stampabili.\n"
+            "Il tuo obiettivo è massimizzare conversioni, non solo ottimizzare per search.\n\n"
+            f"STILE THUMBNAIL DA MENZIONARE NELLA DESCRIPTION: {thumbnail_style}\n"
+            f"{trigger_instructions}\n"
+            f"{bundle_instruction}\n"
+            f"{seasonal_instruction}\n\n"
+            "REGOLE ASSOLUTE:\n"
+            "1. Title: keyword principale PRIMA di tutto, benefit nei primi 60 chars\n"
+            "2. Description: prima riga ottimizzata per Etsy search preview (150 chars max)\n"
+            "3. Bullet points con \u2022 per le caratteristiche\n"
+            "4. Tags: usa ESATTAMENTE la lista fornita, non modificare\n"
+            "5. Nessun claim falso (no \"best seller\", \"award winning\")\n"
+            "6. Sempre in inglese\n"
+            '7. Rispondi SOLO con JSON valido: {"title": "...", "description": "...", "tags": [...]}\n'
+        )
 
     async def _generate_seo(
         self,
@@ -275,31 +382,73 @@ class PublisherAgent(AgentBase):
         keywords: list[str],
         color_scheme: str,
         size: str,
+        research_data: dict,
     ) -> dict:
-        """Genera title, description, tags via LLM. Retry una volta se JSON malformato."""
+        """Genera title, description, tags via LLM usando dati Research. Retry una volta se JSON malformato."""
+        etsy_tags_13 = research_data.get("etsy_tags_13", [])
+        selling_signals = research_data.get("selling_signals", {})
+        conversion_triggers = selling_signals.get("conversion_triggers", [])
+        bundle_vs_single = selling_signals.get("bundle_vs_single", "single")
+        thumbnail_style = selling_signals.get("thumbnail_style", "")
+
+        system_prompt = self._build_seo_system_prompt(selling_signals)
+
+        # Build user message con dati Research
+        tags_instruction = ""
+        if etsy_tags_13:
+            tags_instruction = (
+                "\nTAG ETSY OBBLIGATORI (usa esattamente questi 13, sono già ottimizzati da Research):\n"
+                f"{json.dumps(etsy_tags_13, ensure_ascii=False)}\n\n"
+                "IMPORTANTE: Il campo \"tags\" DEVE essere esattamente la lista fornita sopra, non generarne di nuovi.\n"
+            )
+
+        signals_section = ""
+        if selling_signals:
+            signals_section = (
+                "\nSEGNALI DI VENDITA DA RESEARCH:\n"
+                f"- Stile thumbnail vincente: {thumbnail_style}\n"
+                f"- Trigger di conversione: {', '.join(conversion_triggers)}\n"
+                f"- Formato consigliato: {bundle_vs_single}\n"
+            )
+
+        first_keyword = etsy_tags_13[0] if etsy_tags_13 else niche
+        tags_json = json.dumps(etsy_tags_13) if etsy_tags_13 else '["...", ...]'
+
         user_prompt = (
-            f"Nicchia: {niche}\n"
+            f"Crea il listing Etsy per: {niche} ({size})\n"
             f"Template: {template}\n"
-            f"Keywords target: {', '.join(keywords) if keywords else 'nessuna'}\n"
             f"Schema colore: {color_scheme}\n"
-            f"Formato: {size}"
+            f"Keywords target: {', '.join(keywords) if keywords else 'nessuna'}\n"
+            f"{tags_instruction}"
+            f"{signals_section}\n"
+            f"REGOLE TITLE:\n"
+            f"- Inizia con la keyword principale: \"{first_keyword}\"\n"
+            f"- Max 140 caratteri\n"
+            f"- Includi il benefit principale nei primi 60 caratteri\n\n"
+            f"REGOLE DESCRIPTION:\n"
+            f"- Prima riga: keyword principale + benefit immediato (per Etsy search preview)\n"
+            f"- 150-300 parole\n"
+            f"- Bullet points per caratteristiche (\u2022)\n"
+            f"- Includi: cosa ricevi, come scaricarlo, come usarlo\n"
+            + (f"- Usa il linguaggio dei conversion_triggers sopra\n" if conversion_triggers else "")
+            + f"\nOUTPUT JSON:\n"
+            f'{{\"title\": \"...\", \"description\": \"...\", \"tags\": {tags_json}}}\n'
         )
 
         for attempt in range(2):
             response_text = await self._call_llm(
                 messages=[{"role": "user", "content": user_prompt}],
-                system_prompt=_SEO_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
             )
-            parsed = self._parse_seo_json(response_text)
+            parsed = self._parse_seo_json(response_text, etsy_tags_13=etsy_tags_13)
             if parsed:
                 return parsed
             logger.warning("SEO JSON malformato (tentativo %d): %s", attempt + 1, response_text[:200])
 
         raise RuntimeError("LLM non ha generato JSON SEO valido dopo 2 tentativi")
 
-    @staticmethod
-    def _parse_seo_json(text: str) -> dict | None:
-        """Estrae JSON SEO dalla risposta LLM."""
+    def _parse_seo_json(self, text: str, etsy_tags_13: list[str] | None = None) -> dict | None:
+        """Estrae e valida JSON SEO dalla risposta LLM con quality check."""
         cleaned = text.strip()
         if cleaned.startswith("```"):
             lines = cleaned.split("\n")
@@ -308,14 +457,258 @@ class PublisherAgent(AgentBase):
             cleaned = "\n".join(lines[start:end]).strip()
         try:
             data = json.loads(cleaned)
-            if "title" in data and "description" in data and "tags" in data:
-                # Sanitize
-                data["title"] = str(data["title"])[:140]
-                data["tags"] = [str(t)[:20] for t in data["tags"]][:13]
-                return data
+            if not ("title" in data and "description" in data and "tags" in data):
+                return None
         except (json.JSONDecodeError, KeyError, TypeError):
-            pass
-        return None
+            return None
+
+        # --- SEO quality validation ---
+        issues: list[str] = []
+        seo_validated = True
+
+        title = str(data.get("title", ""))
+        description = str(data.get("description", ""))
+        tags = data.get("tags", [])
+
+        # Title validation
+        if len(title) > 140:
+            data["title"] = title[:140]
+            issues.append("title troncato a 140 chars")
+        if len(title) < 30:
+            issues.append("title troppo corto (<30 chars)")
+            seo_validated = False
+
+        # Description bullet points
+        if "\u2022" not in description and "- " not in description:
+            issues.append("description senza bullet points")
+            seo_validated = False
+
+        # Description length
+        if len(description) < 150:
+            issues.append(f"description troppo corta ({len(description)} chars, min 150)")
+            seo_validated = False
+
+        # Tags — override con Research se disponibili
+        if etsy_tags_13:
+            data["tags"] = etsy_tags_13
+        else:
+            if len(tags) < 10:
+                issues.append(f"solo {len(tags)} tag (min 10)")
+                seo_validated = False
+            data["tags"] = [str(t)[:20] for t in tags[:13]]
+
+        if issues:
+            logger.warning("SEO issues: %s", issues)
+
+        data["seo_validated"] = seo_validated
+        data["seo_issues"] = issues
+        return data
+
+    # ------------------------------------------------------------------
+    # Confidence + Status scoring
+    # ------------------------------------------------------------------
+
+    def _calculate_publish_confidence(
+        self, results: list[dict], task_context: dict,
+    ) -> tuple[float, list[str]]:
+        """Calcola confidence basata su qualità oggettiva del publishing."""
+        missing: list[str] = []
+        score = 0.0
+
+        # 40% — dati Research presenti e usati
+        research_score = 0.0
+        if task_context.get("etsy_tags_13"):
+            research_score += 0.20
+        else:
+            missing.append("etsy_tags_13 mancanti da Research Agent")
+        if task_context.get("selling_signals"):
+            research_score += 0.10
+        else:
+            missing.append("selling_signals mancanti da Research Agent")
+        if task_context.get("pricing", {}).get("launch_price_usd"):
+            research_score += 0.10
+        else:
+            missing.append("pricing da Research mancante — usato prezzo hardcoded")
+        score += research_score
+
+        # 35% — success rate listing pubblicati
+        if results:
+            successful = sum(1 for r in results if r.get("listing_id"))
+            success_rate = successful / len(results)
+            score += 0.35 * success_rate
+            if success_rate < 1.0:
+                missing.append(f"{len(results) - successful} listing su {len(results)} falliti")
+        else:
+            missing.append("Nessun listing pubblicato")
+
+        # 15% — thumbnail caricate
+        if results:
+            with_images = sum(1 for r in results if r.get("images_uploaded", 0) > 0)
+            image_rate = with_images / len(results)
+            score += 0.15 * image_rate
+            if image_rate < 1.0:
+                missing.append(f"{len(results) - with_images} listing senza thumbnail")
+
+        # 10% — SEO validato
+        if results:
+            valid_seo = sum(1 for r in results if r.get("seo_validated", False))
+            score += 0.10 * (valid_seo / len(results))
+
+        return round(score, 2), missing
+
+    def _calculate_status(self, results: list[dict]) -> TaskStatus:
+        """COMPLETED: 100% pubblicati. PARTIAL: 50-99%. FAILED: <50% o 0."""
+        if not results:
+            return TaskStatus.FAILED
+
+        successful = sum(1 for r in results if r.get("listing_id"))
+        total = len(results)
+        ratio = successful / total
+
+        if ratio == 1.0:
+            return TaskStatus.COMPLETED
+        elif ratio >= 0.5:
+            return TaskStatus.PARTIAL
+        else:
+            return TaskStatus.FAILED
+
+    # ------------------------------------------------------------------
+    # Pricing research-driven
+    # ------------------------------------------------------------------
+
+    def _resolve_price(self, file_type: str, research_data: dict, variant: str = "a") -> float:
+        """Usa il prezzo da Research se disponibile, fallback su AB_PRICES."""
+        pricing = research_data.get("pricing", {})
+
+        if variant.lower() == "a" and pricing.get("launch_price_usd"):
+            usd = float(pricing["launch_price_usd"])
+            return round(usd * 0.92, 2)
+        elif variant.lower() == "b" and pricing.get("mature_price_usd"):
+            usd = float(pricing["mature_price_usd"])
+            return round(usd * 0.92, 2)
+
+        # Fallback su AB_PRICES
+        ab_key = variant.upper()
+        prices = AB_PRICES.get(file_type, AB_PRICES["printable_pdf"])
+        return prices.get(ab_key, prices["A"])
+
+    # ------------------------------------------------------------------
+    # Thumbnail check
+    # ------------------------------------------------------------------
+
+    async def _check_thumbnails(self, niche: str, file_type: str) -> tuple[bool, list[Path]]:
+        """Verifica esistenza thumbnail. Ritorna (ok, paths)."""
+        niche_slug = niche.lower().replace(" ", "_").replace("/", "_")[:30]
+        thumbnails_dir = Path("apps/backend/assets/thumbnails")
+
+        found = list(thumbnails_dir.glob(f"{niche_slug}*.png"))
+        if not found:
+            found = list(thumbnails_dir.glob(f"*{niche_slug[:15]}*.png"))
+
+        if len(found) < 1:
+            logger.warning(
+                "Nessun thumbnail trovato per %s (%s). Path cercato: %s/%s*.png",
+                niche, file_type, thumbnails_dir, niche_slug,
+            )
+            return False, []
+
+        # Verifica file non corrotti (size > 10KB)
+        valid = [p for p in found if p.stat().st_size > 10_000]
+        if not valid:
+            logger.warning("Thumbnail trovati ma troppo piccoli (corrotti?) per %s", niche)
+            return False, []
+
+        logger.info("Trovati %d thumbnail validi per %s", len(valid), niche)
+        return True, valid[:3]
+
+    # ------------------------------------------------------------------
+    # Failure history
+    # ------------------------------------------------------------------
+
+    async def _check_failure_history(self, niche: str, research_data: dict) -> dict:
+        """Consulta failure_analysis da Research e analytics DB per niche simili."""
+        adjustments: dict[str, Any] = {}
+
+        # 1. Failure analysis da Research
+        failure_analysis = research_data.get("failure_analysis_applied", False)
+        failure_reasons = research_data.get("failure_reasons", [])
+
+        if failure_analysis and failure_reasons:
+            logger.info("Research ha applicato failure constraints per: %s", failure_reasons)
+            adjustments["failure_constraints_active"] = failure_reasons
+
+        # 2. Analytics DB — niche simili con 0 vendite dopo views
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute("""
+                    SELECT niche, price_eur, views, sales
+                    FROM etsy_listings
+                    WHERE sales = 0 AND views > 50
+                    AND created_at < datetime('now', '-30 days')
+                    LIMIT 20
+                """)
+                failed_listings = await cursor.fetchall()
+
+                niche_words = set(niche.lower().split())
+                similar_failures = []
+                for listing in failed_listings:
+                    listing_words = set(listing["niche"].lower().split())
+                    overlap = len(niche_words & listing_words) / max(len(niche_words), 1)
+                    if overlap > 0.4:
+                        similar_failures.append({
+                            "niche": listing["niche"],
+                            "price": listing["price_eur"],
+                            "views": listing["views"],
+                        })
+
+                if similar_failures:
+                    logger.warning(
+                        "Trovate %d niche simili con 0 vendite dopo views: %s",
+                        len(similar_failures), similar_failures[:3],
+                    )
+                    adjustments["similar_failures"] = similar_failures
+                    adjustments["warning"] = (
+                        "Niche simili non hanno convertito \u2014 valutare pricing o SEO diverso"
+                    )
+        except Exception as exc:
+            logger.warning("Errore consultazione failure history: %s", exc)
+
+        return adjustments
+
+    # ------------------------------------------------------------------
+    # when_made dinamico
+    # ------------------------------------------------------------------
+
+    def _get_when_made(self) -> str:
+        """Ritorna range 'when_made' valido per Etsy includendo l'anno corrente."""
+        current_year = datetime.datetime.now().year
+        decade_start = (current_year // 5) * 5
+        decade_end = decade_start + 5
+        return f"{decade_start}_{min(decade_end, current_year)}"
+
+    # ------------------------------------------------------------------
+    # Contesto stagionale
+    # ------------------------------------------------------------------
+
+    def _get_seasonal_context(self) -> dict:
+        """Ritorna season e keyword rilevanti per il mese corrente."""
+        month = datetime.datetime.now().month
+        seasonal_map = {
+            1: {"season": "New Year", "keywords": ["new year goals", "fresh start", "2026 planner"]},
+            2: {"season": "Valentine's", "keywords": ["gift idea", "printable gift", "love"]},
+            3: {"season": "Spring", "keywords": ["spring refresh", "organization", "spring cleaning"]},
+            4: {"season": "Spring/Easter", "keywords": ["spring", "productivity", "goal setting"]},
+            5: {"season": "Mother's Day", "keywords": ["gift for mom", "printable gift", "mothers day"]},
+            6: {"season": "Summer", "keywords": ["summer planning", "vacation tracker", "summer goals"]},
+            7: {"season": "Midyear Review", "keywords": ["mid year review", "goal check-in", "halfway goals"]},
+            8: {"season": "Back to School", "keywords": ["back to school", "student planner", "study tracker"]},
+            9: {"season": "Fall/Q4 Prep", "keywords": ["fall planning", "q4 goals", "autumn organizer"]},
+            10: {"season": "Halloween/Q4", "keywords": ["october", "halloween", "end of year planning"]},
+            11: {"season": "Thanksgiving/Black Friday", "keywords": ["gratitude", "holiday planner", "gift guide"]},
+            12: {"season": "Christmas/Year End", "keywords": ["christmas gift", "year in review", "holiday organizer"]},
+        }
+        return seasonal_map.get(month, {"season": "General", "keywords": []})
 
     # ------------------------------------------------------------------
     # Notifica Telegram
