@@ -721,6 +721,56 @@ class MemoryManager:
         )
         return (await cursor.fetchone()) is not None
 
+    async def get_production_queue_stats(self) -> dict:
+        """Statistiche aggregate production_queue."""
+        from datetime import date as _date
+
+        today = _date.today().isoformat()
+        stats: dict[str, int] = {}
+        for status in ("planned", "in_progress", "completed", "skipped"):
+            cursor = await self._db.execute(
+                "SELECT COUNT(*) as cnt FROM production_queue WHERE status = ?",
+                (status,),
+            )
+            row = await cursor.fetchone()
+            stats[status] = row["cnt"] if row else 0
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) as cnt FROM production_queue "
+            "WHERE status = 'completed' AND date(created_at) = ?",
+            (today,),
+        )
+        row = await cursor.fetchone()
+        stats["completed_today"] = row["cnt"] if row else 0
+        return stats
+
+    async def get_analytics_summary(self, days: int = 7) -> dict:
+        """Statistiche aggregate etsy_listings per periodo."""
+        cursor = await self._db.execute(
+            """SELECT
+               COALESCE(SUM(views), 0) as total_views,
+               COALESCE(SUM(sales), 0) as total_sales,
+               COALESCE(SUM(revenue_eur), 0) as revenue
+               FROM etsy_listings
+               WHERE last_synced_at >= datetime('now', ?)""",
+            (f"-{days} days",),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else {}
+
+    async def get_listings_by_niche(self, niche: str, limit: int = 10) -> list[dict]:
+        """Ritorna listing per una nicchia specifica."""
+        cursor = await self._db.execute(
+            "SELECT * FROM etsy_listings WHERE niche = ? ORDER BY created_at DESC LIMIT ?",
+            (niche, limit),
+        )
+        rows = await cursor.fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["tags"] = _json_loads(d.get("tags"))
+            result.append(d)
+        return result
+
     # ------------------------------------------------------------------
     # Etsy listings (expanded)
     # ------------------------------------------------------------------
