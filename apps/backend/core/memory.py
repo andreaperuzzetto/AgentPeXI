@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS etsy_listings (
     ab_price_variant TEXT,
     price_eur REAL,
     views INTEGER DEFAULT 0,
+    views_prev INTEGER DEFAULT 0,
     favorites INTEGER DEFAULT 0,
     sales INTEGER DEFAULT 0,
     revenue_eur REAL DEFAULT 0.0,
@@ -232,6 +233,15 @@ class MemoryManager:
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
+
+        # Migrazioni schema (colonne aggiunte dopo la creazione iniziale)
+        try:
+            await self._db.execute(
+                "ALTER TABLE etsy_listings ADD COLUMN views_prev INTEGER DEFAULT 0"
+            )
+            await self._db.commit()
+        except Exception:
+            pass  # Colonna già esistente
 
         # ChromaDB + Voyage AI (lazy: fallisce silenziosamente se non disponibile)
         try:
@@ -823,6 +833,11 @@ class MemoryManager:
         status: str,
         last_synced_at: str,
     ) -> None:
+        # Salva views correnti come views_prev prima dell'aggiornamento
+        await self._db.execute(
+            "UPDATE etsy_listings SET views_prev = views WHERE listing_id = ?",
+            (listing_id,),
+        )
         await self._db.execute(
             """UPDATE etsy_listings SET
                views = ?, favorites = ?, sales = ?,
@@ -912,6 +927,17 @@ class MemoryManager:
             (listing_id,),
         )
         await self._db.commit()
+
+    async def get_listing_prev_views(self, listing_id: str) -> int | None:
+        """Ritorna views_prev prima dell'ultimo update_etsy_listing_stats()."""
+        cursor = await self._db.execute(
+            "SELECT views_prev FROM etsy_listings WHERE listing_id = ?",
+            (listing_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return row[0]
 
     # ------------------------------------------------------------------
     # Listing analyses

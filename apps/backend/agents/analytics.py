@@ -11,7 +11,7 @@ from typing import Any, Callable, Coroutine
 import anthropic
 
 from apps.backend.agents.base import AgentBase
-from apps.backend.core.config import MODEL_HAIKU, MODEL_SONNET
+from apps.backend.core.config import MODEL_HAIKU, MODEL_SONNET, settings
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 
@@ -77,12 +77,14 @@ class AnalyticsAgent(AgentBase):
 
             views = data.get("views", 0)
             favorites = data.get("num_favorers", 0)
-            sales = data.get("quantity", 0) - data.get("quantity", 0)  # fallback
-            # Etsy non ha un campo quantity_sold diretto; approssimiamo
-            if "quantity_sold" in data:
-                sales = data["quantity_sold"]
-            elif "num_sold" in data:
-                sales = data["num_sold"]
+            # Vendite reali da endpoint transactions (non quantity!)
+            shop_id = data.get("shop_id") or settings.ETSY_SHOP_ID
+            sales_real = await self._get_listing_sales(str(lid), str(shop_id))
+            if sales_real is not None:
+                sales = sales_real
+            else:
+                # Non sovrascrivere mai con 0 se la chiamata fallisce
+                sales = listing.get("sales", 0)
             status = data.get("state", "active")
             price = float(data.get("price", {}).get("amount", 0)) / 100 if isinstance(data.get("price"), dict) else float(data.get("price", 0))
             revenue_eur = sales * price
@@ -117,26 +119,44 @@ class AnalyticsAgent(AgentBase):
             output_data={"synced": len(synced)},
         )
 
-        # --- Passo 3 — Failure analysis ---
+        # --- Passo 3 — Failure analysis (parallelo con Semaphore) ---
         failure_counts = {"no_views": 0, "no_conversion": 0, "no_views_no_sales": 0}
+        analysis_sem = asyncio.Semaphore(3)
+        already_analyzed: set[str] = set()
+        failure_tasks: list = []
 
-        # Caso A: no views dopo 7 giorni
-        no_views = await self.memory.get_listings_no_views(days=7)
-        for lst in no_views:
-            await self._analyze_no_views(lst)
-            failure_counts["no_views"] += 1
+        async def _analyze_with_sem(lst: dict, analyzer_fn) -> None:
+            async with analysis_sem:
+                await analyzer_fn(lst)
 
-        # Caso B: no conversion dopo 45 giorni
-        no_conv = await self.memory.get_listings_no_conversion(days=45)
-        for lst in no_conv:
-            await self._analyze_no_conversion(lst)
-            failure_counts["no_conversion"] += 1
-
-        # Caso C: no views no sales dopo 45 giorni
+        # Caso C prima (priorità su B e A — problema doppio)
         no_both = await self.memory.get_listings_no_views_no_sales(days=45)
         for lst in no_both:
-            await self._analyze_no_views_no_sales(lst)
-            failure_counts["no_views_no_sales"] += 1
+            lid_str = str(lst["listing_id"])
+            if lid_str not in already_analyzed:
+                failure_tasks.append(_analyze_with_sem(lst, self._analyze_no_views_no_sales))
+                failure_counts["no_views_no_sales"] += 1
+                already_analyzed.add(lid_str)
+
+        # Caso B — skip se già in Caso C
+        no_conv = await self.memory.get_listings_no_conversion(days=45)
+        for lst in no_conv:
+            lid_str = str(lst["listing_id"])
+            if lid_str not in already_analyzed:
+                failure_tasks.append(_analyze_with_sem(lst, self._analyze_no_conversion))
+                failure_counts["no_conversion"] += 1
+                already_analyzed.add(lid_str)
+
+        # Caso A — skip se già in Caso B o C (soglia 14 giorni, non 7)
+        no_views = await self.memory.get_listings_no_views(days=14)
+        for lst in no_views:
+            lid_str = str(lst["listing_id"])
+            if lid_str not in already_analyzed:
+                failure_tasks.append(_analyze_with_sem(lst, self._analyze_no_views))
+                failure_counts["no_views"] += 1
+                already_analyzed.add(lid_str)
+
+        await asyncio.gather(*failure_tasks, return_exceptions=True)
 
         # --- Passo 4 — Bestseller e proposte varianti ---
         bestsellers = await self._find_bestsellers()
@@ -159,12 +179,47 @@ class AnalyticsAgent(AgentBase):
         # --- Passo 6 — Summary Telegram ---
         await self._send_daily_summary(report, today_str)
 
+        confidence, missing_data = self._calculate_analytics_confidence(
+            listings, synced, failure_counts,
+        )
+
         return AgentResult(
             task_id=task.task_id,
             agent_name=self.name,
-            status=TaskStatus.COMPLETED,
+            status=TaskStatus.COMPLETED if confidence >= 0.60 else TaskStatus.PARTIAL,
             output_data=report,
+            confidence=confidence,
+            missing_data=missing_data,
         )
+
+    # ------------------------------------------------------------------
+    # Sales tracking via transactions
+    # ------------------------------------------------------------------
+
+    async def _get_listing_sales(self, listing_id: str, shop_id: str) -> int | None:
+        """
+        Conta vendite reali via GET /shops/{shop_id}/listings/{listing_id}/transactions.
+        Ritorna None se la chiamata fallisce (non 0 — differenza critica).
+        """
+        try:
+            transactions = await self._call_tool(
+                "etsy_api",
+                "get_shop_transactions",
+                {"shop_id": shop_id, "listing_id": listing_id},
+                self.etsy_api.get_shop_transactions,
+                shop_id=shop_id,
+                listing_id=int(listing_id),
+            )
+            if isinstance(transactions, dict):
+                results = transactions.get("results", [])
+            elif isinstance(transactions, list):
+                results = transactions
+            else:
+                results = []
+            return sum(t.get("quantity", 1) for t in results)
+        except Exception as exc:
+            logger.warning("Get transactions listing %s fallito: %s", listing_id, exc)
+            return None  # None = dati non disponibili, non 0
 
     # ------------------------------------------------------------------
     # Caso A — No views
@@ -172,10 +227,13 @@ class AnalyticsAgent(AgentBase):
 
     async def _analyze_no_views(self, listing: dict) -> None:
         lid = listing["listing_id"]
+        niche = listing.get("niche", "")
         await self.memory.flag_no_views(lid)
+        historical_context = await self._fetch_similar_failures(niche, "no_views")
 
         analysis = await self._failure_llm(
             prompt=self._no_views_prompt(listing),
+            historical_context=historical_context,
         )
         if not analysis:
             return
@@ -199,7 +257,7 @@ class AnalyticsAgent(AgentBase):
         msg = (
             f"⚠️ Listing da ottimizzare — visibilità\n"
             f"📦 {listing.get('title', '')[:60]}\n"
-            f"📊 7 giorni · 0 visualizzazioni\n"
+            f"📊 14 giorni · 0 visualizzazioni\n"
             f"🔍 Problema: {analysis['cause']}\n\n"
             f"💡 Cosa fare:\n{recs}\n\n"
             f"🔗 https://www.etsy.com/your-shop/listings/{lid}/edit\n"
@@ -213,7 +271,7 @@ class AnalyticsAgent(AgentBase):
         if isinstance(tags, str):
             tags = json.loads(tags) if tags.startswith("[") else [tags]
         return (
-            f"Questo listing Etsy non ha ricevuto nessuna visualizzazione dopo 7 giorni.\n"
+            f"Questo listing Etsy non ha ricevuto nessuna visualizzazione dopo 14 giorni.\n"
             f"Problema: discoverabilità — il listing non appare nelle ricerche Etsy.\n\n"
             f"Titolo: {listing.get('title', '')}\n"
             f"Tag: {', '.join(tags)}\n"
@@ -241,10 +299,24 @@ class AnalyticsAgent(AgentBase):
 
     async def _analyze_no_conversion(self, listing: dict) -> None:
         lid = listing["listing_id"]
+        views = listing.get("views", 0)
+
+        # Gate: almeno 30 views per avere dati significativi
+        if views < 30:
+            logger.info(
+                "Skip no_conversion analysis listing %s: solo %d views (min 30)",
+                lid, views,
+            )
+            await self.memory.flag_no_conversion(lid)
+            return
+
+        niche = listing.get("niche", "")
         await self.memory.flag_no_conversion(lid)
+        historical_context = await self._fetch_similar_failures(niche, "no_conversion")
 
         analysis = await self._failure_llm(
             prompt=self._no_conversion_prompt(listing),
+            historical_context=historical_context,
         )
         if not analysis:
             return
@@ -319,10 +391,13 @@ class AnalyticsAgent(AgentBase):
 
     async def _analyze_no_views_no_sales(self, listing: dict) -> None:
         lid = listing["listing_id"]
+        niche = listing.get("niche", "")
         await self.memory.flag_no_views_no_sales(lid)
+        historical_context = await self._fetch_similar_failures(niche, "no_views_no_sales")
 
         analysis = await self._failure_llm(
             prompt=self._no_views_no_sales_prompt(listing),
+            historical_context=historical_context,
         )
         if not analysis:
             return
@@ -388,11 +463,59 @@ class AnalyticsAgent(AgentBase):
     # Failure analysis helpers
     # ------------------------------------------------------------------
 
-    async def _failure_llm(self, prompt: str) -> dict | None:
+    async def _fetch_similar_failures(self, niche: str, failure_type: str) -> str:
+        """
+        Cerca in ChromaDB failure patterns per niche simili.
+        Ritorna stringa contestuale da iniettare nel prompt LLM.
+        Ritorna "" se ChromaDB è vuoto o la query fallisce.
+        """
+        try:
+            results = await self.memory.query_chromadb(
+                query=f"FAILURE {failure_type} niche {niche}",
+                n_results=3,
+                where={"type": "failure_analysis", "failure_type": failure_type},
+            )
+            if not results:
+                return ""
+
+            context_lines = []
+            for r in results:
+                doc = r.get("document", "")
+                if "cause:" in doc and "avoid:" in doc:
+                    context_lines.append(f"- {doc}")
+
+            if not context_lines:
+                return ""
+
+            return (
+                f"\nCONTESTO STORICO — fallimenti simili già registrati:\n"
+                + "\n".join(context_lines[:3])
+                + "\nUsa questo storico per dare raccomandazioni coerenti "
+                  "ed evitare di ripetere consigli già dati.\n"
+            )
+        except Exception:
+            return ""
+
+    async def _failure_llm(self, prompt: str, historical_context: str = "") -> dict | None:
         """Chiama Sonnet per failure analysis, parsa JSON."""
+        enriched_prompt = prompt
+        if historical_context:
+            insert_before = "Rispondi SOLO con JSON:"
+            if insert_before in enriched_prompt:
+                enriched_prompt = enriched_prompt.replace(
+                    insert_before,
+                    historical_context + insert_before,
+                )
+            else:
+                enriched_prompt += "\n" + historical_context
+
         response_text = await self._call_llm(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt="Sei un analista esperto di Etsy marketplace. Analizza i problemi dei listing e suggerisci azioni concrete.",
+            messages=[{"role": "user", "content": enriched_prompt}],
+            system_prompt=(
+                "Sei un analista esperto di Etsy marketplace. Analizza i problemi dei listing "
+                "e suggerisci azioni concrete. Se hai storico di fallimenti simili, usa quelle "
+                "informazioni per dare raccomandazioni coerenti nel tempo."
+            ),
             model_override=MODEL_SONNET,
         )
         return self._parse_analysis_json(response_text)
@@ -447,10 +570,16 @@ class AnalyticsAgent(AgentBase):
     # ------------------------------------------------------------------
 
     async def _find_bestsellers(self) -> list[dict]:
-        """Identifica bestseller (sales >= 10), propone varianti via pending_action."""
+        """Identifica bestseller con soglia dinamica, propone varianti via pending_action."""
         all_listings = await self.memory.get_etsy_listings(status="active")
+
+        total_sales_all = sum((l.get("sales") or 0) for l in all_listings)
+        avg_sales = total_sales_all / max(len(all_listings), 1)
+        # Soglia dinamica: almeno 2 vendite, o 50% sopra la media, cap a 10
+        threshold = min(10, max(2, avg_sales * 1.5))
+
         top = sorted(
-            [l for l in all_listings if (l.get("sales") or 0) >= 10],
+            [l for l in all_listings if (l.get("sales") or 0) >= threshold],
             key=lambda x: x.get("revenue_eur", 0),
             reverse=True,
         )[:3]
@@ -539,19 +668,46 @@ class AnalyticsAgent(AgentBase):
                 ab_perf[v]["avg_sales"] = ab_perf[v]["sales"] / c
                 ab_perf[v]["avg_revenue"] = ab_perf[v]["revenue"] / c
 
-        # Delta views vs ieri
-        delta_views = 0
+        # Conversion rate per variante
+        for v in ("A", "B"):
+            v_views = ab_perf[v].get("views", 0)
+            v_sales = ab_perf[v].get("sales", 0)
+            ab_perf[v]["conversion_rate"] = round(v_sales / v_views, 4) if v_views > 0 else 0.0
+
+        # Winner esplicito (solo se dati sufficienti)
+        ab_winner = None
+        ab_winner_confidence = "insufficient_data"
+
+        a_conv = ab_perf["A"].get("conversion_rate", 0)
+        b_conv = ab_perf["B"].get("conversion_rate", 0)
+        a_count = ab_perf["A"].get("count", 0)
+        b_count = ab_perf["B"].get("count", 0)
+
+        if a_count >= 3 and b_count >= 3:
+            if a_conv > b_conv * 1.1:
+                ab_winner = "A"
+                ab_winner_confidence = "low" if (a_count + b_count) < 10 else "medium"
+            elif b_conv > a_conv * 1.1:
+                ab_winner = "B"
+                ab_winner_confidence = "low" if (a_count + b_count) < 10 else "medium"
+            else:
+                ab_winner = "inconclusive"
+                ab_winner_confidence = "medium"
+
+        ab_perf["winner"] = ab_winner
+        ab_perf["winner_confidence"] = ab_winner_confidence
+
+        # Delta views giornaliero (daily, non cumulativo)
+        delta_views_today = 0
         try:
-            prev_reports = await self.memory.query_chromadb(
-                query="analytics_report",
-                n_results=1,
-                where={"type": "analytics_report"},
-            )
-            if prev_reports:
-                prev = json.loads(prev_reports[0]["document"])
-                delta_views = total_views - prev.get("total_views", 0)
+            for synced_item in synced:
+                s_lid = synced_item["listing_id"]
+                current_views = synced_item.get("views", 0)
+                prev_views = await self.memory.get_listing_prev_views(s_lid)
+                if prev_views is not None:
+                    delta_views_today += max(0, current_views - prev_views)
         except Exception:
-            pass
+            delta_views_today = 0
 
         # Conteggi per status
         drafts = len([l for l in all_listings if l.get("status") == "draft"])
@@ -567,7 +723,7 @@ class AnalyticsAgent(AgentBase):
             "failures": failure_counts,
             "bestsellers": bestsellers,
             "ab_performance": ab_perf,
-            "delta_views_vs_yesterday": delta_views,
+            "delta_views_vs_yesterday": delta_views_today,
             "drafts": drafts,
         }
 
@@ -591,14 +747,24 @@ class AnalyticsAgent(AgentBase):
             bs = report["bestsellers"][0]
             bs_line = f"{bs['title'][:35]} — {bs['sales']} vendite"
 
+        ab = report.get("ab_performance", {})
+        ab_winner = ab.get("winner")
+        if ab_winner and ab_winner != "inconclusive":
+            ab_line = f"🎯 A/B Winner: Variante {ab_winner} ({ab.get('winner_confidence', '')} confidence)\n"
+        elif ab_winner == "inconclusive":
+            ab_line = "🎯 A/B: dati insufficienti per concludere\n"
+        else:
+            ab_line = ""
+
         msg = (
             f"📊 Report Etsy — {date_str}\n"
             f"─────────────────────\n"
             f"👁 Views: {total_views} ({delta:+d} vs ieri)\n"
             f"❤️ Favorites: {total_fav}\n"
             f"🛒 Vendite: {total_sales}\n"
-            f"💰 Revenue: €{total_rev:.2f}\n\n"
-            f"🏆 Bestseller: {bs_line}\n"
+            f"💰 Revenue: €{total_rev:.2f}\n"
+            f"{ab_line}"
+            f"\n🏆 Bestseller: {bs_line}\n"
             f"📋 Attivi: {active} | Bozze: {drafts}\n"
             f"⚠️ Da ottimizzare: {tot_failures}\n\n"
             f"#analytics #daily"
@@ -615,3 +781,42 @@ class AnalyticsAgent(AgentBase):
                 await self._telegram_broadcast(message)
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # Confidence scoring
+    # ------------------------------------------------------------------
+
+    def _calculate_analytics_confidence(
+        self,
+        listings: list[dict],
+        synced: list[dict],
+        failure_counts: dict,
+    ) -> tuple[float, list[str]]:
+        """Calcola confidence score per il report analytics."""
+        missing: list[str] = []
+        score = 0.0
+
+        # 50% — sync success rate
+        if listings:
+            sync_rate = len(synced) / len(listings)
+            score += 0.50 * sync_rate
+            if sync_rate < 1.0:
+                missing.append(f"{len(listings) - len(synced)} listing non sincronizzati")
+        else:
+            score += 0.50
+
+        # 30% — sales data quality
+        if synced:
+            with_real_sales = sum(1 for s in synced if s.get("sales", 0) > 0)
+            if with_real_sales > 0:
+                score += 0.30
+            else:
+                score += 0.10
+                missing.append("Tutte le vendite a 0 — verificare endpoint transazioni Etsy")
+        else:
+            score += 0.30
+
+        # 20% — failure analysis eseguita
+        score += 0.20
+
+        return round(score, 2), missing

@@ -60,6 +60,11 @@ class EtsyAPI:
             await self._client.aclose()
             self._client = None
 
+    @property
+    def shop_id(self) -> str:
+        """ETSY_SHOP_ID da settings."""
+        return settings.ETSY_SHOP_ID
+
     # ------------------------------------------------------------------
     # Encryption
     # ------------------------------------------------------------------
@@ -325,6 +330,23 @@ class EtsyAPI:
             params=params,
         )
         return result.get("results", [])
+
+    async def get_shop_transactions(
+        self, shop_id: str | None = None, listing_id: int | None = None,
+    ) -> dict:
+        """Transazioni per un listing specifico o per tutto lo shop."""
+        sid = shop_id or settings.ETSY_SHOP_ID
+        if listing_id is not None:
+            return await self._request(
+                "GET",
+                f"/application/shops/{sid}/listings/{listing_id}/transactions",
+                params={"limit": 100},
+            )
+        return await self._request(
+            "GET",
+            f"/application/shops/{sid}/transactions",
+            params={"limit": 100},
+        )
 
     # ------------------------------------------------------------------
     # Status check (per endpoint API)
