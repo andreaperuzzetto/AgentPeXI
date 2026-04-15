@@ -10,6 +10,7 @@ from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, A5, letter
+from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
 # ---------------------------------------------------------------------------
@@ -78,6 +79,64 @@ def _draw_lines(
 
 
 # ---------------------------------------------------------------------------
+# Instructions page
+# ---------------------------------------------------------------------------
+
+
+def _draw_instructions_page(c, scheme, w, h, fonts=None):
+    """Pagina istruzioni standardizzata — ultima pagina di ogni PDF."""
+    if fonts is None:
+        fonts = FONTS
+    _fill_page(c, scheme.background, w, h)
+    margin = 20 * mm
+
+    c.setFillColor(_rgb(scheme.accent))
+    c.setFont(fonts["heading"], 18)
+    c.drawCentredString(w / 2, h - margin - 10 * mm, "Thank You for Your Purchase!")
+
+    c.setStrokeColor(_rgb(scheme.primary))
+    c.setLineWidth(1)
+    c.line(margin, h - margin - 18 * mm, w - margin, h - margin - 18 * mm)
+
+    sections = [
+        ("HOW TO USE:", [
+            "\u2022 Print at home or at a local print shop",
+            "\u2022 Recommended paper: 90gsm or heavier for best results",
+            "\u2022 Print size: A4 / US Letter (as specified in product title)",
+            "\u2022 For best quality: print at 300 DPI or higher",
+        ]),
+        ("TIPS:", [
+            "\u2022 Use a PDF viewer (Adobe Acrobat) for best print quality",
+            "\u2022 For digital use: open in GoodNotes, Notability, or Noteshelf",
+            "\u2022 Laminate for durability if using physically",
+        ]),
+        ("LICENSE:", [
+            "\u2022 Personal use only \u2014 not for resale or redistribution",
+            "\u2022 You may print unlimited copies for personal use",
+            "\u2022 Commercial license available \u2014 contact us",
+        ]),
+    ]
+
+    y = h - margin - 30 * mm
+    for section_title, items in sections:
+        c.setFont(fonts["heading"], 10)
+        c.setFillColor(_rgb(scheme.primary))
+        c.drawString(margin, y, section_title)
+        y -= 6 * mm
+        c.setFont(fonts["body"], 10)
+        c.setFillColor(_rgb(scheme.accent))
+        for item in items:
+            c.drawString(margin + 3 * mm, y, item)
+            y -= 5.5 * mm
+        y -= 5 * mm
+
+    c.setFont(fonts["body"], 8)
+    c.setFillColor(_rgb(scheme.primary))
+    c.drawCentredString(w / 2, margin, "Questions? Visit our Etsy shop for support")
+    c.showPage()
+
+
+# ---------------------------------------------------------------------------
 # Pagine di copertura
 # ---------------------------------------------------------------------------
 
@@ -88,14 +147,17 @@ def _draw_cover(
     w: float,
     h: float,
     title: str,
+    fonts=None,
 ) -> None:
+    if fonts is None:
+        fonts = FONTS
     _fill_page(c, scheme.primary, w, h)
     c.setFillColor(_rgb(scheme.background))
-    c.setFont("Helvetica-Bold", 36)
+    c.setFont(fonts["heading"], 36)
     c.drawCentredString(w / 2, h / 2 + 30, title)
-    c.setFont("Helvetica", 16)
+    c.setFont(fonts["body"], 16)
     c.drawCentredString(w / 2, h / 2 - 10, str(datetime.now().year))
-    c.setFont("Helvetica-Oblique", 10)
+    c.setFont(fonts["light"], 10)
     c.setFillColor(colors.Color(1, 1, 1, 0.6))
     c.drawCentredString(w / 2, MARGIN + 10, scheme.name.capitalize())
     c.showPage()
@@ -162,25 +224,39 @@ class PDFGenerator:
         size: str,
         output_path: Path,
         weeks: int = 10,
+        font_heading: str = "Helvetica-Bold",
+        font_body: str = "Helvetica",
+        font_light: str = "Helvetica-Oblique",
+        cover_title: str = "Weekly Planner",
+        add_instructions: bool = False,
+        metadata: dict | None = None,
         **_,
     ) -> Path:
         w, h = SIZES.get(size, SIZES["A4"])
         c = canvas.Canvas(str(output_path), pagesize=(w, h))
 
-        # --- Cover ---
-        _draw_cover(c, scheme, w, h, "Weekly Planner")
+        if metadata:
+            c.setTitle(metadata.get("title", cover_title))
+            c.setAuthor("AgentPeXI Digital Products")
+            c.setSubject(metadata.get("subject", "Printable Planner"))
+            c.setKeywords(metadata.get("keywords", "printable, planner, digital download"))
+            c.setCreator("AgentPeXI v1.0")
 
-        # --- Goals page ---
-        self._draw_goals_page(c, scheme, w, h)
+        fonts = {"heading": font_heading, "body": font_body, "light": font_light}
 
-        # --- Weekly spreads ---
+        _draw_cover(c, scheme, w, h, cover_title, fonts)
+        self._draw_goals_page(c, scheme, w, h, fonts)
+
         today = datetime.now()
         monday = today - timedelta(days=today.weekday())
 
         for week_num in range(1, weeks + 1):
             week_start = monday + timedelta(weeks=week_num - 1)
             week_end = week_start + timedelta(days=6)
-            self._draw_weekly_spread(c, scheme, w, h, week_num, week_start, week_end)
+            self._draw_weekly_spread(c, scheme, w, h, week_num, week_start, week_end, fonts)
+
+        if add_instructions:
+            _draw_instructions_page(c, scheme, w, h, fonts)
 
         c.save()
         return output_path
@@ -191,12 +267,15 @@ class PDFGenerator:
         scheme: ColorScheme,
         w: float,
         h: float,
+        fonts=None,
     ) -> None:
+        if fonts is None:
+            fonts = FONTS
         _fill_page(c, scheme.background, w, h)
 
         # Titolo
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 22)
+        c.setFont(fonts["heading"], 22)
         c.drawCentredString(w / 2, h - MARGIN - 40, "My Goals This Period")
 
         # 6 box (2 colonne x 3 righe)
@@ -217,7 +296,7 @@ class PDFGenerator:
 
                 # Numero goal
                 c.setFillColor(_rgb(scheme.primary))
-                c.setFont(FONTS["heading"], 14)
+                c.setFont(fonts["heading"], 14)
                 c.drawString(x + 10, y - 22, f"Goal {row * 2 + col + 1}")
 
                 # Linee scrivibili
@@ -237,7 +316,10 @@ class PDFGenerator:
         week_num: int,
         week_start: datetime,
         week_end: datetime,
+        fonts=None,
     ) -> None:
+        if fonts is None:
+            fonts = FONTS
         _fill_page(c, scheme.background, w, h)
 
         # --- Header strip ---
@@ -250,7 +332,7 @@ class PDFGenerator:
             f"{week_start.strftime('%d %b')} – {week_end.strftime('%d %b')}"
         )
         c.setFillColor(_rgb(scheme.background))
-        c.setFont(FONTS["heading"], 16)
+        c.setFont(fonts["heading"], 16)
         c.drawCentredString(w / 2, h - header_h + 18, label)
 
         # --- Area utile sotto header ---
@@ -274,7 +356,7 @@ class PDFGenerator:
             c.setFillColor(_rgb(scheme.secondary))
             c.rect(x, area_top - 24, col_w, 24, stroke=0, fill=1)
             c.setFillColor(_rgb(scheme.accent))
-            c.setFont(FONTS["heading"], 9)
+            c.setFont(fonts["heading"], 9)
             c.drawCentredString(x + col_w / 2, area_top - 18, day_name)
 
             # Linee scrivibili
@@ -289,7 +371,7 @@ class PDFGenerator:
         c.setFillColor(_rgb(scheme.secondary))
         c.roundRect(px, py - 160, priority_w, 160, 4, stroke=0, fill=1)
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 9)
+        c.setFont(fonts["heading"], 9)
         c.drawString(px + 8, py - 18, "Priority of the week")
 
         # 3 checkbox + linee
@@ -304,7 +386,7 @@ class PDFGenerator:
         c.setFillColor(_rgb(scheme.secondary))
         c.roundRect(MARGIN, MARGIN, w - 2 * MARGIN, notes_h, 4, stroke=0, fill=1)
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 9)
+        c.setFont(fonts["heading"], 9)
         c.drawString(MARGIN + 8, MARGIN + notes_h - 16, "Notes")
         _draw_lines(
             c, MARGIN + 8, MARGIN + notes_h - 30, w - 2 * MARGIN - 16, 2, 18,
@@ -324,19 +406,32 @@ class PDFGenerator:
         output_path: Path,
         habits: int = 10,
         days: int = 31,
+        font_heading: str = "Helvetica-Bold",
+        font_body: str = "Helvetica",
+        font_light: str = "Helvetica-Oblique",
+        cover_title: str = "Habit Tracker",
+        add_instructions: bool = False,
+        metadata: dict | None = None,
         **_,
     ) -> Path:
         w, h = SIZES.get(size, SIZES["A4"])
         c = canvas.Canvas(str(output_path), pagesize=(w, h))
 
-        # --- Cover ---
-        _draw_cover(c, scheme, w, h, "Habit Tracker")
+        if metadata:
+            c.setTitle(metadata.get("title", cover_title))
+            c.setAuthor("AgentPeXI Digital Products")
+            c.setSubject(metadata.get("subject", "Printable Habit Tracker"))
+            c.setKeywords(metadata.get("keywords", "printable, habit tracker, digital download"))
+            c.setCreator("AgentPeXI v1.0")
 
-        # --- Tracker grid page ---
-        self._draw_habit_grid(c, scheme, w, h, habits, days)
+        fonts = {"heading": font_heading, "body": font_body, "light": font_light}
 
-        # --- Reflection page ---
-        self._draw_reflection_page(c, scheme, w, h)
+        _draw_cover(c, scheme, w, h, cover_title, fonts)
+        self._draw_habit_grid(c, scheme, w, h, habits, days, fonts)
+        self._draw_reflection_page(c, scheme, w, h, fonts)
+
+        if add_instructions:
+            _draw_instructions_page(c, scheme, w, h, fonts)
 
         c.save()
         return output_path
@@ -349,11 +444,14 @@ class PDFGenerator:
         h: float,
         habits: int,
         days: int,
+        fonts=None,
     ) -> None:
+        if fonts is None:
+            fonts = FONTS
         _fill_page(c, scheme.background, w, h)
 
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 18)
+        c.setFont(fonts["heading"], 18)
         c.drawCentredString(w / 2, h - MARGIN - 30, "Monthly Habit Tracker")
 
         label_w = 100
@@ -365,7 +463,7 @@ class PDFGenerator:
         for d in range(1, days + 1):
             cx = MARGIN + label_w + (d - 1) * cell_size + cell_size / 2
             c.setFillColor(_rgb(scheme.primary))
-            c.setFont(FONTS["body"], 7)
+            c.setFont(fonts["body"], 7)
             c.drawCentredString(cx, grid_top + 4, str(d))
 
         # Righe habits
@@ -374,7 +472,7 @@ class PDFGenerator:
 
             # Label
             c.setFillColor(_rgb(scheme.accent))
-            c.setFont(FONTS["body"], 8)
+            c.setFont(fonts["body"], 8)
             c.drawString(MARGIN, ry - cell_size + 4, f"Habit {row + 1}")
 
             # Celle
@@ -395,10 +493,13 @@ class PDFGenerator:
         scheme: ColorScheme,
         w: float,
         h: float,
+        fonts=None,
     ) -> None:
+        if fonts is None:
+            fonts = FONTS
         _fill_page(c, scheme.background, w, h)
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 18)
+        c.setFont(fonts["heading"], 18)
         c.drawCentredString(w / 2, h - MARGIN - 30, "Monthly Reflection")
 
         titles = ["What worked", "What to improve", "Streak record", "Next month goal"]
@@ -409,7 +510,7 @@ class PDFGenerator:
             c.setFillColor(_rgb(scheme.secondary))
             c.roundRect(MARGIN, y - box_h, w - 2 * MARGIN, box_h, 6, stroke=0, fill=1)
             c.setFillColor(_rgb(scheme.primary))
-            c.setFont(FONTS["heading"], 12)
+            c.setFont(fonts["heading"], 12)
             c.drawString(MARGIN + 10, y - 20, title)
             _draw_lines(
                 c, MARGIN + 10, y - 38, w - 2 * MARGIN - 20, 3, 22,
@@ -427,22 +528,33 @@ class PDFGenerator:
         scheme: ColorScheme,
         size: str,
         output_path: Path,
+        font_heading: str = "Helvetica-Bold",
+        font_body: str = "Helvetica",
+        font_light: str = "Helvetica-Oblique",
+        cover_title: str = "Monthly Budget Planner",
+        add_instructions: bool = False,
+        metadata: dict | None = None,
         **_,
     ) -> Path:
         w, h = SIZES.get(size, SIZES["A4"])
         c = canvas.Canvas(str(output_path), pagesize=(w, h))
 
-        # --- Cover ---
-        _draw_cover(c, scheme, w, h, "Monthly Budget Planner")
+        if metadata:
+            c.setTitle(metadata.get("title", cover_title))
+            c.setAuthor("AgentPeXI Digital Products")
+            c.setSubject(metadata.get("subject", "Printable Budget Sheet"))
+            c.setKeywords(metadata.get("keywords", "printable, budget, digital download"))
+            c.setCreator("AgentPeXI v1.0")
 
-        # --- Income tracker ---
-        self._draw_budget_table(c, scheme, w, h, "Income Tracker", 10)
+        fonts = {"heading": font_heading, "body": font_body, "light": font_light}
 
-        # --- Expenses tracker ---
-        self._draw_expenses_page(c, scheme, w, h)
+        _draw_cover(c, scheme, w, h, cover_title, fonts)
+        self._draw_budget_table(c, scheme, w, h, "Income Tracker", 10, fonts)
+        self._draw_expenses_page(c, scheme, w, h, fonts)
+        self._draw_budget_summary(c, scheme, w, h, fonts)
 
-        # --- Summary ---
-        self._draw_budget_summary(c, scheme, w, h)
+        if add_instructions:
+            _draw_instructions_page(c, scheme, w, h, fonts)
 
         c.save()
         return output_path
@@ -455,11 +567,14 @@ class PDFGenerator:
         h: float,
         title: str,
         rows: int,
+        fonts=None,
     ) -> None:
+        if fonts is None:
+            fonts = FONTS
         _fill_page(c, scheme.background, w, h)
 
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 18)
+        c.setFont(fonts["heading"], 18)
         c.drawCentredString(w / 2, h - MARGIN - 30, title)
 
         cols = ["Source", "Expected", "Actual", "Difference"]
@@ -471,7 +586,7 @@ class PDFGenerator:
         c.setFillColor(_rgb(scheme.primary))
         c.rect(MARGIN, table_top - row_h, w - 2 * MARGIN, row_h, stroke=0, fill=1)
         c.setFillColor(_rgb(scheme.background))
-        c.setFont(FONTS["heading"], 10)
+        c.setFont(fonts["heading"], 10)
         for i, col_name in enumerate(cols):
             c.drawCentredString(MARGIN + i * col_w + col_w / 2, table_top - row_h + 8, col_name)
 
@@ -490,7 +605,7 @@ class PDFGenerator:
         c.setFillColor(_rgb(scheme.primary))
         c.rect(MARGIN, total_y, w - 2 * MARGIN, row_h, stroke=0, fill=1)
         c.setFillColor(_rgb(scheme.background))
-        c.setFont(FONTS["heading"], 10)
+        c.setFont(fonts["heading"], 10)
         c.drawString(MARGIN + 10, total_y + 8, "TOTAL")
 
         c.showPage()
@@ -501,11 +616,14 @@ class PDFGenerator:
         scheme: ColorScheme,
         w: float,
         h: float,
+        fonts=None,
     ) -> None:
+        if fonts is None:
+            fonts = FONTS
         _fill_page(c, scheme.background, w, h)
 
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 18)
+        c.setFont(fonts["heading"], 18)
         c.drawCentredString(w / 2, h - MARGIN - 30, "Expenses Tracker")
 
         sections = ["Housing", "Food", "Transport", "Entertainment", "Other"]
@@ -524,7 +642,7 @@ class PDFGenerator:
 
             # Section header
             c.setFillColor(_rgb(scheme.primary))
-            c.setFont(FONTS["heading"], 11)
+            c.setFont(fonts["heading"], 11)
             c.drawString(MARGIN, y, section)
             y -= row_h
 
@@ -532,7 +650,7 @@ class PDFGenerator:
             c.setFillColor(_rgb(scheme.secondary))
             c.rect(MARGIN, y - row_h, w - 2 * MARGIN, row_h, stroke=0, fill=1)
             c.setFillColor(_rgb(scheme.accent))
-            c.setFont(FONTS["body"], 8)
+            c.setFont(fonts["body"], 8)
             for i, col_name in enumerate(cols):
                 c.drawCentredString(MARGIN + i * col_w + col_w / 2, y - row_h + 6, col_name)
             y -= row_h
@@ -554,11 +672,14 @@ class PDFGenerator:
         scheme: ColorScheme,
         w: float,
         h: float,
+        fonts=None,
     ) -> None:
+        if fonts is None:
+            fonts = FONTS
         _fill_page(c, scheme.background, w, h)
 
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 18)
+        c.setFont(fonts["heading"], 18)
         c.drawCentredString(w / 2, h - MARGIN - 30, "Summary")
 
         # Donut placeholder (cerchio)
@@ -573,7 +694,7 @@ class PDFGenerator:
         c.setFillColor(_rgb(scheme.background))
         c.circle(cx, cy, r_inner, stroke=0, fill=1)
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 14)
+        c.setFont(fonts["heading"], 14)
         c.drawCentredString(cx, cy - 5, "Budget")
 
         # Savings goal bar
@@ -582,7 +703,7 @@ class PDFGenerator:
         bar_h = 20
         bx = MARGIN + 30
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 11)
+        c.setFont(fonts["heading"], 11)
         c.drawString(bx, bar_y + 28, "Savings Goal")
         c.setFillColor(_rgb(scheme.secondary))
         c.roundRect(bx, bar_y, bar_w, bar_h, 4, stroke=0, fill=1)
@@ -592,7 +713,7 @@ class PDFGenerator:
         # Notes
         notes_y = bar_y - 60
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 11)
+        c.setFont(fonts["heading"], 11)
         c.drawString(MARGIN, notes_y, "Notes")
         _draw_lines(
             c, MARGIN, notes_y - 20, w - 2 * MARGIN, 5, 22,
@@ -611,22 +732,38 @@ class PDFGenerator:
         size: str,
         output_path: Path,
         days: int = 30,
+        font_heading: str = "Helvetica-Bold",
+        font_body: str = "Helvetica",
+        font_light: str = "Helvetica-Oblique",
+        cover_title: str = "Daily Journal",
+        add_instructions: bool = False,
+        metadata: dict | None = None,
         **_,
     ) -> Path:
         w, h = SIZES.get(size, SIZES["A4"])
         c = canvas.Canvas(str(output_path), pagesize=(w, h))
 
-        # --- Cover ---
-        _draw_cover(c, scheme, w, h, "Daily Journal")
+        if metadata:
+            c.setTitle(metadata.get("title", cover_title))
+            c.setAuthor("AgentPeXI Digital Products")
+            c.setSubject(metadata.get("subject", "Printable Daily Journal"))
+            c.setKeywords(metadata.get("keywords", "printable, journal, digital download"))
+            c.setCreator("AgentPeXI v1.0")
 
-        # --- Day pages (2 giorni per pagina) ---
+        fonts = {"heading": font_heading, "body": font_body, "light": font_light}
+
+        _draw_cover(c, scheme, w, h, cover_title, fonts)
         today = datetime.now()
         for page_idx in range(0, days, 2):
             self._draw_journal_page(
                 c, scheme, w, h,
                 day1=today + timedelta(days=page_idx),
                 day2=today + timedelta(days=page_idx + 1) if page_idx + 1 < days else None,
+                fonts=fonts,
             )
+
+        if add_instructions:
+            _draw_instructions_page(c, scheme, w, h, fonts)
 
         c.save()
         return output_path
@@ -639,13 +776,16 @@ class PDFGenerator:
         h: float,
         day1: datetime,
         day2: datetime | None,
+        fonts=None,
     ) -> None:
+        if fonts is None:
+            fonts = FONTS
         _fill_page(c, scheme.background, w, h)
 
         half_h = (h - MARGIN) / 2
 
         # Giorno 1 (metà superiore)
-        self._draw_journal_day(c, scheme, w, MARGIN, h - MARGIN - 10, half_h - 20, day1)
+        self._draw_journal_day(c, scheme, w, MARGIN, h - MARGIN - 10, half_h - 20, day1, fonts)
 
         # Giorno 2 (metà inferiore)
         if day2:
@@ -654,7 +794,7 @@ class PDFGenerator:
             c.setLineWidth(0.5)
             c.line(MARGIN, h / 2, w - MARGIN, h / 2)
 
-            self._draw_journal_day(c, scheme, w, MARGIN, h / 2 - 10, half_h - 20, day2)
+            self._draw_journal_day(c, scheme, w, MARGIN, h / 2 - 10, half_h - 20, day2, fonts)
 
         c.showPage()
 
@@ -667,19 +807,22 @@ class PDFGenerator:
         y_top: float,
         available_h: float,
         day: datetime,
+        fonts=None,
     ) -> None:
+        if fonts is None:
+            fonts = FONTS
         usable_w = page_w - 2 * MARGIN
         y = y_top
 
         # Data
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["heading"], 14)
+        c.setFont(fonts["heading"], 14)
         c.drawString(x_start, y, day.strftime("%A, %d %B %Y"))
         y -= 28
 
         # Mood tracker (5 cerchi)
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["body"], 9)
+        c.setFont(fonts["body"], 9)
         c.drawString(x_start, y, "Mood:")
         for i in range(5):
             c.setStrokeColor(_rgb(scheme.primary))
@@ -689,7 +832,7 @@ class PDFGenerator:
 
         # Grateful for
         c.setFillColor(_rgb(scheme.primary))
-        c.setFont(FONTS["heading"], 10)
+        c.setFont(fonts["heading"], 10)
         c.drawString(x_start, y, "Grateful for:")
         y -= 16
         for _ in range(3):
@@ -700,7 +843,7 @@ class PDFGenerator:
         c.setFillColor(_rgb(scheme.secondary))
         c.roundRect(x_start, y - 30, usable_w, 30, 4, stroke=0, fill=1)
         c.setFillColor(_rgb(scheme.accent))
-        c.setFont(FONTS["light"], 9)
+        c.setFont(fonts["light"], 9)
         c.drawString(x_start + 6, y - 12, "Today's intention:")
         _draw_lines(c, x_start + 100, y - 12, usable_w - 106, 1, 0, scheme.secondary)
         y -= 40

@@ -91,15 +91,13 @@ async def search_etsy_direct(niche: str) -> dict[str, Any]:
     keyword_query = f'"{niche}" etsy keyword search volume erank marmalead 2025'
 
     etsy_results, keyword_results = await asyncio.gather(
-        asyncio.to_thread(
-            client.search,
+        client.search(
             query=etsy_search_query,
             max_results=10,
             include_domains=["etsy.com"],
             search_depth="advanced",
         ),
-        asyncio.to_thread(
-            client.search,
+        client.search(
             query=keyword_query,
             max_results=8,
             include_domains=["erank.com", "marmalead.com", "blog.erank.com"],
@@ -142,8 +140,7 @@ async def search_etsy_pricing(niche: str) -> dict[str, Any]:
     """
     client = _get_client()
     try:
-        result = await asyncio.to_thread(
-            client.search,
+        result = await client.search(
             query=f'site:etsy.com "{niche}" digital download price',
             max_results=10,
             include_domains=["etsy.com"],
@@ -203,8 +200,7 @@ async def search_etsy_seo_community(niche: str) -> dict[str, Any]:
     all_results: list[dict] = []
     for query in queries:
         try:
-            result = await asyncio.to_thread(
-                client.search,
+            result = await client.search(
                 query=query,
                 max_results=5,
                 include_domains=[

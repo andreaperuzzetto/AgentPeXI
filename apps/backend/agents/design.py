@@ -1008,6 +1008,33 @@ class DesignAgent(AgentBase):
                     scheme = _colors_to_scheme(f"{preset}_{idx}", colors)
 
                     # Genera PDF via file_gen.py
+                    preset_data = STYLE_PRESETS[preset]
+                    font_heading_name = preset_data["font_heading"]
+                    font_body_name = preset_data["font_primary"]
+
+                    # Usa font custom se disponibili, altrimenti fallback
+                    font_heading = (
+                        f"{font_heading_name}-Bold"
+                        if _REGISTERED_FONTS.get(font_heading_name)
+                        else "Helvetica-Bold"
+                    )
+                    font_body = (
+                        font_heading_name
+                        if _REGISTERED_FONTS.get(font_heading_name)
+                        else "Helvetica"
+                    )
+                    font_light = (
+                        font_body_name
+                        if _REGISTERED_FONTS.get(font_body_name)
+                        else "Helvetica-Oblique"
+                    )
+
+                    pdf_metadata = {
+                        "title": cover_title,
+                        "subject": f"Printable {template.replace('_', ' ').title()} - {niche}",
+                        "keywords": f"{niche}, printable, {template.replace('_', ' ')}, digital download, Etsy",
+                    }
+
                     await self._call_tool(
                         "pdf_generator",
                         f"generate_{gen_template}",
@@ -1017,6 +1044,12 @@ class DesignAgent(AgentBase):
                         scheme,
                         size,
                         pdf_path,
+                        font_heading=font_heading,
+                        font_body=font_body,
+                        font_light=font_light,
+                        cover_title=cover_title,
+                        add_instructions=True,
+                        metadata=pdf_metadata,
                     )
 
                     # Conta pagine dopo generazione
