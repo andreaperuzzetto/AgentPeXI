@@ -3,80 +3,95 @@ import { useStore } from '../../store'
 import { ChatMessage } from './ChatMessage'
 import { ChatInput } from './ChatInput'
 
-interface Props {
-  onSend: (content: string) => void
-}
+interface Props { onCollapse?: () => void }
 
-export function ChatPanel({ onSend }: Props) {
+export function ChatPanel({ onCollapse }: Props) {
   const messages = useStore((s) => s.messages)
   const isTyping = useStore((s) => s.isTyping)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length])
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, isTyping])
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        borderRight: '1px solid var(--border-strong)',
-        background: 'var(--bg-surface-1)',
-      }}
-    >
-      {/* Section label */}
-      <div
-        style={{
-          padding: '10px 12px 6px',
-          borderBottom: '1px solid var(--border-subtle)',
-        }}
-      >
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+
+      <div className="panel-header">
         <span className="section-label">Chat</span>
+        {onCollapse && (
+          <button
+            onClick={onCollapse}
+            title="Comprimi"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--tf)', fontSize: 13, padding: '2px 4px',
+              lineHeight: 1, borderRadius: 4,
+              transition: 'color .2s var(--e-io), transform .2s var(--e-spring)',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--tm)' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--tf)' }}
+          >
+            ‹
+          </button>
+        )}
       </div>
 
-      {/* Messages */}
       <div
-        ref={scrollRef}
         style={{
           flex: 1,
           overflowY: 'auto',
+          padding: '10px 12px',
           display: 'flex',
           flexDirection: 'column',
-          gap: 2,
-          padding: '4px 0',
+          gap: 9,
+          minHeight: 0,
         }}
       >
         {messages.length === 0 && (
-          <div
-            style={{
-              flex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--text-faint)',
-              fontSize: '0.75rem',
-              padding: 24,
-              textAlign: 'center',
-            }}
-          >
-            Invia un messaggio per iniziare la conversazione con Pepe.
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <p
+              style={{
+                fontFamily: 'var(--fd)',
+                fontSize: 11,
+                color: 'var(--tf)',
+                textAlign: 'center',
+                lineHeight: 1.6,
+              }}
+            >
+              Invia un messaggio<br />per iniziare con Pepe
+            </p>
           </div>
         )}
-        {messages.map((m) => (
-          <ChatMessage key={m.id} msg={m} />
+        {messages.map((msg) => (
+          <ChatMessage key={msg.id} msg={msg} />
         ))}
         {isTyping && (
-          <div style={{ padding: '6px 12px', fontSize: '0.75rem', color: 'var(--accent-dim)' }}>
-            Pepe sta elaborando…
+          /* Typing dots — matches prototype .typing */
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '8px 11px' }}>
+            {[0, 180, 360].map((delay) => (
+              <span
+                key={delay}
+                style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: '50%',
+                  background: 'var(--tm)',
+                  display: 'inline-block',
+                  animation: `dot-bounce 1.4s var(--e-io) ${delay}ms infinite`,
+                  willChange: 'transform, opacity',
+                }}
+              />
+            ))}
           </div>
         )}
+        <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      <ChatInput onSend={onSend} />
+      <div style={{ flexShrink: 0, borderTop: '1px solid var(--b0)' }}>
+        <ChatInput />
+      </div>
+
     </div>
   )
 }

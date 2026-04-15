@@ -1,5 +1,19 @@
 import { create } from 'zustand'
-import type { ChatMessage, AgentState, ToolEvent, SystemState, Session } from '../types'
+import type { ChatMessage, AgentState, ToolEvent, SystemState, Session, AgentStep } from '../types'
+
+export interface LlmStats {
+  /** Tokens accumulated in this session from WS llm_call events */
+  inputTokens: number
+  outputTokens: number
+  /** Cost accumulated in this session from WS llm_call events */
+  runCost: number
+  /** Fetched from /api/costs — total project cost */
+  totalCost: number
+  /** Fetched from /api/costs — per-agent totals */
+  perAgent: Record<string, number>
+  /** Fetched from /api/costs — per-day totals (key = YYYY-MM-DD) */
+  perDay: Record<string, number>
+}
 
 const TOOL_FEED_MAX = 200
 
@@ -40,6 +54,28 @@ interface AgentPeXIStore {
   /* System */
   systemStatus: SystemState
   setSystemStatus: (s: Partial<SystemState>) => void
+
+  /* Agent Steps */
+  agentSteps: Record<string, AgentStep[]>
+  addAgentStep: (step: AgentStep) => void
+  clearAgentSteps: (agent: string) => void
+
+  /* Overlay */
+  overlaySystem: string | null
+  setOverlaySystem: (name: string | null) => void
+
+  /* Selected Agent */
+  selectedAgent: string | null
+  setSelectedAgent: (name: string | null) => void
+
+  /* LLM Stats */
+  llmStats: LlmStats
+  addLlmCall: (input: number, output: number, cost: number) => void
+  setCostsData: (data: { total: number; perAgent: Record<string, number>; perDay: Record<string, number> }) => void
+
+  /* WS Send */
+  wsSend: ((content: string) => void) | null
+  setWsSend: (fn: ((content: string) => void) | null) => void
 }
 
 export const useStore = create<AgentPeXIStore>((set) => ({
@@ -80,4 +116,38 @@ export const useStore = create<AgentPeXIStore>((set) => ({
   systemStatus: { queueSize: 0, activeTasks: 0, uptime: '—', dailyCost: 0 },
   setSystemStatus: (partial) =>
     set((s) => ({ systemStatus: { ...s.systemStatus, ...partial } })),
+
+  agentSteps: {},
+  addAgentStep: (step) => set((state) => {
+    const current = state.agentSteps[step.agent] ?? []
+    const updated = [...current, step].slice(-50)
+    return { agentSteps: { ...state.agentSteps, [step.agent]: updated } }
+  }),
+  clearAgentSteps: (agent) => set((state) => ({
+    agentSteps: { ...state.agentSteps, [agent]: [] }
+  })),
+
+  overlaySystem: null,
+  setOverlaySystem: (name) => set({ overlaySystem: name, selectedAgent: null }),
+
+  selectedAgent: null,
+  setSelectedAgent: (name) => set({ selectedAgent: name }),
+
+  llmStats: { inputTokens: 0, outputTokens: 0, runCost: 0, totalCost: 0, perAgent: {}, perDay: {} },
+  addLlmCall: (input, output, cost) =>
+    set((s) => ({
+      llmStats: {
+        ...s.llmStats,
+        inputTokens: s.llmStats.inputTokens + input,
+        outputTokens: s.llmStats.outputTokens + output,
+        runCost: s.llmStats.runCost + cost,
+      },
+    })),
+  setCostsData: ({ total, perAgent, perDay }) =>
+    set((s) => ({
+      llmStats: { ...s.llmStats, totalCost: total, perAgent, perDay },
+    })),
+
+  wsSend: null,
+  setWsSend: (fn) => set({ wsSend: fn }),
 }))

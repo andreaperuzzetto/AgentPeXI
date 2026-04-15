@@ -12,17 +12,38 @@ export function ToolFeed() {
   }, [events.length])
 
   return (
-    <section
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '40%',
-        minHeight: 0,
-      }}
-    >
-      <div style={{ padding: '10px 10px 6px' }}>
-        <span className="section-label">Tool Activity</span>
+    <section style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+
+      {/* Header — mini-title style */}
+      <div
+        style={{
+          padding: '8px 13px',
+          borderBottom: '1px solid var(--b0)',
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <span
+          style={{
+            fontFamily: 'var(--fh)',
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase' as const,
+            color: 'var(--tm)',
+          }}
+        >
+          Tool Activity
+        </span>
+        {events.length > 0 && (
+          <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)' }}>
+            {events.length}
+          </span>
+        )}
       </div>
+
       <div
         ref={scrollRef}
         style={{
@@ -30,24 +51,24 @@ export function ToolFeed() {
           overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
-          gap: 1,
+          gap: 0,
         }}
       >
-        {events.length === 0 && (
+        {events.length === 0 ? (
           <div
             style={{
-              padding: '16px 10px',
-              fontSize: '0.6875rem',
-              color: 'var(--text-faint)',
+              padding: '12px 13px',
+              fontFamily: 'var(--fd)',
+              fontSize: 10,
+              color: 'var(--tf)',
               textAlign: 'center',
             }}
           >
             In attesa di eventi tool…
           </div>
+        ) : (
+          events.map((evt) => <ToolEventRow key={evt.id} evt={evt} />)
         )}
-        {events.map((evt) => (
-          <ToolEventRow key={evt.id} evt={evt} />
-        ))}
       </div>
     </section>
   )

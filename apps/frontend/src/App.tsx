@@ -1,76 +1,180 @@
+import { useState, useEffect } from 'react'
 import { Header } from './components/Header'
 import { ChatPanel } from './components/Chat/ChatPanel'
-import { AgentMonitor } from './components/AgentMonitor/AgentMonitor'
-import { AnalyticsPanel } from './components/Analytics/AnalyticsPanel'
+import { ReasoningPanel } from './components/ReasoningPanel/ReasoningPanel'
 import { ListingsPanel } from './components/Listings/ListingsPanel'
-import { ToolFeed } from './components/ToolFeed/ToolFeed'
+import { DomainCard } from './components/DomainCard/DomainCard'
 import { SchedulerPanel } from './components/Scheduler/SchedulerPanel'
 import { CostPanel } from './components/CostBreakdown/CostPanel'
+import { AnalyticsMiniPanel } from './components/AnalyticsMini/AnalyticsMiniPanel'
+import { AnalyticsOverlay } from './components/AnalyticsOverlay/AnalyticsOverlay'
+import { SystemOverlay } from './components/SystemOverlay/SystemOverlay'
 import { useWebSocket } from './hooks/useWebSocket'
+import { useStore } from './store'
 
 export default function App() {
-  const { send } = useWebSocket()
+  const [chatCollapsed, setChatCollapsed] = useState(false)
+  const [analyticsOpen, setAnalyticsOpen] = useState(false)
+  const setCostsData = useStore((s) => s.setCostsData)
+  useWebSocket()
+
+  /* ── Fetch real cost data from backend on mount ── */
+  useEffect(() => {
+    fetch('/api/costs?days=30')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data?.breakdown) return
+        const b = data.breakdown
+        setCostsData({
+          total:    b.total    ?? 0,
+          perAgent: b.per_agent ?? {},
+          perDay:   b.per_day   ?? {},
+        })
+      })
+      .catch(() => { /* ignore — fallback to accumulated WS data */ })
+  }, [setCostsData])
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateRows: '48px 1fr',
-        height: '100vh',
-        width: '100vw',
-        overflow: 'hidden',
-      }}
-    >
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--base)' }}>
       <Header />
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '280px 1fr 260px',
-          minHeight: 0,
-        }}
-      >
-        {/* Colonna sinistra: Chat */}
-        <ChatPanel onSend={send} />
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
-        {/* Colonna centrale */}
-        <div
+        {/* ── Sidebar chat ── */}
+        <aside
           style={{
+            width: chatCollapsed ? 0 : 290,
+            minWidth: chatCollapsed ? 0 : 290,
+            flexShrink: 0,
+            borderRight: '1px solid var(--b0)',
             display: 'flex',
             flexDirection: 'column',
-            overflowY: 'auto',
-            borderRight: '1px solid var(--border-strong)',
+            overflow: 'hidden',
+            transition: 'width .3s var(--e-out), min-width .3s var(--e-out)',
           }}
         >
-          <div style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-            <AgentMonitor />
+          <ChatPanel onCollapse={() => setChatCollapsed(true)} />
+        </aside>
+
+        {/* ── Chat FAB (quando collassata) ── */}
+        {chatCollapsed && (
+          <button
+            onClick={() => setChatCollapsed(false)}
+            title="Apri chat"
+            style={{
+              position: 'fixed',
+              bottom: 20,
+              left: 20,
+              zIndex: 40,
+              width: 46,
+              height: 46,
+              borderRadius: '50%',
+              background: 'var(--accent)',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 16px rgba(0,0,0,.5), 0 0 24px rgba(45,232,106,.18)',
+              transition: 'transform .2s var(--e-spring), box-shadow .2s var(--e-io)',
+            }}
+            onMouseEnter={(e) => {
+              const el = e.currentTarget as HTMLElement
+              el.style.transform = 'scale(1.1)'
+              el.style.boxShadow = '0 6px 20px rgba(0,0,0,.55), 0 0 32px rgba(45,232,106,.28)'
+            }}
+            onMouseLeave={(e) => {
+              const el = e.currentTarget as HTMLElement
+              el.style.transform = 'scale(1)'
+              el.style.boxShadow = '0 4px 16px rgba(0,0,0,.5), 0 0 24px rgba(45,232,106,.18)'
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M10 2C5.58 2 2 5.36 2 9.5c0 2.08.87 3.96 2.27 5.33L3.5 18l3.35-1.1A8.1 8.1 0 0 0 10 17c4.42 0 8-3.36 8-7.5S14.42 2 10 2z" fill="#0b0c0b"/>
+              <circle cx="7" cy="9.5" r="1" fill="#0b0c0b" opacity=".7"/>
+              <circle cx="10" cy="9.5" r="1" fill="#0b0c0b"/>
+              <circle cx="13" cy="9.5" r="1" fill="#0b0c0b" opacity=".7"/>
+            </svg>
+          </button>
+        )}
+
+        {/* ── Center column ── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+
+          {/* Pepe — top 50% */}
+          <div style={{
+            flex: '0 0 50%',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            borderBottom: '2px solid var(--b1)',
+          }}>
+            <ReasoningPanel />
           </div>
-          <div style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-            <AnalyticsPanel />
-          </div>
-          <div>
-            <ListingsPanel />
+
+          {/* Sistemi — bottom 50% */}
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            minHeight: 0,
+          }}>
+            {/* header */}
+            <div className="panel-header">
+              <span className="section-label">Sistemi</span>
+            </div>
+            {/* scrollable body */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <DomainCard />
+            </div>
           </div>
         </div>
 
-        {/* Colonna destra */}
+        {/* ── Right column ── */}
         <div
           style={{
+            width: 340,
+            flexShrink: 0,
+            borderLeft: '1px solid var(--b0)',
             display: 'flex',
             flexDirection: 'column',
-            minHeight: 0,
-            background: 'var(--bg-surface-1)',
+            overflow: 'hidden',
           }}
         >
-          <ToolFeed />
-          <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
-            <SchedulerPanel />
+          {/* Listing — flex:3 */}
+          <div style={{ flex: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <ListingsPanel />
           </div>
-          <div style={{ borderTop: '1px solid var(--border-subtle)', flex: 1, minHeight: 0 }}>
-            <CostPanel />
+
+          {/* Bottom-right — altezza naturale, listing si adatta */}
+          <div style={{
+            flexShrink: 0,
+            borderTop: '1px solid var(--b0)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            {/* Scheduler */}
+            <div style={{ flexShrink: 0, borderBottom: '1px solid var(--b0)' }}>
+              <SchedulerPanel />
+            </div>
+            {/* Costo */}
+            <div style={{ flexShrink: 0, borderBottom: '1px solid var(--b0)' }}>
+              <CostPanel />
+            </div>
+            {/* Analytics mini */}
+            <div style={{ flexShrink: 0 }}>
+              <AnalyticsMiniPanel onOpen={() => setAnalyticsOpen(true)} />
+            </div>
           </div>
         </div>
       </div>
+
+      {/* System overlay modal */}
+      <SystemOverlay />
+      {/* Analytics overlay modal */}
+      <AnalyticsOverlay open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />
     </div>
   )
 }

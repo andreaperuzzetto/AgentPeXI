@@ -1,58 +1,84 @@
 import type { ChatMessage as ChatMessageType } from '../../types'
 
-const ROLE_STYLES: Record<string, { bg: string; label: string; labelColor: string }> = {
-  user:   { bg: 'var(--bg-surface-2)', label: 'Tu',     labelColor: 'var(--text-muted)' },
-  pepe:   { bg: 'var(--bg-surface-1)', label: 'Pepe',   labelColor: 'var(--accent)' },
-  system: { bg: 'transparent',         label: 'Sistema', labelColor: 'var(--text-faint)' },
-}
-
 export function ChatMessage({ msg }: { msg: ChatMessageType }) {
-  const style = ROLE_STYLES[msg.role] ?? ROLE_STYLES.system
-
   if (msg.role === 'system') {
     return (
-      <div style={{ padding: '4px 12px', fontSize: '0.75rem', color: 'var(--text-faint)' }}>
+      <div
+        style={{
+          padding: '3px 0',
+          fontFamily: 'var(--fd)',
+          fontSize: 10,
+          color: 'var(--tf)',
+          letterSpacing: '0.03em',
+        }}
+      >
         {msg.content}
       </div>
     )
   }
 
+  const isUser = msg.role === 'user'
+
   return (
     <div
-      style={{
-        padding: '8px 12px',
-        background: style.bg,
-        borderRadius: 2,
-      }}
+      className="animate-msg-in"
+      style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 }}>
-        <span
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontWeight: 700,
-            fontSize: '0.6875rem',
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase' as const,
-            color: style.labelColor,
-          }}
-        >
-          {style.label}
-        </span>
-        <span className="font-data" style={{ fontSize: '0.625rem', color: 'var(--text-faint)' }}>
-          {formatTime(msg.timestamp)}
-        </span>
-      </div>
-      <div style={{ color: 'var(--text-primary)', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+      {/* Role label — .mr style */}
+      <span
+        style={{
+          fontFamily: 'var(--fd)',
+          fontSize: 9,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase' as const,
+          color: isUser ? 'var(--tm)' : 'var(--accent)',
+        }}
+      >
+        {isUser ? 'Tu' : 'Pepe'}
+      </span>
+
+      {/* Bubble — asymmetric border-radius like prototype */}
+      <div
+        style={{
+          padding: '8px 11px',
+          borderRadius: isUser ? '9px 3px 9px 9px' : '3px 9px 9px 9px',
+          fontSize: 14,
+          lineHeight: 1.55,
+          background: isUser ? 'var(--adim)' : 'var(--s2)',
+          border: isUser
+            ? '1px solid rgba(45,232,106,.13)'
+            : '1px solid var(--b0)',
+          color: 'var(--tp)',
+          whiteSpace: 'pre-wrap' as const,
+          alignSelf: isUser ? 'flex-end' : 'flex-start',
+          maxWidth: '92%',
+        }}
+      >
         {msg.content}
       </div>
+
+      {/* Timestamp */}
+      <span
+        style={{
+          fontFamily: 'var(--fd)',
+          fontSize: 9,
+          color: 'var(--tf)',
+          alignSelf: isUser ? 'flex-end' : 'flex-start',
+          marginTop: 1,
+        }}
+      >
+        {formatTime(msg.timestamp)}
+      </span>
     </div>
   )
 }
 
 function formatTime(iso: string): string {
   try {
-    const d = new Date(iso)
-    return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    return new Date(iso).toLocaleTimeString('it-IT', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
   } catch {
     return ''
   }

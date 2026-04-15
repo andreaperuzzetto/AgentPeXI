@@ -57,6 +57,18 @@ export interface AgentStepEvent {
   timestamp: string
 }
 
+export interface LlmCallEvent {
+  type: 'llm_call'
+  agent: string
+  task_id: string
+  step_id: string
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cost_usd: number
+  duration_ms: number
+}
+
 export type WSIncoming =
   | PepeMessage
   | AgentStarted
@@ -65,6 +77,7 @@ export type WSIncoming =
   | SystemStatus
   | ToolCallEvent
   | AgentStepEvent
+  | LlmCallEvent
 
 /* ── Client → server ── */
 
@@ -105,6 +118,7 @@ export interface ToolEvent {
   action: string
   status: 'success' | 'error'
   duration_ms: number
+  cost_usd: number | null
   timestamp: string
 }
 
@@ -113,4 +127,15 @@ export interface SystemState {
   activeTasks: number
   uptime: string
   dailyCost: number
+}
+
+export interface AgentStep {
+  id: string
+  agent: string
+  taskId: string
+  stepNumber: number
+  stepType: string
+  description: string
+  durationMs: number
+  timestamp: string
 }

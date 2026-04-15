@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"oklch\\\\|bg-surface\\\\|border-subtle\\\\|border-strong\\\\|text-primary\\\\|text-muted\\\\|text-faint\\\\|font-display\\\\|font-body\\\\|ease-out-quart\" apps/frontend/src/components/**/*.tsx apps/frontend/src/components/*.tsx)"
+    ]
+  }
+}
