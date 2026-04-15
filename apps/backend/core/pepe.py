@@ -137,6 +137,13 @@ class Pepe:
         # Salva conversazione
         await self.memory.save_conversation("user", message)
 
+        # --- Handler "sì/no" per pending_actions ---
+        quick_reply = await self._check_pending_action(message, source)
+        if quick_reply is not None:
+            await self.memory.save_conversation("assistant", quick_reply)
+            await self._broadcast({"type": "pepe_message", "content": quick_reply, "source": source})
+            return quick_reply
+
         # Recupera contesto da ChromaDB
         context_docs = await self.memory.query_insights(message, n_results=3)
         context_text = ""
@@ -395,3 +402,50 @@ class Pepe:
                 await self._ws_broadcast(event)
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # Handler pending_actions (sì/no per proposte varianti)
+    # ------------------------------------------------------------------
+
+    async def _check_pending_action(self, message: str, source: str) -> str | None:
+        """Controlla se esiste un pending_action e il messaggio è sì/no.
+
+        Ritorna la risposta da inviare, oppure None se non applicabile.
+        """
+        normalized = message.strip().lower()
+        pending = await self.memory.get_pending_action("production_queue_proposal")
+
+        if not pending:
+            return None
+
+        yes_words = {"sì", "si", "yes", "s"}
+        no_words = {"no", "n", "nope"}
+
+        if normalized in yes_words:
+            from uuid import uuid4
+
+            payload = pending["payload"]
+            niche_variant = f"{payload.get('niche', '')} variante {payload.get('color_scheme', '')} alternativa"
+            brief = {
+                "niche": niche_variant,
+                "product_type": payload.get("product_type", "printable_pdf"),
+                "template": payload.get("template", "weekly_planner"),
+                "num_variants": 3,
+                "color_schemes": [],
+                "keywords": [],
+            }
+            await self.memory.add_to_production_queue(
+                task_id=str(uuid4()),
+                product_type=payload.get("product_type", "printable_pdf"),
+                niche=niche_variant,
+                brief=brief,
+            )
+            await self.memory.delete_pending_action("production_queue_proposal")
+            return "✅ Aggiunto in coda! Sarà prodotto nel prossimo ciclo pipeline (domani alle 09:00)."
+
+        if normalized in no_words:
+            await self.memory.delete_pending_action("production_queue_proposal")
+            return "👍 Ok, proposta ignorata."
+
+        # Messaggio non è sì/no → ignora pending_action, processa normalmente
+        return None

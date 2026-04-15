@@ -93,20 +93,47 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 
 CREATE TABLE IF NOT EXISTS etsy_listings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    listing_id TEXT UNIQUE,
-    title TEXT NOT NULL,
+    listing_id TEXT UNIQUE NOT NULL,
+    production_queue_task_id TEXT,
+    title TEXT,
+    tags JSON,
     product_type TEXT,
     niche TEXT,
-    status TEXT NOT NULL DEFAULT 'active',
-    price REAL,
-    views INTEGER NOT NULL DEFAULT 0,
-    favorites INTEGER NOT NULL DEFAULT 0,
-    sales INTEGER NOT NULL DEFAULT 0,
-    revenue REAL NOT NULL DEFAULT 0.0,
+    template TEXT,
+    color_scheme TEXT,
+    size TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    ab_price_variant TEXT,
+    price_eur REAL,
+    views INTEGER DEFAULT 0,
+    favorites INTEGER DEFAULT 0,
+    sales INTEGER DEFAULT 0,
+    revenue_eur REAL DEFAULT 0.0,
     file_path TEXT,
-    tags TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_synced_at TEXT,
+    no_views_flagged_at TEXT,
+    no_conversion_flagged_at TEXT,
+    no_views_no_sales_flagged_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS listing_analyses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id TEXT NOT NULL,
+    analysis_type TEXT NOT NULL,
+    cause TEXT NOT NULL,
+    recommendations JSON NOT NULL,
+    avoid_in_future TEXT NOT NULL,
+    chromadb_id TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS pending_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_type TEXT NOT NULL,
+    payload JSON NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    expires_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -132,12 +159,16 @@ CREATE TABLE IF NOT EXISTS error_log (
 
 CREATE TABLE IF NOT EXISTS production_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT UNIQUE NOT NULL,
     product_type TEXT NOT NULL,
     niche TEXT NOT NULL,
-    title_seed TEXT NOT NULL,
+    brief TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'planned',
-    agent_log_id INTEGER REFERENCES agent_logs(id),
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    file_paths TEXT,
+    etsy_listing_id TEXT,
+    ab_price_variant TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_logs_task_id ON agent_logs(task_id);
@@ -147,6 +178,10 @@ CREATE INDEX IF NOT EXISTS idx_llm_calls_task_id ON llm_calls(task_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_task_id ON tool_calls(task_id);
 CREATE INDEX IF NOT EXISTS idx_error_log_agent_name ON error_log(agent_name);
 CREATE INDEX IF NOT EXISTS idx_production_queue_status ON production_queue(status);
+CREATE INDEX IF NOT EXISTS idx_el_status ON etsy_listings(status);
+CREATE INDEX IF NOT EXISTS idx_el_listing_id ON etsy_listings(listing_id);
+CREATE INDEX IF NOT EXISTS idx_la_listing_id ON listing_analyses(listing_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pa_type ON pending_actions(action_type);
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -552,49 +587,336 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     async def add_to_production_queue(
-        self, product_type: str, niche: str, title_seed: str
+        self,
+        task_id: str,
+        product_type: str,
+        niche: str,
+        brief: dict,
     ) -> int:
+        """Inserisce un nuovo item nella coda. Ritorna l'id row."""
         cursor = await self._db.execute(
-            """INSERT INTO production_queue (product_type, niche, title_seed)
-               VALUES (?, ?, ?)""",
-            (product_type, niche, title_seed),
+            """INSERT INTO production_queue (task_id, product_type, niche, brief)
+               VALUES (?, ?, ?, ?)""",
+            (task_id, product_type, niche, _json_dumps(brief)),
         )
         await self._db.commit()
         return cursor.lastrowid
 
-    async def check_duplicate(
-        self, product_type: str, niche: str, title_seed: str
-    ) -> bool:
-        """True se esiste già in production_queue (completed) o etsy_listings."""
+    async def get_production_queue_item(self, task_id: str) -> dict | None:
+        """Ritorna item per task_id, None se non esiste."""
         cursor = await self._db.execute(
-            """SELECT 1 FROM production_queue
-               WHERE product_type = ? AND niche = ? AND title_seed = ?
-               AND status = 'completed' LIMIT 1""",
-            (product_type, niche, title_seed),
+            "SELECT * FROM production_queue WHERE task_id = ?", (task_id,)
         )
-        if await cursor.fetchone():
-            return True
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["brief"] = _json_loads(d.get("brief"))
+        d["file_paths"] = _json_loads(d.get("file_paths"))
+        return d
 
-        cursor = await self._db.execute(
-            """SELECT 1 FROM etsy_listings
-               WHERE product_type = ? AND niche = ? LIMIT 1""",
-            (product_type, niche),
-        )
-        return (await cursor.fetchone()) is not None
-
-    async def update_production_status(
-        self, queue_id: int, status: str, agent_log_id: int | None = None
+    async def update_production_queue_status(
+        self,
+        task_id: str,
+        status: str,
+        file_paths: list[str] | None = None,
     ) -> None:
-        if agent_log_id is not None:
+        """Aggiorna status e opzionalmente file_paths. Setta updated_at = now."""
+        if file_paths is not None:
             await self._db.execute(
-                "UPDATE production_queue SET status = ?, agent_log_id = ? WHERE id = ?",
-                (status, agent_log_id, queue_id),
+                """UPDATE production_queue SET status = ?, file_paths = ?,
+                   updated_at = CURRENT_TIMESTAMP WHERE task_id = ?""",
+                (status, _json_dumps(file_paths), task_id),
             )
         else:
             await self._db.execute(
-                "UPDATE production_queue SET status = ? WHERE id = ?",
-                (status, queue_id),
+                """UPDATE production_queue SET status = ?,
+                   updated_at = CURRENT_TIMESTAMP WHERE task_id = ?""",
+                (status, task_id),
             )
+        await self._db.commit()
+
+    async def get_production_queue(
+        self,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Lista items, filtrabili per status. Ordinati per created_at DESC."""
+        if status:
+            cursor = await self._db.execute(
+                "SELECT * FROM production_queue WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM production_queue ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["brief"] = _json_loads(d.get("brief"))
+            d["file_paths"] = _json_loads(d.get("file_paths"))
+            result.append(d)
+        return result
+
+    async def is_duplicate_product(self, niche: str, product_type: str) -> bool:
+        """True se esiste già un item completed o in_progress con stessa niche+product_type."""
+        cursor = await self._db.execute(
+            """SELECT 1 FROM production_queue
+               WHERE niche = ? AND product_type = ?
+               AND status IN ('completed', 'in_progress') LIMIT 1""",
+            (niche, product_type),
+        )
+        if await cursor.fetchone():
+            return True
+        cursor = await self._db.execute(
+            """SELECT 1 FROM etsy_listings
+               WHERE niche = ? AND product_type = ? LIMIT 1""",
+            (niche, product_type),
+        )
+        return (await cursor.fetchone()) is not None
+
+    # ------------------------------------------------------------------
+    # Etsy listings (expanded)
+    # ------------------------------------------------------------------
+
+    async def add_etsy_listing(
+        self,
+        listing_id: str,
+        production_queue_task_id: str | None,
+        title: str,
+        tags: list[str],
+        product_type: str,
+        niche: str,
+        template: str,
+        color_scheme: str,
+        size: str,
+        ab_price_variant: str,
+        price_eur: float,
+        file_path: str,
+    ) -> None:
+        await self._db.execute(
+            """INSERT INTO etsy_listings
+               (listing_id, production_queue_task_id, title, tags,
+                product_type, niche, template, color_scheme, size,
+                ab_price_variant, price_eur, file_path)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                listing_id,
+                production_queue_task_id,
+                title,
+                _json_dumps(tags),
+                product_type,
+                niche,
+                template,
+                color_scheme,
+                size,
+                ab_price_variant,
+                price_eur,
+                file_path,
+            ),
+        )
+        await self._db.commit()
+
+    async def update_etsy_listing_stats(
+        self,
+        listing_id: str,
+        views: int,
+        favorites: int,
+        sales: int,
+        revenue_eur: float,
+        status: str,
+        last_synced_at: str,
+    ) -> None:
+        await self._db.execute(
+            """UPDATE etsy_listings SET
+               views = ?, favorites = ?, sales = ?,
+               revenue_eur = ?, status = ?, last_synced_at = ?
+               WHERE listing_id = ?""",
+            (views, favorites, sales, revenue_eur, status, last_synced_at, listing_id),
+        )
+        await self._db.commit()
+
+    async def get_etsy_listings(self, status: str | None = None) -> list[dict]:
+        if status:
+            cursor = await self._db.execute(
+                "SELECT * FROM etsy_listings WHERE status = ? ORDER BY created_at DESC",
+                (status,),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM etsy_listings ORDER BY created_at DESC"
+            )
+        rows = await cursor.fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["tags"] = _json_loads(d.get("tags"))
+            result.append(d)
+        return result
+
+    async def get_etsy_listings_count(self) -> int:
+        """Conta totale listing in etsy_listings (qualsiasi status)."""
+        cursor = await self._db.execute("SELECT COUNT(*) FROM etsy_listings")
+        row = await cursor.fetchone()
+        return row[0]
+
+    async def get_listings_no_views(self, days: int = 7) -> list[dict]:
+        """views == 0, active, created_at < now - days, no_views_flagged_at IS NULL."""
+        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await self._db.execute(
+            """SELECT * FROM etsy_listings
+               WHERE views = 0 AND status = 'active'
+               AND created_at < ? AND no_views_flagged_at IS NULL""",
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_listings_no_conversion(self, days: int = 45) -> list[dict]:
+        """views > 0, sales == 0, active, created_at < now - days, no_conversion_flagged_at IS NULL."""
+        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await self._db.execute(
+            """SELECT * FROM etsy_listings
+               WHERE views > 0 AND sales = 0 AND status = 'active'
+               AND created_at < ? AND no_conversion_flagged_at IS NULL""",
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_listings_no_views_no_sales(self, days: int = 45) -> list[dict]:
+        """views == 0, sales == 0, active, created_at < now - days, no_views_no_sales_flagged_at IS NULL."""
+        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await self._db.execute(
+            """SELECT * FROM etsy_listings
+               WHERE views = 0 AND sales = 0 AND status = 'active'
+               AND created_at < ? AND no_views_no_sales_flagged_at IS NULL""",
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def flag_no_views(self, listing_id: str) -> None:
+        await self._db.execute(
+            "UPDATE etsy_listings SET no_views_flagged_at = CURRENT_TIMESTAMP WHERE listing_id = ?",
+            (listing_id,),
+        )
+        await self._db.commit()
+
+    async def flag_no_conversion(self, listing_id: str) -> None:
+        await self._db.execute(
+            "UPDATE etsy_listings SET no_conversion_flagged_at = CURRENT_TIMESTAMP WHERE listing_id = ?",
+            (listing_id,),
+        )
+        await self._db.commit()
+
+    async def flag_no_views_no_sales(self, listing_id: str) -> None:
+        await self._db.execute(
+            "UPDATE etsy_listings SET no_views_no_sales_flagged_at = CURRENT_TIMESTAMP WHERE listing_id = ?",
+            (listing_id,),
+        )
+        await self._db.commit()
+
+    # ------------------------------------------------------------------
+    # Listing analyses
+    # ------------------------------------------------------------------
+
+    async def save_listing_analysis(
+        self,
+        listing_id: str,
+        analysis_type: str,
+        cause: str,
+        recommendations: list[str],
+        avoid_in_future: str,
+        chromadb_id: str | None = None,
+    ) -> None:
+        await self._db.execute(
+            """INSERT INTO listing_analyses
+               (listing_id, analysis_type, cause, recommendations,
+                avoid_in_future, chromadb_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                listing_id,
+                analysis_type,
+                cause,
+                _json_dumps(recommendations),
+                avoid_in_future,
+                chromadb_id,
+            ),
+        )
+        await self._db.commit()
+
+    async def get_listing_analyses(self, listing_id: str) -> list[dict]:
+        cursor = await self._db.execute(
+            "SELECT * FROM listing_analyses WHERE listing_id = ? ORDER BY created_at DESC",
+            (listing_id,),
+        )
+        rows = await cursor.fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["recommendations"] = _json_loads(d.get("recommendations"))
+            result.append(d)
+        return result
+
+    async def get_all_listing_analyses(self, limit: int = 20) -> list[dict]:
+        cursor = await self._db.execute(
+            "SELECT * FROM listing_analyses ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["recommendations"] = _json_loads(d.get("recommendations"))
+            result.append(d)
+        return result
+
+    # ------------------------------------------------------------------
+    # Pending actions
+    # ------------------------------------------------------------------
+
+    async def save_pending_action(
+        self,
+        action_type: str,
+        payload: dict,
+        expires_hours: int = 24,
+    ) -> None:
+        """INSERT OR REPLACE — sovrascrive pending_action precedente dello stesso tipo."""
+        expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        await self._db.execute(
+            """INSERT OR REPLACE INTO pending_actions
+               (action_type, payload, expires_at)
+               VALUES (?, ?, ?)""",
+            (action_type, _json_dumps(payload), expires_at),
+        )
+        await self._db.commit()
+
+    async def get_pending_action(self, action_type: str) -> dict | None:
+        """Ritorna None se assente o scaduto."""
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await self._db.execute(
+            """SELECT * FROM pending_actions
+               WHERE action_type = ? AND expires_at > ?""",
+            (action_type, now),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["payload"] = _json_loads(d.get("payload"))
+        return d
+
+    async def delete_pending_action(self, action_type: str) -> None:
+        await self._db.execute(
+            "DELETE FROM pending_actions WHERE action_type = ?",
+            (action_type,),
+        )
         await self._db.commit()
 
     # ------------------------------------------------------------------
@@ -651,9 +973,9 @@ class MemoryManager:
     # ChromaDB — insights semantici
     # ------------------------------------------------------------------
 
-    async def store_insight(self, text: str, metadata: dict | None = None) -> None:
+    async def store_insight(self, text: str, metadata: dict | None = None) -> str | None:
         if self._chroma_collection is None:
-            return
+            return None
         import uuid
 
         doc_id = str(uuid.uuid4())
@@ -662,6 +984,7 @@ class MemoryManager:
             metadatas=[metadata or {}],
             ids=[doc_id],
         )
+        return doc_id
 
     async def query_insights(self, query: str, n_results: int = 5) -> list[dict]:
         if self._chroma_collection is None:
@@ -674,6 +997,26 @@ class MemoryManager:
         for i, doc in enumerate(results.get("documents", [[]])[0]):
             meta = (results.get("metadatas", [[]])[0][i]) if results.get("metadatas") else {}
             out.append({"document": doc, "metadata": meta})
+        return out
+
+    async def query_chromadb(
+        self,
+        query: str,
+        n_results: int = 5,
+        where: dict | None = None,
+    ) -> list[dict]:
+        """Query ChromaDB con filtro where opzionale sui metadata."""
+        if self._chroma_collection is None:
+            return []
+        kwargs: dict = {"query_texts": [query], "n_results": n_results}
+        if where:
+            kwargs["where"] = where
+        results = self._chroma_collection.query(**kwargs)
+        out = []
+        for i, doc in enumerate(results.get("documents", [[]])[0]):
+            meta = (results.get("metadatas", [[]])[0][i]) if results.get("metadatas") else {}
+            doc_id = (results.get("ids", [[]])[0][i]) if results.get("ids") else None
+            out.append({"document": doc, "metadata": meta, "id": doc_id})
         return out
 
 

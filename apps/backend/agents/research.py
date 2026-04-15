@@ -15,6 +15,15 @@ SYSTEM_PROMPT = """\
 Sei un esperto analista di mercato specializzato in Etsy e digital products.
 Il tuo compito è analizzare nicchie di mercato e fornire report strutturati e azionabili.
 
+Prima di raccomandare una nicchia o un tipo di prodotto, considera le failure analysis
+passate che ti vengono fornite. Se trovi failure analysis per quella nicchia:
+- Se failure_type è "no_views_no_sales": scarta la nicchia, segnala il problema
+- Se failure_type è "no_views": puoi procedere ma aggiusta le keyword strategy
+- Se failure_type è "no_conversion": puoi procedere ma cambia il price point o il template
+
+Il campo "avoid_in_future" di ogni failure analysis è il più importante:
+contiene esattamente cosa non ripetere.
+
 Per ogni nicchia analizzata devi valutare:
 1. **Domanda**: volume di ricerca, trend (crescente/stabile/calante), stagionalità
 2. **Offerta**: numero competitor, qualità media, top seller e le loro strategie
@@ -132,6 +141,18 @@ class ResearchAgent(AgentBase):
         self, task: AgentTask, niche: str
     ) -> AgentResult:
         """Analisi approfondita di una singola nicchia."""
+        # Step 0 — Cerca failure analysis passate per questa nicchia
+        failure_context = await self.memory.query_chromadb(
+            query=f"failure analysis {niche}",
+            n_results=3,
+            where={"type": "failure_analysis"},
+        )
+        failure_text = ""
+        if failure_context:
+            failure_text = "\n\n## Failure analysis passate per nicchie simili\n"
+            for fc in failure_context:
+                failure_text += f"- {fc['document']}\n"
+
         # Step 1 — Tre ricerche parallele via Tavily
         niche_results, competitor_results, keyword_results = await asyncio.gather(
             self._call_tool(
@@ -165,7 +186,8 @@ class ResearchAgent(AgentBase):
                     f"Analizza la nicchia Etsy: **{niche}** (digital products).\n\n"
                     f"## Dati nicchia\n{json.dumps(niche_results, indent=2, default=str)}\n\n"
                     f"## Dati competitor\n{json.dumps(competitor_results, indent=2, default=str)}\n\n"
-                    f"## Dati keyword SEO\n{json.dumps(keyword_results, indent=2, default=str)}\n\n"
+                    f"## Dati keyword SEO\n{json.dumps(keyword_results, indent=2, default=str)}"
+                    f"{failure_text}\n\n"
                     f"Produci un report JSON completo seguendo la struttura indicata nel system prompt."
                 ),
             }],

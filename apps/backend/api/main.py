@@ -82,6 +82,9 @@ async def lifespan(app: FastAPI):
     from apps.backend.telegram.bot import TelegramBot
     from apps.backend.tools.etsy_api import EtsyAPI
     from apps.backend.agents.research import ResearchAgent
+    from apps.backend.agents.design import DesignAgent
+    from apps.backend.agents.publisher import PublisherAgent
+    from apps.backend.agents.analytics import AnalyticsAgent
 
     # 1. MemoryManager
     memory = MemoryManager()
@@ -104,12 +107,47 @@ async def lifespan(app: FastAPI):
     )
     pepe.register_agent("research", research_agent)
 
+    # 2c. Design Agent
+    design_agent = DesignAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        storage=storage,
+        ws_broadcaster=ws_manager.broadcast,
+    )
+    pepe.register_agent("design", design_agent)
+
     await pepe.start()
     logger.info("Pepe avviato")
 
-    # 2c. EtsyAPI
+    # 2d. EtsyAPI
     etsy_api = EtsyAPI(memory=memory, pepe=pepe)
     logger.info("EtsyAPI inizializzato")
+
+    # Funzione broadcast Telegram (usata dallo scheduler)
+    async def telegram_broadcast(msg: str) -> None:
+        if pepe and hasattr(pepe, "notify_telegram"):
+            await pepe.notify_telegram(msg, priority=True)
+
+    # 2e. Publisher Agent
+    publisher_agent = PublisherAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        storage=storage,
+        etsy_api=etsy_api,
+        ws_broadcaster=ws_manager.broadcast,
+        telegram_broadcaster=telegram_broadcast,
+    )
+    pepe.register_agent("publisher", publisher_agent)
+
+    # 2f. Analytics Agent
+    analytics_agent = AnalyticsAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        etsy_api=etsy_api,
+        ws_broadcaster=ws_manager.broadcast,
+        telegram_broadcaster=telegram_broadcast,
+    )
+    pepe.register_agent("analytics", analytics_agent)
 
     # 3. Scheduler APScheduler
     scheduler = Scheduler(
@@ -117,6 +155,11 @@ async def lifespan(app: FastAPI):
         ws_broadcaster=ws_manager.broadcast,
         pepe=pepe,
         storage=storage,
+        research_agent=research_agent,
+        design_agent=design_agent,
+        publisher_agent=publisher_agent,
+        analytics_agent=analytics_agent,
+        telegram_broadcaster=telegram_broadcast,
     )
     await scheduler.start()
     logger.info("Scheduler avviato")
@@ -198,6 +241,16 @@ async def get_scheduler() -> dict:
     return {"tasks": [dict(r) for r in rows]}
 
 
+@app.get("/api/production-queue")
+async def get_production_queue(status: str | None = None, limit: int = 50) -> dict:
+    """Lista items dalla production_queue, filtrabili per status."""
+    if not memory:
+        return {"items": []}
+    filter_status = None if status == "all" else status
+    items = await memory.get_production_queue(status=filter_status, limit=limit)
+    return {"items": items}
+
+
 @app.get("/api/tasks/{task_id}/timeline")
 async def get_task_timeline(task_id: str) -> dict:
     """Timeline completa step/llm/tool per un task (Task Detail View)."""
@@ -253,6 +306,43 @@ async def etsy_shop_info() -> dict:
         return JSONResponse(status_code=401, content={"error": str(exc)})
     except Exception as exc:
         return JSONResponse(status_code=502, content={"error": str(exc)})
+
+
+@app.get("/api/etsy/listings")
+async def get_etsy_listings(status: str = "all", limit: int = 50) -> dict:
+    """Lista listing Etsy con filtro status (draft|active|all)."""
+    if not memory:
+        return {"listings": []}
+    filter_status = None if status == "all" else status
+    listings = await memory.get_etsy_listings(status=filter_status, limit=limit)
+    return {"listings": listings}
+
+
+# ------------------------------------------------------------------
+# Analytics endpoints
+# ------------------------------------------------------------------
+
+
+@app.get("/api/analytics/latest")
+async def get_analytics_latest() -> dict:
+    """Ultimo report analytics da ChromaDB."""
+    if not memory:
+        return {"report": None}
+    results = await memory.query_chromadb(
+        query="daily analytics report",
+        n_results=1,
+        where={"type": "analytics_report"},
+    )
+    return {"report": results[0] if results else None}
+
+
+@app.get("/api/analytics/failures")
+async def get_analytics_failures(limit: int = 20) -> dict:
+    """Ultime failure analysis dai listing."""
+    if not memory:
+        return {"failures": []}
+    failures = await memory.get_all_listing_analyses(limit=limit)
+    return {"failures": failures}
 
 
 # ------------------------------------------------------------------
