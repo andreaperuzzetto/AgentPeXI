@@ -46,3 +46,9 @@ logs/
 # Notes private
 plan.md
 NOTES.md
+
+# Fonts (downloaded at setup)
+apps/backend/assets/fonts/*.ttf
+
+# Vite cache
+apps/frontend/.vite/
