@@ -79,6 +79,23 @@ async def search_etsy_niche(
     )
 
 
+async def search_etsy_direct(niche: str) -> dict[str, Any]:
+    """Estrae dati reali dalla pagina di ricerca Etsy (prezzi, titoli, listing reali)."""
+    from urllib.parse import quote_plus
+
+    niche_encoded = quote_plus(niche)
+    etsy_url = f"https://www.etsy.com/search?q={niche_encoded}&category=digital_downloads"
+    extracted = await extract([etsy_url])
+
+    erank_url = f"https://erank.com/keyword-explorer?term={niche_encoded}"
+    erank_data = await extract([erank_url])
+
+    return {
+        "etsy_listings_raw": extracted,
+        "erank_keyword_data": erank_data,
+    }
+
+
 async def search_competitors(
     niche: str,
     *,

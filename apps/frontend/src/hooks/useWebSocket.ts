@@ -120,7 +120,8 @@ export function useWebSocket() {
   const send = useCallback((content: string) => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
-    ws.send(JSON.stringify({ type: 'user_message', content }))
+    const sessionId = useStore.getState().sessionId || 'default'
+    ws.send(JSON.stringify({ type: 'user_message', content, session_id: sessionId }))
     useStore.getState().setIsTyping(true)
   }, [])
 

@@ -92,6 +92,7 @@ class TelegramBot:
         add(CommandHandler("listings", self._cmd_listings, filters=self._chat_filter))
         add(CommandHandler("retry", self._cmd_retry, filters=self._chat_filter))
         add(CommandHandler("resume_agent", self._cmd_resume_agent, filters=self._chat_filter))
+        add(CommandHandler("new", self._cmd_new, filters=self._chat_filter))
 
         # Messaggi vocali
         add(MessageHandler(self._chat_filter & filters.VOICE, self._handle_voice))
@@ -123,9 +124,11 @@ class TelegramBot:
 
     async def _cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/report — chiede report a Pepe."""
+        session_id = str(update.effective_chat.id)
         reply = await self.pepe.handle_user_message(
             "Dammi un report sullo stato attuale del sistema e delle attività recenti.",
             source="telegram",
+            session_id=session_id,
         )
         await update.message.reply_text(reply)
 
@@ -145,7 +148,8 @@ class TelegramBot:
         if not text:
             await update.message.reply_text("Uso: /ask <la tua domanda>")
             return
-        reply = await self.pepe.handle_user_message(text, source="telegram")
+        session_id = str(update.effective_chat.id)
+        reply = await self.pepe.handle_user_message(text, source="telegram", session_id=session_id)
         await update.message.reply_text(reply)
 
     async def _cmd_listings(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -190,14 +194,23 @@ class TelegramBot:
         else:
             await update.message.reply_text(f"❌ Agente *{name}* non trovato o non sospeso.", parse_mode="Markdown")
 
+    async def _cmd_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/new — nuova sessione, azzera conversazione precedente."""
+        session_id = str(update.effective_chat.id)
+        await self.pepe.memory.clear_session(session_id)
+        await update.message.reply_text(
+            "✅ Nuova sessione avviata. La conversazione precedente è stata archiviata."
+        )
+
     # ------------------------------------------------------------------
     # Handler messaggi testo
     # ------------------------------------------------------------------
 
     async def _handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Messaggio testo → Pepe."""
+        """Messaggio testo → Pepe con session_id da chat_id."""
         text = update.message.text
-        reply = await self.pepe.handle_user_message(text, source="telegram")
+        session_id = str(update.effective_chat.id)
+        reply = await self.pepe.handle_user_message(text, source="telegram", session_id=session_id)
         await update.message.reply_text(reply)
 
     # ------------------------------------------------------------------
@@ -225,7 +238,8 @@ class TelegramBot:
             await update.message.reply_text(f"🎤 _{transcription}_", parse_mode="Markdown")
 
             # Pepe elabora
-            reply = await self.pepe.handle_user_message(transcription, source="telegram")
+            session_id = str(update.effective_chat.id)
+            reply = await self.pepe.handle_user_message(transcription, source="telegram", session_id=session_id)
 
             # Risposta testuale
             await update.message.reply_text(reply)

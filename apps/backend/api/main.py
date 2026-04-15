@@ -273,12 +273,45 @@ async def get_costs(days: int = 30) -> dict:
 async def post_chat(body: dict) -> dict:
     """Fallback HTTP per chat (alternativo al WebSocket)."""
     message = body.get("message", "")
+    session_id = body.get("session_id", "default")
     if not message:
         return JSONResponse(status_code=400, content={"error": "message richiesto"})
     if not pepe:
         return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    reply = await pepe.handle_user_message(message, source="web")
+    reply = await pepe.handle_user_message(message, source="web", session_id=session_id)
     return {"reply": reply}
+
+
+# ------------------------------------------------------------------
+# Session endpoints
+# ------------------------------------------------------------------
+
+
+@app.post("/api/sessions")
+async def create_session() -> dict:
+    """Crea una nuova sessione, ritorna session_id UUID."""
+    import uuid
+
+    session_id = str(uuid.uuid4())
+    return {"session_id": session_id}
+
+
+@app.get("/api/sessions")
+async def list_sessions() -> dict:
+    """Lista sessioni con ultimo messaggio e timestamp, limit 20."""
+    if not memory:
+        return {"sessions": []}
+    sessions = await memory.get_sessions(limit=20)
+    return {"sessions": sessions}
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str) -> dict:
+    """Cancella tutti i messaggi di una sessione."""
+    if not memory:
+        return JSONResponse(status_code=503, content={"error": "MemoryManager non inizializzato"})
+    await memory.clear_session(session_id)
+    return {"status": "ok"}
 
 
 # ------------------------------------------------------------------
@@ -361,10 +394,11 @@ async def ws_chat(ws: WebSocket) -> None:
 
             if msg_type == "user_message":
                 message = data.get("content", "")
+                session_id = data.get("session_id", "default")
                 if not message or not pepe:
                     continue
                 # Gestisci in background per non bloccare il WS receiver
-                asyncio.create_task(_handle_ws_message(ws, message))
+                asyncio.create_task(_handle_ws_message(ws, message, session_id))
 
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})
@@ -375,11 +409,11 @@ async def ws_chat(ws: WebSocket) -> None:
         ws_manager.disconnect(ws)
 
 
-async def _handle_ws_message(ws: WebSocket, message: str) -> None:
+async def _handle_ws_message(ws: WebSocket, message: str, session_id: str) -> None:
     """Processa messaggio utente via WS e invia risposta."""
     try:
         # La risposta viene broadcastata da Pepe via ws_broadcaster a tutti i client
-        await pepe.handle_user_message(message, source="web")
+        await pepe.handle_user_message(message, source="web", session_id=session_id)
     except Exception as exc:
         logger.error("Errore WS message: %s", exc)
         await ws.send_json({

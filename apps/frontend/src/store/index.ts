@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatMessage, AgentState, ToolEvent, SystemState } from '../types'
+import type { ChatMessage, AgentState, ToolEvent, SystemState, Session } from '../types'
 
 const TOOL_FEED_MAX = 200
 
@@ -16,6 +16,12 @@ interface AgentPeXIStore {
   /* WebSocket */
   wsConnected: boolean
   setWsConnected: (v: boolean) => void
+
+  /* Sessions */
+  sessionId: string | null
+  sessions: Session[]
+  setSessionId: (id: string | null) => void
+  setSessions: (s: Session[]) => void
 
   /* Chat */
   messages: ChatMessage[]
@@ -39,6 +45,11 @@ interface AgentPeXIStore {
 export const useStore = create<AgentPeXIStore>((set) => ({
   wsConnected: false,
   setWsConnected: (v) => set({ wsConnected: v }),
+
+  sessionId: null,
+  sessions: [],
+  setSessionId: (id) => set({ sessionId: id, messages: [] }),
+  setSessions: (s) => set({ sessions: s }),
 
   messages: [],
   isTyping: false,

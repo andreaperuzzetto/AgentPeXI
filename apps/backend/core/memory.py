@@ -23,10 +23,13 @@ from apps.backend.core.config import settings
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'web',
     timestamp TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_conv_session ON conversations(session_id);
 
 CREATE TABLE IF NOT EXISTS agent_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -262,19 +265,59 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     async def save_conversation(self, role: str, content: str) -> None:
-        await self._db.execute(
-            "INSERT INTO conversations (role, content) VALUES (?, ?)",
-            (role, content),
-        )
-        await self._db.commit()
+        """Legacy — salva senza session_id (usa 'default')."""
+        await self.save_message("default", role, content, "web")
 
     async def get_recent_conversations(self, limit: int = 20) -> list[dict]:
+        """Legacy — ultime N conversazioni globali."""
         cursor = await self._db.execute(
             "SELECT role, content, timestamp FROM conversations ORDER BY id DESC LIMIT ?",
             (limit,),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in reversed(rows)]
+
+    async def save_message(
+        self, session_id: str, role: str, content: str, source: str = "web"
+    ) -> None:
+        """Salva messaggio in una sessione specifica."""
+        await self._db.execute(
+            "INSERT INTO conversations (session_id, role, content, source) VALUES (?, ?, ?, ?)",
+            (session_id, role, content, source),
+        )
+        await self._db.commit()
+
+    async def get_conversation_history(
+        self, session_id: str, limit: int = 20
+    ) -> list[dict]:
+        """Ultimi N messaggi della sessione, ordinati ASC (dal più vecchio al più recente)."""
+        cursor = await self._db.execute(
+            "SELECT role, content, timestamp FROM conversations "
+            "WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+            (session_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+    async def clear_session(self, session_id: str) -> None:
+        """Cancella tutti i messaggi di una sessione."""
+        await self._db.execute(
+            "DELETE FROM conversations WHERE session_id = ?",
+            (session_id,),
+        )
+        await self._db.commit()
+
+    async def get_sessions(self, limit: int = 20) -> list[dict]:
+        """Lista sessioni con ultimo messaggio e timestamp, ordinate per recenza."""
+        cursor = await self._db.execute(
+            "SELECT session_id, content AS last_message, timestamp "
+            "FROM conversations c1 WHERE id = ("
+            "  SELECT MAX(id) FROM conversations c2 WHERE c2.session_id = c1.session_id"
+            ") ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Agent logs

@@ -71,6 +71,15 @@ export type WSIncoming =
 export interface UserMessage {
   type: 'user_message'
   content: string
+  session_id: string
+}
+
+/* ── Sessions ── */
+
+export interface Session {
+  session_id: string
+  last_message: string
+  timestamp: string
 }
 
 /* ── UI models ── */

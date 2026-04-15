@@ -132,15 +132,17 @@ class Pepe:
     # Entry point — messaggio utente
     # ------------------------------------------------------------------
 
-    async def handle_user_message(self, message: str, source: str = "web") -> str:
+    async def handle_user_message(
+        self, message: str, source: str = "web", session_id: str = "default"
+    ) -> str:
         """Gestisce un messaggio utente: risposta diretta o delega ad agente."""
-        # Salva conversazione
-        await self.memory.save_conversation("user", message)
+        # Salva messaggio utente nella sessione
+        await self.memory.save_message(session_id, "user", message, source)
 
         # --- Handler "sì/no" per pending_actions ---
         quick_reply = await self._check_pending_action(message, source)
         if quick_reply is not None:
-            await self.memory.save_conversation("assistant", quick_reply)
+            await self.memory.save_message(session_id, "assistant", quick_reply, source)
             await self._broadcast({"type": "pepe_message", "content": quick_reply, "source": source})
             return quick_reply
 
@@ -152,9 +154,17 @@ class Pepe:
                 f"- {d['document']}" for d in context_docs
             )
 
-        # Conversazioni recenti per continuità
-        recent = await self.memory.get_recent_conversations(limit=10)
-        history = [{"role": m["role"], "content": m["content"]} for m in recent[:-1]]  # escludi ultimo (è il messaggio corrente)
+        # Conversazione sessione per continuità
+        recent = await self.memory.get_conversation_history(session_id, limit=20)
+        history = []
+        for m in recent:
+            if m["role"] == "user":
+                history.append({"role": "user", "content": m["content"]})
+            elif m["role"] in ("assistant", "pepe"):
+                history.append({"role": "assistant", "content": m["content"]})
+        # Rimuovi l'ultimo (è il messaggio corrente appena salvato)
+        if history and history[-1]["role"] == "user":
+            history.pop()
 
         # Aggiungi messaggio corrente + contesto
         user_content = message
@@ -195,19 +205,21 @@ class Pepe:
             try:
                 result = await self._enqueue_and_wait(task)
             except Exception as exc:
-                error_reply = f"Mi dispiace, l'agente {agent_name} ha riscontrato un errore: {exc}"
-                await self.memory.save_conversation("assistant", error_reply)
+                error_reply = await self._synthesize_error(
+                    agent_name, str(exc), task.input_data
+                )
+                await self.memory.save_message(session_id, "assistant", error_reply, source)
                 await self._broadcast({"type": "pepe_message", "content": error_reply, "source": source})
                 return error_reply
 
-            # Sintetizza risposta finale basata sul risultato dell'agente
-            final_reply = await self._synthesize_reply(message, agent_name, result)
-            await self.memory.save_conversation("assistant", final_reply)
-            await self._broadcast({"type": "pepe_message", "content": final_reply, "source": source})
+            # --- Confidence gate ---
+            final_reply = await self._apply_confidence_gate(
+                message, agent_name, result, session_id, source
+            )
             return final_reply
 
         # Risposta diretta
-        await self.memory.save_conversation("assistant", reply_text)
+        await self.memory.save_message(session_id, "assistant", reply_text, source)
         await self._broadcast({"type": "pepe_message", "content": reply_text, "source": source})
         return reply_text
 
@@ -449,3 +461,100 @@ class Pepe:
 
         # Messaggio non è sì/no → ignora pending_action, processa normalmente
         return None
+
+    # ------------------------------------------------------------------
+    # Confidence gate
+    # ------------------------------------------------------------------
+
+    async def _apply_confidence_gate(
+        self,
+        user_message: str,
+        agent_name: str,
+        result: AgentResult,
+        session_id: str,
+        source: str,
+    ) -> str:
+        """Applica confidence gate sul risultato di un agente.
+
+        >= 0.85: procedi normalmente
+        0.60-0.84: procedi con disclaimer
+        < 0.60: blocca, chiedi approfondimento
+        None: agente non supporta confidence → procedi normalmente
+        """
+        output = result.output_data or {}
+        confidence = output.get("confidence") if isinstance(output, dict) else None
+        missing_data = output.get("missing_data", []) if isinstance(output, dict) else []
+
+        if result.status == TaskStatus.FAILED:
+            error_msg = output.get("error", "Errore sconosciuto") if isinstance(output, dict) else str(output)
+            reply = await self._synthesize_error(agent_name, error_msg, {}, missing_data)
+            await self.memory.save_message(session_id, "assistant", reply, source)
+            await self._broadcast({"type": "pepe_message", "content": reply, "source": source})
+            return reply
+
+        if confidence is None or confidence >= 0.85:
+            # Procedi normalmente
+            final_reply = await self._synthesize_reply(user_message, agent_name, result)
+            await self.memory.save_message(session_id, "assistant", final_reply, source)
+            await self._broadcast({"type": "pepe_message", "content": final_reply, "source": source})
+            return final_reply
+
+        if confidence >= 0.60:
+            # Procedi con disclaimer
+            final_reply = await self._synthesize_reply(user_message, agent_name, result)
+            disclaimer = f"\n\n[Nota: analisi basata su dati parziali — confidence {confidence:.0%}]"
+            final_reply += disclaimer
+            await self.memory.save_message(session_id, "assistant", final_reply, source)
+            await self._broadcast({"type": "pepe_message", "content": final_reply, "source": source})
+            return final_reply
+
+        # confidence < 0.60 → blocca
+        missing_str = ", ".join(missing_data[:5]) if missing_data else "dati insufficienti"
+        reply = (
+            f"Non ho dati sufficienti per procedere con accuratezza "
+            f"(confidence: {confidence:.0%}).\n"
+            f"Mancano: {missing_str}.\n"
+            f"Vuoi che approfondisca la ricerca su questa nicchia con fonti alternative?"
+        )
+        await self.memory.save_message(session_id, "assistant", reply, source)
+        await self._broadcast({"type": "pepe_message", "content": reply, "source": source})
+        return reply
+
+    # ------------------------------------------------------------------
+    # Error synthesis
+    # ------------------------------------------------------------------
+
+    async def _synthesize_error(
+        self,
+        agent_name: str,
+        error_message: str,
+        context_data: dict | None = None,
+        missing_data: list[str] | None = None,
+    ) -> str:
+        """Sintetizza errore in linguaggio naturale per l'utente."""
+        error_system = (
+            "Sei Pepe, orchestratore di un sistema AI per Etsy. Un agente ha riscontrato "
+            "un problema. Spiega all'utente cosa è successo in modo chiaro e professionale, "
+            "proponi 2-3 soluzioni concrete e pratiche. Sii diretto, non tecnico, non "
+            "mostrare stack trace o codice. Max 150 parole."
+        )
+        context_str = json.dumps(context_data, ensure_ascii=False, default=str) if context_data else "{}"
+        missing_str = ", ".join(missing_data) if missing_data else "nessuno"
+        try:
+            response = await self.client.messages.create(
+                model=MODEL_HAIKU,
+                system=error_system,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Agente: {agent_name}\n"
+                        f"Errore: {error_message}\n"
+                        f"Contesto: {context_str}\n"
+                        f"Missing data: {missing_str}"
+                    ),
+                }],
+                max_tokens=512,
+            )
+            return response.content[0].text if response.content else f"L'agente {agent_name} ha riscontrato un problema. Riprova più tardi."
+        except Exception:
+            return f"L'agente {agent_name} ha riscontrato un problema. Riprova più tardi."
