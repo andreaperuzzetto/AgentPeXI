@@ -269,6 +269,29 @@ async def get_costs(days: int = 30) -> dict:
     return {"days": days, "breakdown": breakdown}
 
 
+@app.get("/api/analytics/summary")
+async def get_analytics_summary_endpoint(days: int = 14) -> dict:
+    """Aggregati task (agent_logs + production_queue) per il pannello Analytics.
+
+    Ritorna: total/completed/failed/running per periodo, per-day breakdown,
+    per-agent stats, production_queue counters.
+    Dati reali senza dipendenza da Etsy.
+    """
+    if not memory:
+        return {"summary": {}}
+    summary = await memory.get_agent_logs_summary(period_days=days)
+    return {"summary": summary}
+
+
+@app.get("/api/memory/stats")
+async def get_memory_stats() -> dict:
+    """Statistiche ChromaDB: collection count, disponibilità."""
+    if not memory:
+        return {"chroma": {"available": False, "count": 0}}
+    chroma = await memory.get_chroma_stats()
+    return {"chroma": chroma}
+
+
 @app.post("/api/chat")
 async def post_chat(body: dict) -> dict:
     """Fallback HTTP per chat (alternativo al WebSocket)."""

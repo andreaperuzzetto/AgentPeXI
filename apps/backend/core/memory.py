@@ -638,6 +638,88 @@ class MemoryManager:
             "total": total,
         }
 
+    async def get_agent_logs_summary(self, period_days: int = 14) -> dict:
+        """Aggregati task da agent_logs per il frontend Analytics.
+
+        Ritorna:
+          total, completed, failed, running, by_status,
+          per_day (YYYY-MM-DD → {status: count}),
+          per_agent (agent_name → {total, completed, failed, cost}),
+          production_queue stats.
+        """
+        since = (datetime.utcnow() - timedelta(days=period_days)).strftime("%Y-%m-%d %H:%M:%S")
+
+        # Conteggi per status
+        cursor = await self._db.execute(
+            "SELECT status, COUNT(*) as cnt FROM agent_logs "
+            "WHERE created_at >= ? GROUP BY status",
+            (since,),
+        )
+        by_status: dict[str, int] = {r["status"]: r["cnt"] for r in await cursor.fetchall()}
+
+        # Per giorno × status (per grafico)
+        cursor = await self._db.execute(
+            """SELECT DATE(created_at) as day, status, COUNT(*) as cnt
+               FROM agent_logs WHERE created_at >= ?
+               GROUP BY day, status ORDER BY day""",
+            (since,),
+        )
+        per_day: dict[str, dict[str, int]] = {}
+        for r in await cursor.fetchall():
+            day = r["day"]
+            if day not in per_day:
+                per_day[day] = {}
+            per_day[day][r["status"]] = r["cnt"]
+
+        # Per agente (totale task + costo)
+        cursor = await self._db.execute(
+            """SELECT agent_name,
+                      COUNT(*) as total,
+                      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                      SUM(CASE WHEN status = 'failed'    THEN 1 ELSE 0 END) as failed,
+                      SUM(total_cost_usd) as cost
+               FROM agent_logs WHERE created_at >= ?
+               GROUP BY agent_name""",
+            (since,),
+        )
+        per_agent: dict[str, dict] = {}
+        for r in await cursor.fetchall():
+            per_agent[r["agent_name"]] = {
+                "total":     r["total"],
+                "completed": r["completed"],
+                "failed":    r["failed"],
+                "cost":      r["cost"] or 0.0,
+            }
+
+        total     = sum(by_status.values())
+        completed = by_status.get("completed", 0)
+        failed    = by_status.get("failed", 0)
+        running   = by_status.get("running", 0)
+
+        pq_stats  = await self.get_production_queue_stats()
+
+        return {
+            "days":             period_days,
+            "total":            total,
+            "completed":        completed,
+            "failed":           failed,
+            "running":          running,
+            "by_status":        by_status,
+            "per_day":          per_day,
+            "per_agent":        per_agent,
+            "production_queue": pq_stats,
+        }
+
+    async def get_chroma_stats(self) -> dict:
+        """Conta le entry nella collection ChromaDB."""
+        if self._chroma_collection is None:
+            return {"available": False, "count": 0}
+        try:
+            count = self._chroma_collection.count()
+            return {"available": True, "count": count}
+        except Exception as exc:
+            return {"available": False, "count": 0, "error": str(exc)}
+
     # ------------------------------------------------------------------
     # Production queue (deduplicazione pipeline)
     # ------------------------------------------------------------------

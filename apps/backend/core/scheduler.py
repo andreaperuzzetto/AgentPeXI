@@ -11,6 +11,7 @@ from typing import Any, Callable, Coroutine
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from apps.backend.core.config import settings
@@ -202,7 +203,7 @@ class Scheduler:
             })
 
     async def _sync_agent_status(self) -> None:
-        """Broadcast stato agenti via WebSocket."""
+        """Broadcast stato agenti + contesto decisionale via WebSocket ogni 30s."""
         if not self.pepe:
             return
 
@@ -216,6 +217,12 @@ class Scheduler:
             "queue_size": queue_size,
             "timestamp": datetime.utcnow().isoformat(),
         })
+
+        # Emetti anche lo stato contestuale — toglierà i valori mock dal pannello
+        # "Contesto decisionale" nel frontend senza dipendere dal confidence gate
+        if hasattr(self.pepe, "get_context_state"):
+            ctx = self.pepe.get_context_state()
+            await self._broadcast(ctx)
 
     # ------------------------------------------------------------------
     # Esecuzione task schedulati da DB
@@ -416,18 +423,17 @@ class Scheduler:
             await self._notify_telegram(f"⚠️ Pipeline: Design fallito per '{niche}': {exc}")
             return
 
-        # 8. Publisher Agent
+        # 8. Staggered publish: schedula i file spalmati nella giornata
         if not self.publisher_agent:
             logger.warning("Publisher agent non disponibile, pipeline interrotta dopo Design")
             await self._notify_telegram(
-                f"✅ Pipeline Design completata per '{niche}': {len(file_paths)} file in pending/.\n"
+                f"✅ Design completato per '{niche}': {len(file_paths)} file in pending/.\n"
                 f"⚠️ Publisher non disponibile — pubblicazione manuale richiesta."
             )
             return
 
-        publish_input = {
+        publish_base = {
             "production_queue_task_id": task_id,
-            "file_paths": file_paths,
             "product_type": "printable_pdf",
             "template": template,
             "niche": niche,
@@ -435,36 +441,155 @@ class Scheduler:
             "keywords": keywords,
             "size": brief.get("size", "A4"),
         }
+        await self._schedule_staggered_publish(
+            file_paths=file_paths,
+            publish_base=publish_base,
+            task_id=task_id,
+            niche=niche,
+            design_cost=cost,
+        )
+
+    # ------------------------------------------------------------------
+    # Staggered publish
+    # ------------------------------------------------------------------
+
+    async def _schedule_staggered_publish(
+        self,
+        file_paths: list[str],
+        publish_base: dict,
+        task_id: str,
+        niche: str,
+        design_cost: float,
+    ) -> None:
+        """Spalma la pubblicazione dei file nell'arco della giornata.
+
+        Finestra: ora + 15 min → 17:30.
+        Se la finestra è < 30 min o c'è un solo file, pubblica tutto subito.
+        Altrimenti divide equamente l'intervallo tra i file.
+        """
+        now = datetime.now()
+        window_start = now + timedelta(minutes=15)
+        window_end = now.replace(hour=17, minute=30, second=0, microsecond=0)
+        window_minutes = max((window_end - window_start).total_seconds() / 60, 0)
+
+        n = len(file_paths)
+        if n == 0:
+            logger.warning("Nessun file da pubblicare per '%s'", niche)
+            return
+
+        if n == 1 or window_minutes < 30:
+            # Batch unico, subito
+            run_time = window_start if window_minutes >= 0 else now + timedelta(minutes=5)
+            self._scheduler.add_job(
+                self._publish_staggered_job,
+                trigger=DateTrigger(run_date=run_time),
+                id=f"pub_{task_id}_0",
+                name=f"Publish 1/1 — {niche[:30]}",
+                replace_existing=True,
+                kwargs={
+                    "file_paths": file_paths,
+                    "publish_base": publish_base,
+                    "niche": niche,
+                    "design_cost": design_cost,
+                    "job_index": 0,
+                    "total_jobs": 1,
+                },
+            )
+            logger.info(
+                "Publish unico schedulato alle %s per '%s' (%d file)",
+                run_time.strftime("%H:%M"), niche, n,
+            )
+            await self._notify_telegram(
+                f"✅ Design completato per '{niche}' ({n} file).\n"
+                f"📅 Pubblicazione in coda alle {run_time.strftime('%H:%M')}."
+            )
+            return
+
+        # Intervallo equo tra i file
+        interval_minutes = window_minutes / (n - 1)
+        run_times: list[datetime] = []
+        for i in range(n):
+            rt = window_start + timedelta(minutes=i * interval_minutes)
+            run_times.append(rt)
+            self._scheduler.add_job(
+                self._publish_staggered_job,
+                trigger=DateTrigger(run_date=rt),
+                id=f"pub_{task_id}_{i}",
+                name=f"Publish {i+1}/{n} — {niche[:30]}",
+                replace_existing=True,
+                kwargs={
+                    "file_paths": [file_paths[i]],
+                    "publish_base": publish_base,
+                    "niche": niche,
+                    "design_cost": design_cost if i == 0 else 0.0,
+                    "job_index": i,
+                    "total_jobs": n,
+                },
+            )
+            logger.info(
+                "Publish %d/%d schedulato alle %s per '%s'",
+                i + 1, n, rt.strftime("%H:%M"), niche,
+            )
+
+        await self._notify_telegram(
+            f"✅ Design completato per '{niche}' ({n} varianti).\n"
+            f"📅 Pubblicazione distribuita: {run_times[0].strftime('%H:%M')} → "
+            f"{run_times[-1].strftime('%H:%M')}."
+        )
+
+    async def _publish_staggered_job(
+        self,
+        file_paths: list[str],
+        publish_base: dict,
+        niche: str,
+        design_cost: float,
+        job_index: int,
+        total_jobs: int,
+    ) -> None:
+        """Eseguito da DateTrigger: pubblica un batch di file tramite Publisher Agent."""
+        if not self.publisher_agent:
+            logger.warning("Publisher agent non disponibile per job staggered %d/%d", job_index + 1, total_jobs)
+            return
 
         from apps.backend.core.models import AgentTask as _AgentTask
 
+        publish_input = {**publish_base, "file_paths": file_paths}
         publish_task = _AgentTask(
             agent_name="publisher",
             input_data=publish_input,
             source="scheduler",
         )
-
         try:
-            publish_result = await self.publisher_agent.execute(publish_task)
-            pub_out = publish_result.output_data or {}
+            result = await self.publisher_agent.execute(publish_task)
+            pub_out = result.output_data or {}
             listings_created = pub_out.get("listings_created", 0)
+            total_cost = design_cost + result.cost_usd
             logger.info(
-                "Pipeline completata: %d listing creati, costo totale $%.4f",
-                listings_created, cost + publish_result.cost_usd,
+                "Publish %d/%d completato: %d listing creati per '%s' (costo $%.4f)",
+                job_index + 1, total_jobs, listings_created, niche, total_cost,
             )
             await self._broadcast({
                 "type": "system_status",
-                "event": "pipeline_completed",
+                "event": "pipeline_publish_completed",
                 "niche": niche,
-                "template": template,
-                "files_count": len(file_paths),
+                "job_index": job_index,
+                "total_jobs": total_jobs,
                 "listings_created": listings_created,
+                "cost_usd": total_cost,
                 "timestamp": datetime.utcnow().isoformat(),
             })
+            if job_index == total_jobs - 1:
+                await self._notify_telegram(
+                    f"🎉 Pipeline completata per '{niche}': tutti i listing pubblicati."
+                )
         except Exception as exc:
-            logger.error("Publisher fallito per '%s': %s", niche, exc)
+            logger.error(
+                "Publish staggered %d/%d fallito per '%s': %s",
+                job_index + 1, total_jobs, niche, exc,
+            )
             await self._notify_telegram(
-                f"❌ Publisher fallito: {exc}. I file sono in pending/ — riprovo domani."
+                f"❌ Publish {job_index + 1}/{total_jobs} fallito per '{niche}': {exc}\n"
+                f"I file sono in pending/ — riprovo domani."
             )
 
     async def _run_analytics(self) -> None:
@@ -488,8 +613,14 @@ class Scheduler:
             await self._notify_telegram(f"⚠️ Analytics giornaliero fallito: {exc}")
 
     async def _pick_niche(self) -> str | None:
-        """Sceglie la prossima nicchia da produrre."""
-        # Prova ChromaDB per insights recenti
+        """Sceglie la prossima nicchia da produrre.
+
+        Deduplicazione a tre livelli:
+        1. production_queue — nicchie pianificate/in-corso/completate negli ultimi 7 giorni
+        2. etsy_listings    — nicchie già pubblicate su Etsy (via is_duplicate_product)
+        3. Fallback pool    — nicchie di default se ChromaDB è vuoto
+        """
+        # 1. Pool nicchie da ChromaDB insights
         niches_pool: list[str] = []
         try:
             insights = await self.memory.query_insights("etsy niche trending", n_results=5)
@@ -503,20 +634,32 @@ class Scheduler:
         if not niches_pool:
             niches_pool = list(self._DEFAULT_NICHES)
 
-        # Filtra nicchie già prodotte negli ultimi 7 giorni
+        # 2. Nicchie recenti in production_queue (ultimi 7 giorni)
         seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
         recent = await self.memory.get_production_queue(status=None, limit=100)
-
-        recent_niches = {
+        blocked_niches: set[str] = {
             item["niche"]
             for item in recent
             if item.get("created_at", "") >= seven_days_ago
             and item.get("status") in ("completed", "in_progress", "planned")
         }
 
+        # 3. Nicchie già pubblicate su Etsy — dedup completo
         for niche in niches_pool:
-            if niche not in recent_niches:
+            if niche in blocked_niches:
+                continue
+            try:
+                if await self.memory.is_duplicate_product(niche, "printable_pdf"):
+                    blocked_niches.add(niche)
+                    logger.debug("Niche '%s' già in etsy_listings, skip", niche)
+            except Exception as exc:
+                logger.debug("Errore check etsy_listings per '%s': %s", niche, exc)
+
+        for niche in niches_pool:
+            if niche not in blocked_niches:
                 return niche
+
+        logger.info("Tutte le nicchie già prodotte o pubblicate su Etsy")
         return None
 
     @staticmethod

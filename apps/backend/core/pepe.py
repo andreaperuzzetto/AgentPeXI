@@ -334,6 +334,12 @@ class Pepe:
         agent = self._agents[agent_name]
         self._agent_status[agent_name] = AgentStatus.RUNNING
 
+        # Notifica frontend che un agente è partito
+        await self._broadcast_context_update(
+            next_action=f"await_{agent_name}_output",
+            trigger="dispatch",
+        )
+
         try:
             result = await agent.execute(task)
         except Exception:
@@ -530,6 +536,76 @@ class Pepe:
                 await self._ws_broadcast(event)
             except Exception:
                 pass
+
+    async def _broadcast_context_update(
+        self,
+        confidence: float | None = None,
+        next_action: str | None = None,
+        trigger: str = "periodic",
+    ) -> None:
+        """Emette un evento context_update con lo stato decisionale corrente.
+
+        Campi:
+          confidence_threshold — soglia dominio (config)
+          confidence_current   — valore rilevato nell'ultimo gate (None se non applicato)
+          strategy             — nome strategia attiva ("research_first")
+          domain               — nome dominio attivo
+          next_action          — azione in corso / prossima
+          retry_policy         — stringa descrittiva policy retry
+          failure_count        — errori recenti negli ultimi 60 min
+          trigger              — causa dell'evento (periodic/dispatch/confidence_gate)
+        """
+        # Conta errori recenti da tutti gli agenti noti
+        failure_count = 0
+        try:
+            for agent_name in self._agents:
+                failure_count += await self.memory.get_agent_error_count(agent_name, hours=1)
+        except Exception:
+            pass
+
+        # Determina next_action dal registro stato agenti
+        if next_action is None:
+            running_agents = [
+                name for name, status in self._agent_status.items()
+                if status.value == "running"
+            ]
+            if running_agents:
+                next_action = f"await_{running_agents[0]}_output"
+            else:
+                next_action = "idle"
+
+        await self._broadcast({
+            "type": "context_update",
+            "confidence_threshold": getattr(self.domain, "confidence_threshold", 0.85),
+            "confidence_current": confidence,
+            "strategy": "research_first",
+            "domain": getattr(self.domain, "name", "etsy_store"),
+            "next_action": next_action,
+            "retry_policy": "max_3 · backoff_2s",
+            "failure_count": failure_count,
+            "trigger": trigger,
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+
+    def get_context_state(self) -> dict:
+        """Snapshot sincrono dello stato contestuale — usato dallo scheduler per _sync_agent_status."""
+        running_agents = [
+            name for name, status in self._agent_status.items()
+            if status.value == "running"
+        ]
+        next_action = f"await_{running_agents[0]}_output" if running_agents else "idle"
+        return {
+            "type": "context_update",
+            "confidence_threshold": getattr(self.domain, "confidence_threshold", 0.85),
+            "confidence_current": None,
+            "strategy": "research_first",
+            "domain": getattr(self.domain, "name", "etsy_store"),
+            "next_action": next_action,
+            "retry_policy": "max_3 · backoff_2s",
+            "failure_count": 0,
+            "trigger": "sync",
+            "timestamp": datetime.utcnow().isoformat(),
+        }
 
     # ------------------------------------------------------------------
     # Clarification loop (Intervento 3)
@@ -895,6 +971,11 @@ class Pepe:
             reply = await self._synthesize_error(agent_name, error_msg, {}, missing_data)
             await self.memory.save_message(session_id, "assistant", reply, source)
             await self._broadcast({"type": "pepe_message", "content": reply, "source": source})
+            await self._broadcast_context_update(
+                confidence=confidence,
+                next_action="error_recovery",
+                trigger="confidence_gate",
+            )
             return reply
 
         # confidence None o >= threshold: procedi autonomamente
@@ -906,6 +987,10 @@ class Pepe:
 
             await self.memory.save_message(session_id, "assistant", final_reply, source)
             await self._broadcast({"type": "pepe_message", "content": final_reply, "source": source})
+            await self._broadcast_context_update(
+                confidence=confidence,
+                trigger="confidence_gate",
+            )
             return final_reply
 
         # confidence >= disclaimer threshold: procedi con disclaimer e proposta
@@ -920,6 +1005,11 @@ class Pepe:
             final_reply += disclaimer
             await self.memory.save_message(session_id, "assistant", final_reply, source)
             await self._broadcast({"type": "pepe_message", "content": final_reply, "source": source})
+            await self._broadcast_context_update(
+                confidence=confidence,
+                next_action="await_user_confirmation",
+                trigger="confidence_gate",
+            )
             return final_reply
 
         # confidence < 0.60: NON procedere, rilancia automaticamente
@@ -937,6 +1027,11 @@ class Pepe:
         )
         await self.memory.save_message(session_id, "assistant", reply, source)
         await self._broadcast({"type": "pepe_message", "content": reply, "source": source})
+        await self._broadcast_context_update(
+            confidence=confidence,
+            next_action="blocked_low_confidence",
+            trigger="confidence_gate",
+        )
         return reply
 
     # ------------------------------------------------------------------
