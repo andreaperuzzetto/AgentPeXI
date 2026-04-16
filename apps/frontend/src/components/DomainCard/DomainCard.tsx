@@ -46,7 +46,7 @@ export function DomainCard() {
               alignItems: 'center',
               justifyContent: 'center',
               fontFamily: 'var(--fd)',
-              fontSize: 9,
+              fontSize: 11,
               color: 'var(--accent)',
               letterSpacing: '0.02em',
               flexShrink: 0,
@@ -61,7 +61,7 @@ export function DomainCard() {
             <div
               style={{
                 fontFamily: 'var(--fh)',
-                fontSize: 14,
+                fontSize: 16,
                 fontWeight: 700,
                 letterSpacing: '0.04em',
                 color: 'var(--tp)',
@@ -73,7 +73,7 @@ export function DomainCard() {
             <div
               style={{
                 fontFamily: 'var(--fd)',
-                fontSize: 10,
+                fontSize: 12,
                 color: 'var(--tf)',
                 marginTop: 2,
               }}
@@ -86,7 +86,7 @@ export function DomainCard() {
           <span
             style={{
               fontFamily: 'var(--fd)',
-              fontSize: 9,
+              fontSize: 11,
               color: 'var(--tf)',
               padding: '2px 8px',
               borderRadius: 99,
@@ -130,7 +130,7 @@ export function DomainCard() {
                   <span
                     style={{
                       fontFamily: 'var(--fd)',
-                      fontSize: 12,
+                      fontSize: 14,
                       color: 'var(--tm)',
                       flex: 1,
                       letterSpacing: '0.02em',
@@ -143,7 +143,7 @@ export function DomainCard() {
                   <span
                     style={{
                       fontFamily: 'var(--fd)',
-                      fontSize: 10,
+                      fontSize: 12,
                       padding: '1px 7px',
                       borderRadius: 99,
                       border: `1px solid ${
@@ -163,7 +163,7 @@ export function DomainCard() {
                   <div
                     style={{
                       fontFamily: 'var(--fd)',
-                      fontSize: 10,
+                      fontSize: 12,
                       color: 'var(--tf)',
                       paddingLeft: 14,
                       overflow: 'hidden',
@@ -194,7 +194,7 @@ export function DomainCard() {
             className="sys-cta-text"
             style={{
               fontFamily: 'var(--fd)',
-              fontSize: 10,
+              fontSize: 12,
               color: 'var(--accent)',
               transition: 'letter-spacing .2s var(--e-out)',
             }}

@@ -34,7 +34,7 @@ export function ListingsPanel() {
         <span
           style={{
             fontFamily: 'var(--fd)',
-            fontSize: 10,
+            fontSize: 12,
             color: 'var(--tf)',
           }}
         >
@@ -59,13 +59,13 @@ export function ListingsPanel() {
               <path d="M5 3h7l4 4v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
               <path d="M12 3v4h4" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
             </svg>
-            <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
+            <span style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tf)' }}>
               Nessun listing nel DB locale
             </span>
             <span
               style={{
                 fontFamily: 'var(--fd)',
-                fontSize: 9,
+                fontSize: 11,
                 color: 'var(--tf)',
                 letterSpacing: '0.05em',
                 padding: '5px 11px',
@@ -110,7 +110,7 @@ export function ListingsPanel() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div
                   style={{
-                    fontSize: 13,
+                    fontSize: 15,
                     fontWeight: 500,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -123,7 +123,7 @@ export function ListingsPanel() {
                 <div
                   style={{
                     fontFamily: 'var(--fd)',
-                    fontSize: 11,
+                    fontSize: 13,
                     color: 'var(--tm)',
                     marginTop: 2,
                   }}
@@ -142,7 +142,7 @@ export function ListingsPanel() {
                   <span
                     style={{
                       fontFamily: 'var(--fd)',
-                      fontSize: 9,
+                      fontSize: 11,
                       color: 'var(--ok)',
                       letterSpacing: '0.04em',
                     }}
@@ -155,7 +155,7 @@ export function ListingsPanel() {
               <div
                 style={{
                   fontFamily: 'var(--fd)',
-                  fontSize: 14,
+                  fontSize: 16,
                   color: 'var(--accent)',
                   fontWeight: 500,
                   flexShrink: 0,

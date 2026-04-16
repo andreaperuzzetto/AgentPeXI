@@ -17,7 +17,7 @@ import { useStore } from './store'
 export default function App() {
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
-  const [sistemiTab, setSistemiTab] = useState<'dominio' | 'tool'>('tool')
+  const [sistemiTab, setSistemiTab] = useState<'dominio' | 'tool'>('dominio')
   const setCostsData = useStore((s) => s.setCostsData)
   const setAnalyticsSummary = useStore((s) => s.setAnalyticsSummary)
   const setChromaStats = useStore((s) => s.setChromaStats)
@@ -71,8 +71,8 @@ export default function App() {
         {/* ── Sidebar chat ── */}
         <aside
           style={{
-            width: chatCollapsed ? 0 : 290,
-            minWidth: chatCollapsed ? 0 : 290,
+            width: chatCollapsed ? 0 : 400,
+            minWidth: chatCollapsed ? 0 : 400,
             flexShrink: 0,
             borderRight: '1px solid var(--b0)',
             display: 'flex',
@@ -159,7 +159,7 @@ export default function App() {
                   onClick={() => setSistemiTab(tab)}
                   style={{
                     flex: 1, height: 32, background: 'none', border: 'none', cursor: 'pointer',
-                    fontFamily: 'var(--fd)', fontSize: 10, letterSpacing: '0.05em',
+                    fontFamily: 'var(--fd)', fontSize: 12, letterSpacing: '0.05em',
                     color: sistemiTab === tab ? 'var(--accent)' : 'var(--tf)',
                     borderBottom: sistemiTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
                     transition: 'color .2s var(--e-io), border-color .2s var(--e-io)',

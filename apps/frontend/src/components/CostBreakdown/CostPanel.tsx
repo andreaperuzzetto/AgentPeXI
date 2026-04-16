@@ -50,7 +50,7 @@ export function CostPanel() {
         <span
           style={{
             fontFamily: 'var(--fh)',
-            fontSize: 9,
+            fontSize: 11,
             fontWeight: 700,
             letterSpacing: '0.08em',
             textTransform: 'uppercase' as const,
@@ -60,7 +60,7 @@ export function CostPanel() {
           Costo oggi
         </span>
         <span
-          style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)' }}
+          style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}
         >
           Budget: {budgetMonthlyUsd ? `$${budgetMonthlyUsd.toFixed(0)}/mese` : '—'}
         </span>
@@ -73,7 +73,7 @@ export function CostPanel() {
           <div
             style={{
               fontFamily: 'var(--fd)',
-              fontSize: 24,
+              fontSize: 26,
               color: 'var(--accent)',
               fontWeight: 500,
             }}
@@ -82,16 +82,16 @@ export function CostPanel() {
           </div>
           {/* .cost-sub */}
           <div
-            style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)', marginTop: 2 }}
+            style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)', marginTop: 2 }}
           >
             Proiezione: ${((dailyCost ?? todayCost) * 30).toFixed(2)}/mese
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)' }}>
+          <div style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>
             Totale progetto
           </div>
-          <div style={{ fontFamily: 'var(--fd)', fontSize: 14, color: 'var(--tm)', marginTop: 1 }}>
+          <div style={{ fontFamily: 'var(--fd)', fontSize: 16, color: 'var(--tm)', marginTop: 1 }}>
             ${totalCost.toFixed(2)}
           </div>
         </div>
@@ -101,7 +101,7 @@ export function CostPanel() {
       <div
         style={{
           fontFamily: 'var(--fd)',
-          fontSize: 9,
+          fontSize: 11,
           color: 'var(--tf)',
           marginTop: 8,
           marginBottom: 4,

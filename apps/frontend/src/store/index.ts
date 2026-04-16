@@ -53,6 +53,7 @@ interface AgentPeXIStore {
   messages: ChatMessage[]
   isTyping: boolean
   addMessage: (msg: ChatMessage) => void
+  markMessageShown: (id: string) => void
   setIsTyping: (v: boolean) => void
 
   /* Agents */
@@ -126,6 +127,8 @@ export const useStore = create<AgentPeXIStore>((set) => ({
   isTyping: false,
   addMessage: (msg) =>
     set((s) => ({ messages: [...s.messages, msg], isTyping: false })),
+  markMessageShown: (id) =>
+    set((s) => ({ messages: s.messages.map((m) => m.id === id ? { ...m, isNew: false } : m) })),
   setIsTyping: (v) => set({ isTyping: v }),
 
   agents: { ...AGENTS_INIT },

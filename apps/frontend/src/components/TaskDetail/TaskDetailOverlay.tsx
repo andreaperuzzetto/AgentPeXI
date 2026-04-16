@@ -80,11 +80,11 @@ export function TaskDetailOverlay() {
           display: 'flex', alignItems: 'center',
           padding: '0 22px', gap: 12,
         }}>
-          <span style={{ fontFamily: 'var(--fh)', fontSize: 15, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--tp)' }}>
+          <span style={{ fontFamily: 'var(--fh)', fontSize: 17, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--tp)' }}>
             Task Detail
           </span>
           <span style={{
-            fontFamily: 'var(--fd)', fontSize: 10,
+            fontFamily: 'var(--fd)', fontSize: 12,
             padding: '2px 9px', borderRadius: 99,
             border: '1px solid var(--b0)', color: 'var(--tf)',
           }}>
@@ -97,7 +97,7 @@ export function TaskDetailOverlay() {
               background: 'none', border: '1px solid var(--b0)',
               borderRadius: 7, padding: '6px 14px',
               color: 'var(--tm)', cursor: 'pointer',
-              fontFamily: 'var(--fb)', fontSize: 13,
+              fontFamily: 'var(--fb)', fontSize: 15,
               transition: 'border-color .25s var(--e-io), color .25s var(--e-io), transform .2s var(--e-spring)',
             }}
             onMouseEnter={(e) => {
@@ -128,7 +128,7 @@ export function TaskDetailOverlay() {
             <div style={{
               padding: '10px 16px', borderBottom: '1px solid var(--b0)', flexShrink: 0,
             }}>
-              <span style={{ fontFamily: 'var(--fh)', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)' }}>
+              <span style={{ fontFamily: 'var(--fh)', fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)' }}>
                 Timeline
               </span>
             </div>
@@ -138,7 +138,7 @@ export function TaskDetailOverlay() {
                   <div key={i} className="td-skeleton" style={{ animationDelay: `${i * 0.1}s` }} />
                 ))
               ) : timeline.length === 0 ? (
-                <div style={{ padding: '24px 16px', textAlign: 'center', fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
+                <div style={{ padding: '24px 16px', textAlign: 'center', fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tf)' }}>
                   Nessun dato per questo task
                 </div>
               ) : (
@@ -154,7 +154,7 @@ export function TaskDetailOverlay() {
             <div style={{
               padding: '10px 16px', borderBottom: '1px solid var(--b0)', flexShrink: 0,
             }}>
-              <span style={{ fontFamily: 'var(--fh)', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)' }}>
+              <span style={{ fontFamily: 'var(--fh)', fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)' }}>
                 LLM Inspector
               </span>
             </div>
@@ -164,7 +164,7 @@ export function TaskDetailOverlay() {
                   <div key={i} className="td-skeleton" style={{ height: 80, animationDelay: `${i * 0.1}s` }} />
                 ))
               ) : llmCalls.length === 0 ? (
-                <div style={{ padding: '24px 0', textAlign: 'center', fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
+                <div style={{ padding: '24px 0', textAlign: 'center', fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tf)' }}>
                   Nessuna chiamata LLM registrata
                 </div>
               ) : (
@@ -184,8 +184,8 @@ export function TaskDetailOverlay() {
                       { l: 'Costo sessione', v: `$${totalCost.toFixed(4)}`, accent: true },
                     ].map((item) => (
                       <div key={item.l} style={{ flex: 1 }}>
-                        <div style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{item.l}</div>
-                        <div style={{ fontFamily: 'var(--fd)', fontSize: 14, color: item.accent ? 'var(--accent)' : 'var(--tp)', fontWeight: 500, marginTop: 2 }}>{item.v}</div>
+                        <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{item.l}</div>
+                        <div style={{ fontFamily: 'var(--fd)', fontSize: 16, color: item.accent ? 'var(--accent)' : 'var(--tp)', fontWeight: 500, marginTop: 2 }}>{item.v}</div>
                       </div>
                     ))}
                   </div>
@@ -224,12 +224,12 @@ function TimelineRow({ evt }: { evt: TimelineEntry }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         {isStep && (
           <>
-            <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tp)' }}>
+            <div style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tp)' }}>
               <span style={{ color: 'rgba(96,165,250,.9)', marginRight: 6 }}>#{evt.step_number}</span>
               {evt.description}
             </div>
             {evt.duration_ms != null && (
-              <div style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)', marginTop: 2 }}>
+              <div style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)', marginTop: 2 }}>
                 {evt.duration_ms}ms · {evt.step_type}
               </div>
             )}
@@ -237,25 +237,25 @@ function TimelineRow({ evt }: { evt: TimelineEntry }) {
         )}
         {isLlm && (
           <>
-            <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tp)' }}>
+            <div style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tp)' }}>
               <span style={{ color: 'var(--warn)', marginRight: 6 }}>{evt.model}</span>
             </div>
-            <div style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)', marginTop: 2 }}>
+            <div style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)', marginTop: 2 }}>
               {fmtTok(evt.input_tokens ?? 0)} in · {fmtTok(evt.output_tokens ?? 0)} out · ${(evt.cost_usd ?? 0).toFixed(4)} · {evt.duration_ms}ms
             </div>
           </>
         )}
         {evt.type === 'tool_call' && (
-          <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tp)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tp)', display: 'flex', alignItems: 'center', gap: 6 }}>
             {evt.tool_name}
-            <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)' }}>· {evt.action}</span>
-            <span className={evt.success ? 'badge-pill badge-pill--done' : 'badge-pill badge-pill--err'} style={{ fontSize: 8 }}>
+            <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>· {evt.action}</span>
+            <span className={evt.success ? 'badge-pill badge-pill--done' : 'badge-pill badge-pill--err'} style={{ fontSize: 10 }}>
               {evt.success ? 'OK' : 'ERR'}
             </span>
           </div>
         )}
       </div>
-      <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)', flexShrink: 0, marginTop: 2 }}>
+      <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', flexShrink: 0, marginTop: 2 }}>
         {new Date(evt.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
       </span>
     </div>
@@ -270,34 +270,34 @@ function LlmCard({ call, maxTokens }: { call: TimelineEntry; maxTokens: number }
     <div className="card" style={{ padding: '12px 14px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <span style={{
-          fontFamily: 'var(--fd)', fontSize: 10,
+          fontFamily: 'var(--fd)', fontSize: 12,
           padding: '2px 8px', borderRadius: 4,
           background: 'var(--s3)', color: 'var(--warn)',
         }}>
           {call.model}
         </span>
-        <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--warn)', fontWeight: 500 }}>
+        <span style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--warn)', fontWeight: 500 }}>
           ${(call.cost_usd ?? 0).toFixed(4)}
         </span>
       </div>
       {/* Token bars */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)', width: 32 }}>IN</span>
+          <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', width: 32 }}>IN</span>
           <div style={{ flex: 1, height: 4, background: 'var(--b0)', borderRadius: 99, overflow: 'hidden' }}>
             <div style={{ width: `${inputPct}%`, height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,var(--accent),rgba(45,232,106,.35))', transition: 'width .6s var(--e-out)' }} />
           </div>
-          <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tm)', width: 40, textAlign: 'right' }}>{fmtTok(call.input_tokens ?? 0)}</span>
+          <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tm)', width: 40, textAlign: 'right' }}>{fmtTok(call.input_tokens ?? 0)}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)', width: 32 }}>OUT</span>
+          <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', width: 32 }}>OUT</span>
           <div style={{ flex: 1, height: 4, background: 'var(--b0)', borderRadius: 99, overflow: 'hidden' }}>
             <div style={{ width: `${outputPct}%`, height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,var(--warn),rgba(240,180,41,.35))', transition: 'width .6s var(--e-out)' }} />
           </div>
-          <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tm)', width: 40, textAlign: 'right' }}>{fmtTok(call.output_tokens ?? 0)}</span>
+          <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tm)', width: 40, textAlign: 'right' }}>{fmtTok(call.output_tokens ?? 0)}</span>
         </div>
       </div>
-      <div style={{ marginTop: 6, fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)' }}>
+      <div style={{ marginTop: 6, fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>
         {call.duration_ms}ms
       </div>
     </div>

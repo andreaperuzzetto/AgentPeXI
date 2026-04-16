@@ -29,7 +29,7 @@ export function ToolEventRow({ evt }: { evt: ToolEventType }) {
       <span
         style={{
           fontFamily: 'var(--fd)',
-          fontSize: 9,
+          fontSize: 11,
           padding: '1px 5px',
           borderRadius: 3,
           background: 'var(--s3)',
@@ -46,14 +46,14 @@ export function ToolEventRow({ evt }: { evt: ToolEventType }) {
         <span
           style={{
             fontFamily: 'var(--fd)',
-            fontSize: 12,
+            fontSize: 14,
             color: 'var(--tp)',
             fontWeight: 500,
           }}
         >
           {evt.tool}
         </span>
-        <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', marginLeft: 4 }}>
+        <span style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tf)', marginLeft: 4 }}>
           · {evt.action}
         </span>
       </div>
@@ -63,7 +63,7 @@ export function ToolEventRow({ evt }: { evt: ToolEventType }) {
         <span
           style={{
             fontFamily: 'var(--fd)',
-            fontSize: 10,
+            fontSize: 12,
             color: 'var(--tf)',
             flexShrink: 0,
           }}
@@ -76,7 +76,7 @@ export function ToolEventRow({ evt }: { evt: ToolEventType }) {
       <span
         style={{
           fontFamily: 'var(--fd)',
-          fontSize: 10,
+          fontSize: 12,
           color: 'var(--tm)',
           flexShrink: 0,
         }}

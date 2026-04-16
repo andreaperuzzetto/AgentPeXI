@@ -25,7 +25,7 @@ export function ChatPanel({ onCollapse }: Props) {
             title="Comprimi"
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
-              color: 'var(--tf)', fontSize: 13, padding: '2px 4px',
+              color: 'var(--tf)', fontSize: 15, padding: '2px 4px',
               lineHeight: 1, borderRadius: 4,
               transition: 'color .2s var(--e-io), transform .2s var(--e-spring)',
             }}
@@ -53,7 +53,7 @@ export function ChatPanel({ onCollapse }: Props) {
             <p
               style={{
                 fontFamily: 'var(--fd)',
-                fontSize: 11,
+                fontSize: 13,
                 color: 'var(--tf)',
                 textAlign: 'center',
                 lineHeight: 1.6,

@@ -24,6 +24,7 @@ function handleMessage(raw: MessageEvent) {
         role: 'pepe',
         content: data.content,
         timestamp: data.timestamp,
+        isNew: true,
       })
       break
 

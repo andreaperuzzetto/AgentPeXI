@@ -30,7 +30,7 @@ export function AgentReasoningCard({ name }: Props) {
         <span
           style={{
             fontFamily: 'var(--fh)',
-            fontSize: 11,
+            fontSize: 13,
             fontWeight: 700,
             letterSpacing: '0.06em',
             textTransform: 'uppercase' as const,
@@ -77,7 +77,7 @@ export function AgentReasoningCard({ name }: Props) {
         <span
           style={{
             fontFamily: 'var(--fh)',
-            fontSize: 12,
+            fontSize: 14,
             fontWeight: 700,
             letterSpacing: '0.04em',
             color: 'var(--tp)',
@@ -106,7 +106,7 @@ export function AgentReasoningCard({ name }: Props) {
         <div
           style={{
             fontFamily: 'var(--fd)',
-            fontSize: 11,
+            fontSize: 13,
             color: 'var(--tm)',
             marginTop: 6,
           }}
@@ -130,7 +130,7 @@ export function AgentReasoningCard({ name }: Props) {
                   alignItems: 'center',
                   gap: 7,
                   fontFamily: 'var(--fd)',
-                  fontSize: 12,
+                  fontSize: 14,
                   padding: '3px 7px',
                   borderRadius: 4,
                   borderLeft: `2px solid ${isLatest ? 'var(--accent)' : 'transparent'}`,
@@ -153,7 +153,7 @@ export function AgentReasoningCard({ name }: Props) {
                     ? step.description.slice(0, 72) + '…'
                     : step.description}
                 </span>
-                <span style={{ color: 'var(--tf)', fontSize: 11, flexShrink: 0 }}>
+                <span style={{ color: 'var(--tf)', fontSize: 13, flexShrink: 0 }}>
                   {step.durationMs > 0 ? `${step.durationMs}ms` : '—'}
                 </span>
               </div>

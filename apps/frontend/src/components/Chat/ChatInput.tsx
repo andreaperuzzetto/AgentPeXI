@@ -1,9 +1,9 @@
-import { useState, useRef, type KeyboardEvent } from 'react'
+import { useState, useRef, useCallback, type KeyboardEvent } from 'react'
 import { useStore } from '../../store'
 
 export function ChatInput() {
   const [value, setValue] = useState('')
-  const inputRef = useRef<HTMLInputElement>(null)
+  const taRef = useRef<HTMLTextAreaElement>(null)
   const wsConnected = useStore((s) => s.wsConnected)
   const wsSend = useStore((s) => s.wsSend)
 
@@ -18,15 +18,23 @@ export function ChatInput() {
       timestamp: new Date().toISOString(),
     })
     setValue('')
-    inputRef.current?.focus()
+    if (taRef.current) {
+      taRef.current.style.height = 'auto'
+      taRef.current.focus()
+    }
   }
 
   const handleKey = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit()
     }
   }
+
+  const autoResize = useCallback((el: HTMLTextAreaElement) => {
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 96)}px`
+  }, [])
 
   const canSend = wsConnected && value.trim().length > 0
 
@@ -41,14 +49,17 @@ export function ChatInput() {
         minWidth: 0,
       }}
     >
-      <input
-        ref={inputRef}
-        type="text"
+      <textarea
+        ref={taRef}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value)
+          autoResize(e.target)
+        }}
         onKeyDown={handleKey}
         placeholder={wsConnected ? 'Scrivi a Pepe…' : 'WebSocket disconnesso'}
         disabled={!wsConnected}
+        rows={1}
         style={{
           flex: 1,
           background: 'var(--s2)',
@@ -59,6 +70,9 @@ export function ChatInput() {
           fontFamily: 'var(--fb)',
           fontSize: 14,
           outline: 'none',
+          resize: 'none',
+          lineHeight: 1.45,
+          maxHeight: 96,
           transition: `border-color .25s var(--e-io), background .25s var(--e-io)`,
         }}
         onFocus={(e) => {

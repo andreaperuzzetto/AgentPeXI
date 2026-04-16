@@ -94,6 +94,7 @@ class TelegramBot:
         add(CommandHandler("resume_agent", self._cmd_resume_agent, filters=self._chat_filter))
         add(CommandHandler("new", self._cmd_new, filters=self._chat_filter))
         add(CommandHandler("mock", self._cmd_mock, filters=self._chat_filter))
+        add(CommandHandler("analytics", self._cmd_analytics, filters=self._chat_filter))
 
         # Messaggi vocali
         add(MessageHandler(self._chat_filter & filters.VOICE, self._handle_voice))
@@ -206,6 +207,28 @@ class TelegramBot:
         await update.message.reply_text(
             "✅ Nuova sessione avviata. La conversazione precedente è stata archiviata."
         )
+
+    async def _cmd_analytics(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/analytics — esegue subito il job analytics (senza aspettare le 08:00)."""
+        await update.message.reply_text("⏳ Avvio analytics manuale...")
+        try:
+            from apps.backend.core.models import AgentTask as _AgentTask
+            task = _AgentTask(
+                agent_name="analytics",
+                input_data={},
+                source="telegram_manual",
+            )
+            result = await self.pepe.dispatch_task(task)
+            out = result.output_data or {}
+            listings_count = len(out.get("listings_analyzed", []))
+            await update.message.reply_text(
+                f"✅ Analytics completato\n"
+                f"Listing analizzati: {listings_count}\n"
+                f"Controlla la dashboard per il report completo."
+            )
+        except Exception as exc:
+            logger.error("Analytics manuale fallito: %s", exc)
+            await update.message.reply_text(f"❌ Analytics fallito: {exc}")
 
     async def _cmd_mock(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/mock [on|off] — attiva o disattiva mock mode Etsy."""

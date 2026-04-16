@@ -9,6 +9,8 @@ interface Schedule {
   next_run?: string | null
   nextRun?: string | null
   agent_name?: string | null
+  status?: string | null
+  last_run?: string | null
 }
 
 /* Extract HH:MM from next_run ISO or cron expression */
@@ -29,21 +31,21 @@ function formatTime(s: Schedule): string {
   return m ? m[1] : cron.slice(0, 5) || '—'
 }
 
-function tagStyle(enabled: boolean): { bg: string; color: string; border: string; label: string } {
-  if (enabled) {
-    return {
-      bg:     'rgba(45,232,106,.06)',
-      color:  'var(--accent)',
-      border: '1px solid rgba(45,232,106,.2)',
-      label:  'ORA',
-    }
+function tagStyle(status?: string | null, enabled?: boolean): { bg: string; color: string; border: string; label: string } {
+  const s = (status ?? '').toUpperCase()
+  if (s === 'IN ESECUZIONE' || s === 'RUNNING') {
+    return { bg: 'rgba(45,232,106,.10)', color: 'var(--accent)', border: '1px solid rgba(45,232,106,.3)', label: 'IN ESECUZIONE' }
   }
-  return {
-    bg:     'var(--s2)',
-    color:  'var(--tf)',
-    border: '1px solid var(--b0)',
-    label:  'SCHED',
+  if (s === 'COMPLETATO' || s === 'COMPLETED') {
+    return { bg: 'rgba(45,232,106,.05)', color: 'var(--ok)', border: '1px solid rgba(45,232,106,.15)', label: 'COMPLETATO' }
   }
+  if (s === 'ERRORE' || s === 'ERROR') {
+    return { bg: 'rgba(224,82,82,.08)', color: 'var(--err)', border: '1px solid rgba(224,82,82,.2)', label: 'ERRORE' }
+  }
+  if (enabled === false || enabled === undefined) {
+    return { bg: 'var(--s2)', color: 'var(--tf)', border: '1px solid var(--b0)', label: 'OFF' }
+  }
+  return { bg: 'rgba(45,232,106,.04)', color: 'var(--tm)', border: '1px solid rgba(45,232,106,.12)', label: 'PROGRAMMATO' }
 }
 
 export function SchedulerPanel() {
@@ -75,7 +77,7 @@ export function SchedulerPanel() {
         <span
           style={{
             fontFamily: 'var(--fh)',
-            fontSize: 9,
+            fontSize: 11,
             fontWeight: 700,
             letterSpacing: '0.08em',
             textTransform: 'uppercase' as const,
@@ -92,7 +94,7 @@ export function SchedulerPanel() {
             <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.2" />
             <path d="M10 6v4.5l3 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
+          <span style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tf)' }}>
             Nessun job schedulato
           </span>
         </div>
@@ -100,8 +102,9 @@ export function SchedulerPanel() {
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 13px' }}>
           {schedules.map((t) => {
             const isEnabled = Boolean(t.enabled)
-            const ts = tagStyle(isEnabled)
+            const ts = tagStyle(t.status, isEnabled)
             const label = t.agent_name ? `${t.agent_name} · ${t.name}` : t.name
+            const lastRunStr = t.last_run ? new Date(t.last_run).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : null
             return (
               <SchedRow
                 key={t.id}
@@ -112,6 +115,7 @@ export function SchedulerPanel() {
                 tagColor={ts.color}
                 tagBorder={ts.border}
                 labelColor={isEnabled ? 'var(--tp)' : 'var(--tm)'}
+                lastRun={lastRunStr}
               />
             )
           })}
@@ -129,6 +133,7 @@ function SchedRow({
   tagColor,
   tagBorder,
   labelColor = 'var(--tm)',
+  lastRun,
 }: {
   time: string
   label: string
@@ -137,6 +142,7 @@ function SchedRow({
   tagColor: string
   tagBorder: string
   labelColor?: string
+  lastRun?: string | null
 }) {
   return (
     <div
@@ -145,7 +151,7 @@ function SchedRow({
         alignItems: 'center',
         gap: 8,
         padding: '4px 3px',
-        fontSize: 12,
+        fontSize: 14,
         borderRadius: 4,
         transition: 'background .2s var(--e-io)',
       }}
@@ -156,7 +162,7 @@ function SchedRow({
       <span
         style={{
           fontFamily: 'var(--fd)',
-          fontSize: 10,
+          fontSize: 12,
           color: 'var(--tm)',
           width: 36,
           flexShrink: 0,
@@ -165,12 +171,15 @@ function SchedRow({
         {time}
       </span>
       {/* .sched-label */}
-      <span style={{ color: labelColor, flex: 1, fontSize: 12 }}>{label}</span>
+      <span style={{ color: labelColor, flex: 1, fontSize: 14 }}>
+        {label}
+        {lastRun && <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', marginLeft: 6 }}>ultimo {lastRun}</span>}
+      </span>
       {/* .sched-tag */}
       <span
         style={{
           fontFamily: 'var(--fd)',
-          fontSize: 9,
+          fontSize: 11,
           padding: '1px 6px',
           borderRadius: 4,
           flexShrink: 0,

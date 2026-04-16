@@ -18,6 +18,39 @@ from apps.backend.agents.base import AgentBase
 
 logger = logging.getLogger("agentpexi.pepe")
 
+# ------------------------------------------------------------------
+# Tool definition per delega agenti (Anthropic tool_use)
+# ------------------------------------------------------------------
+
+DELEGATION_TOOL = {
+    "name": "delegate_to_agent",
+    "description": (
+        "Delega un task a un agente specializzato. "
+        "Usalo SEMPRE quando l'utente chiede di creare prodotti, fare ricerca di mercato, "
+        "pubblicare listing, analizzare performance o generare report finanziari. "
+        "NON rispondere in prosa descrivendo cosa faresti — delega direttamente."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "delegate": {
+                "type": "string",
+                "enum": ["research", "design", "publisher", "analytics", "finance"],
+                "description": "Nome dell'agente a cui delegare il task.",
+            },
+            "input": {
+                "type": "object",
+                "description": "Parametri per l'agente. Per research: {niches: [...], product_type: '...'}. Per design: {niche, product_type, research_context}. Per analytics/finance: {}.",
+            },
+            "task_type": {
+                "type": "string",
+                "description": "Tipo di task (es: niche_research, create_listing, full_pipeline, analytics_report).",
+            },
+        },
+        "required": ["delegate", "input"],
+    },
+}
+
 
 
 
@@ -207,17 +240,23 @@ class Pepe:
             recent_analytics=analytics_summary,
         )
 
-        # Prima chiamata LLM — decide se delegare o rispondere
+        # Prima chiamata LLM — decide se delegare (tool_use) o rispondere in testo
         response = await self.client.messages.create(
             model=MODEL_SONNET,
             system=system,
             messages=history,
             max_tokens=2048,
+            tools=[DELEGATION_TOOL],
         )
-        reply_text = response.content[0].text if response.content else ""
 
-        # Controlla se Pepe vuole delegare
-        delegation = self._parse_delegation(reply_text)
+        # Estrai delega (tool_use) e/o testo dalla risposta
+        delegation = None
+        reply_text = ""
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "delegate_to_agent":
+                delegation = block.input  # già dict strutturato
+            elif hasattr(block, "text"):
+                reply_text += block.text
 
         if delegation:
             agent_name = delegation["delegate"]
@@ -508,41 +547,6 @@ class Pepe:
             return response.content[0].text if response.content else "Task completato."
         except Exception:
             return f"✅ Agente {agent_name} completato. Controlla la dashboard per i dettagli."
-
-    @staticmethod
-    def _parse_delegation(text: str) -> dict | None:
-        """Cerca un blocco JSON di delega nella risposta di Pepe."""
-        import re
-
-        # Prima prova con blocco code markdown ```json ... ```
-        code_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
-        if code_match:
-            try:
-                data = json.loads(code_match.group(1))
-                if "delegate" in data:
-                    return data
-            except json.JSONDecodeError:
-                pass
-
-        # Poi cerca JSON raw contando le graffe (gestisce nesting correttamente)
-        for i, char in enumerate(text):
-            if char == "{":
-                depth = 0
-                for j, c in enumerate(text[i:], i):
-                    if c == "{":
-                        depth += 1
-                    elif c == "}":
-                        depth -= 1
-                        if depth == 0:
-                            candidate = text[i : j + 1]
-                            try:
-                                data = json.loads(candidate)
-                                if "delegate" in data:
-                                    return data
-                            except json.JSONDecodeError:
-                                break
-
-        return None
 
     async def _broadcast(self, event: dict) -> None:
         """Invia evento WebSocket se broadcaster disponibile."""
@@ -1100,7 +1104,8 @@ class Pepe:
     ) -> None:
         """Dopo un risultato con confidence >= 0.85, avanza la pipeline autonomamente.
 
-        Research completato → propone Design.
+        Research completato → nessuna azione (Pepe propone Design nella risposta).
+        Design completato → auto-trigger Publisher se file_paths disponibili.
         Analytics completato → triggera learning loop.
         """
         output = result.output_data or {}
@@ -1110,10 +1115,116 @@ class Pepe:
             await self._handle_learning_loop(output)
             return
 
-        # Per research in pipeline automatica (source = "scheduler")
-        # Non triggerare automaticamente se la richiesta è venuta da Andrea
-        # (source = "web" o "telegram") — in quel caso aspetta conferma
-        # La pipeline automatica è gestita dallo scheduler
+        if agent_name == "design":
+            file_paths = output.get("file_paths", [])
+            if not file_paths:
+                logger.info("Design completato senza file_paths, publisher non triggerato")
+                return
+
+            # Recupera contesto necessario per Publisher dall'input del task originale
+            publisher_input = {
+                "file_paths": file_paths,
+                "product_type": output.get("product_type", "printable_pdf"),
+                "template": output.get("template", ""),
+                "niche": output.get("niche", ""),
+                "color_schemes": output.get("color_schemes", []),
+                "keywords": output.get("keywords", []),
+                "size": output.get("size", "A4"),
+                "production_queue_task_id": output.get("production_queue_task_id"),
+            }
+
+            publish_task = AgentTask(
+                agent_name="publisher",
+                input_data=publisher_input,
+                source="pipeline_auto",
+            )
+            logger.info(
+                "Design completato (%d file) → auto-trigger Publisher",
+                len(file_paths),
+            )
+            # Fire-and-forget: non blocca la risposta a Andrea
+            asyncio.create_task(self._run_publisher_auto(publish_task, session_id))
+            return
+
+        if agent_name == "research" and result.status == TaskStatus.COMPLETED:
+            # Research → Design: auto-trigger se ci sono dati di ricerca
+            research_output = output
+            niches = research_output.get("niches", [])
+            if not niches:
+                # Prova a usare l'output come contesto diretto
+                niche = research_output.get("niche", research_output.get("query", ""))
+                if niche:
+                    niches = [{"niche": niche, "product_type": research_output.get("product_type", "printable_pdf")}]
+
+            if niches:
+                # Prendi la prima nicchia per il design
+                first = niches[0] if isinstance(niches[0], dict) else {"niche": niches[0]}
+                design_input = {
+                    "niche": first.get("niche", ""),
+                    "product_type": first.get("product_type", "printable_pdf"),
+                    "research_context": research_output,
+                    "keywords": research_output.get("keywords", []),
+                    "color_schemes": first.get("color_schemes", []),
+                }
+                design_task = AgentTask(
+                    agent_name="design",
+                    input_data=design_input,
+                    source="pipeline_auto",
+                )
+                logger.info(
+                    "Research completato → auto-trigger Design per nicchia '%s'",
+                    first.get("niche", "?"),
+                )
+                asyncio.create_task(self._run_design_auto(design_task, session_id))
+            return
+
+    async def _run_design_auto(self, task: AgentTask, session_id: str) -> None:
+        """Esegue il design in background dopo research, notifica via WS."""
+        try:
+            msg = f"🎨 Design Agent avviato automaticamente per '{task.input_data.get('niche', '?')}'..."
+            await self._broadcast({"type": "pepe_message", "content": msg, "source": "pipeline_auto"})
+            result = await self._enqueue_and_wait(task)
+            if result.status == TaskStatus.COMPLETED:
+                output = result.output_data or {}
+                n_files = len(output.get("file_paths", []))
+                msg = f"✅ Design completato: {n_files} file generati."
+                await self.memory.save_message(session_id, "assistant", msg, "pipeline_auto")
+                await self._broadcast({"type": "pepe_message", "content": msg, "source": "pipeline_auto"})
+                # _advance_pipeline_if_autonomous gestirà Design → Publisher
+                await self._advance_pipeline_if_autonomous("design", result, session_id)
+            else:
+                error = (result.output_data or {}).get("error", "Errore sconosciuto")
+                msg = f"❌ Design fallito: {error}"
+                await self.memory.save_message(session_id, "assistant", msg, "pipeline_auto")
+                await self._broadcast({"type": "pepe_message", "content": msg, "source": "pipeline_auto"})
+        except Exception as exc:
+            logger.error("Design auto fallito: %s", exc)
+            await self._broadcast({
+                "type": "pepe_message",
+                "content": f"❌ Design auto fallito: {exc}",
+                "source": "pipeline_auto",
+            })
+
+    async def _run_publisher_auto(self, task: AgentTask, session_id: str) -> None:
+        """Esegue il publisher in background dopo il design, notifica via WS."""
+        try:
+            result = await self._enqueue_and_wait(task)
+            output = result.output_data or {}
+            n = output.get("listings_created", 0)
+            msg = (
+                f"✅ Publisher completato automaticamente: {n} listing creati su Etsy."
+                if n > 0
+                else "⚠️ Publisher completato ma nessun listing creato. Controlla i log."
+            )
+            await self.memory.save_message(session_id, "assistant", msg, "pipeline_auto")
+            await self._broadcast({"type": "pepe_message", "content": msg, "source": "pipeline_auto"})
+        except Exception as exc:
+            logger.error("Publisher auto fallito: %s", exc)
+            await self._broadcast({
+                "type": "pepe_message",
+                "content": f"❌ Publisher auto fallito: {exc}",
+                "source": "pipeline_auto",
+            })
 
     # ------------------------------------------------------------------
     # Learning loop (Intervento 9)

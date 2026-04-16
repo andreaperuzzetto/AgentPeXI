@@ -17,7 +17,6 @@ export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
   // AgentStatusValue = 'idle' | 'running' | 'error' — 'done' is never set; idle = completed for display
   const allStatuses = Object.values(agents).map((a) => a?.status ?? 'idle')
   const running  = allStatuses.filter((s) => s === 'running').length
-  const errors   = allStatuses.filter((s) => s === 'error').length
 
   const pipelineTotal = summary?.total ?? 0
   const completedTotal = summary?.completed ?? 0
@@ -28,7 +27,7 @@ export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
     { label: 'Pipeline', value: pipelineTotal,   sub: running > 0 ? `${running} in corso` : '—',              accent: running > 0 },
     { label: 'Successi', value: completedTotal,   sub: pipelineTotal > 0 ? `${successPct}%` : '—',            accent: true },
     { label: 'Failures', value: failedTotal,      sub: pipelineTotal > 0 ? `${((failedTotal / pipelineTotal) * 100).toFixed(1)}%` : '0%', err: true },
-    { label: 'Listing',  value: summary?.production_queue?.completed ?? 0, sub: 'pubblicati',               faint: true },
+    { label: 'Design',   value: summary?.production_queue?.completed ?? 0, sub: 'completati',              faint: true },
   ]
 
   return (
@@ -44,7 +43,7 @@ export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
       }}>
         <span style={{
           fontFamily: 'var(--fh)',
-          fontSize: 9,
+          fontSize: 11,
           fontWeight: 700,
           letterSpacing: '0.08em',
           textTransform: 'uppercase' as const,
@@ -56,7 +55,7 @@ export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
           style={{
             fontFamily: 'var(--fh)',
             fontWeight: 700,
-            fontSize: 9,
+            fontSize: 11,
             letterSpacing: '0.05em',
             textTransform: 'uppercase' as const,
             background: 'none',
@@ -114,19 +113,19 @@ export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
               el.style.transform = 'none'
             }}
           >
-            <div style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)', letterSpacing: '0.03em', textTransform: 'uppercase' as const }}>
+            <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', letterSpacing: '0.03em', textTransform: 'uppercase' as const }}>
               {item.label}
             </div>
             <div style={{
               fontFamily: 'var(--fd)',
-              fontSize: 20,
+              fontSize: 22,
               fontWeight: 500,
               marginTop: 3,
               color: item.err ? 'var(--err)' : item.faint ? 'var(--tf)' : item.accent ? 'var(--accent)' : 'var(--tp)',
             }}>
               {item.value}
             </div>
-            <div style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)', marginTop: 1 }}>
+            <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', marginTop: 1 }}>
               {item.sub}
             </div>
           </div>

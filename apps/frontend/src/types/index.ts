@@ -31,6 +31,7 @@ export interface SystemStatus {
   type: 'system_status'
   queue_size: number
   active_tasks: number
+  mock_mode?: boolean
 }
 
 export interface ToolCallEvent {
@@ -116,6 +117,7 @@ export interface ChatMessage {
   role: 'user' | 'pepe' | 'system'
   content: string
   timestamp: string
+  isNew?: boolean
 }
 
 export type AgentStatusValue = 'idle' | 'running' | 'error'

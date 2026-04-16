@@ -1,4 +1,9 @@
+import { useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { ChatMessage as ChatMessageType } from '../../types'
+import { useTypewriter } from '../../hooks/useTypewriter'
+import { useStore } from '../../store'
 
 export function ChatMessage({ msg }: { msg: ChatMessageType }) {
   if (msg.role === 'system') {
@@ -7,7 +12,7 @@ export function ChatMessage({ msg }: { msg: ChatMessageType }) {
         style={{
           padding: '3px 0',
           fontFamily: 'var(--fd)',
-          fontSize: 10,
+          fontSize: 12,
           color: 'var(--tf)',
           letterSpacing: '0.03em',
         }}
@@ -18,6 +23,16 @@ export function ChatMessage({ msg }: { msg: ChatMessageType }) {
   }
 
   const isUser = msg.role === 'user'
+  const isPepe = msg.role === 'pepe'
+  const typing = isPepe && !!msg.isNew
+  const displayed = useTypewriter(msg.content, typing)
+  const markMessageShown = useStore((s) => s.markMessageShown)
+
+  useEffect(() => {
+    if (typing && displayed === msg.content) {
+      markMessageShown(msg.id)
+    }
+  }, [typing, displayed, msg.content, msg.id, markMessageShown])
 
   return (
     <div
@@ -28,7 +43,7 @@ export function ChatMessage({ msg }: { msg: ChatMessageType }) {
       <span
         style={{
           fontFamily: 'var(--fd)',
-          fontSize: 9,
+          fontSize: 11,
           letterSpacing: '0.06em',
           textTransform: 'uppercase' as const,
           color: isUser ? 'var(--tm)' : 'var(--accent)',
@@ -39,6 +54,7 @@ export function ChatMessage({ msg }: { msg: ChatMessageType }) {
 
       {/* Bubble — asymmetric border-radius like prototype */}
       <div
+        className={isUser ? undefined : 'chat-md'}
         style={{
           padding: '8px 11px',
           borderRadius: isUser ? '9px 3px 9px 9px' : '3px 9px 9px 9px',
@@ -49,19 +65,21 @@ export function ChatMessage({ msg }: { msg: ChatMessageType }) {
             ? '1px solid rgba(45,232,106,.13)'
             : '1px solid var(--b0)',
           color: 'var(--tp)',
-          whiteSpace: 'pre-wrap' as const,
           alignSelf: isUser ? 'flex-end' : 'flex-start',
           maxWidth: '92%',
+          ...(isUser ? { whiteSpace: 'pre-wrap' as const } : {}),
         }}
       >
-        {msg.content}
+        {isUser ? msg.content : (
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayed}</ReactMarkdown>
+        )}
       </div>
 
       {/* Timestamp */}
       <span
         style={{
           fontFamily: 'var(--fd)',
-          fontSize: 9,
+          fontSize: 11,
           color: 'var(--tf)',
           alignSelf: isUser ? 'flex-end' : 'flex-start',
           marginTop: 1,

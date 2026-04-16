@@ -49,7 +49,6 @@ export function ReasoningPanel() {
   const agents      = useStore((s) => s.agents)
   const allSteps    = useStore((s) => s.agentSteps)
   const setSelectedTaskId = useStore((s) => s.setSelectedTaskId)
-  const sysStatus   = useStore((s) => s.systemStatus)
   const llmStats    = useStore((s) => s.llmStats)
   const contextState = useStore((s) => s.contextState)
   const chromaStats  = useStore((s) => s.chromaStats)
@@ -83,11 +82,11 @@ export function ReasoningPanel() {
         display: 'flex', alignItems: 'center', gap: 9,
       }}>
         <span className={`status-dot ${activeCount > 0 ? 'status-dot--running' : 'status-dot--off'}`} />
-        <span style={{ fontFamily: 'var(--fh)', fontSize: 13, fontWeight: 800, letterSpacing: '0.04em', color: 'var(--accent)' }}>
+        <span style={{ fontFamily: 'var(--fh)', fontSize: 15, fontWeight: 800, letterSpacing: '0.04em', color: 'var(--accent)' }}>
           Pepe
         </span>
         {activeCount > 0 && <span className="badge-pill badge-pill--run">RUNNING</span>}
-        <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tm)', marginLeft: 'auto' }}>
+        <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tm)', marginLeft: 'auto' }}>
           Orchestratore{activeCount > 0 ? ` · ${activeCount} attivi` : ''}
         </span>
       </div>
@@ -100,10 +99,10 @@ export function ReasoningPanel() {
         <div className="card card--active" style={{ padding: '13px 14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <span className="status-dot status-dot--running" />
-            <span style={{ fontFamily: 'var(--fh)', fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--tp)', flex: 1 }}>
+            <span style={{ fontFamily: 'var(--fh)', fontSize: 14, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--tp)', flex: 1 }}>
               Pipeline attiva
             </span>
-            <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tm)' }}>
+            <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tm)' }}>
               {(() => {
                 if (!connectedAt) return '—'
                 const diff = Date.now() - connectedAt
@@ -114,7 +113,7 @@ export function ReasoningPanel() {
               })()}
             </span>
           </div>
-          <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tm)', marginTop: 6 }}>
+          <div style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tm)', marginTop: 6 }}>
             → {agents[runningAgent]?.lastTask || 'In attesa task…'}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 9 }}>
@@ -129,11 +128,11 @@ export function ReasoningPanel() {
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isLatest ? 'var(--tp)' : 'var(--tm)' }}>
                     {step.desc}
                   </span>
-                  <span style={{ color: 'var(--tf)', fontSize: 11, flexShrink: 0 }}>{step.dur}</span>
+                  <span style={{ color: 'var(--tf)', fontSize: 13, flexShrink: 0 }}>{step.dur}</span>
                 </div>
               )
             }) : (
-              <div style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)', padding: '4px 0' }}>
+              <div style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)', padding: '4px 0' }}>
                 Nessun step attivo
               </div>
             )}
@@ -146,11 +145,11 @@ export function ReasoningPanel() {
         <div className="card" style={{ padding: '13px 14px', opacity: 0.5 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <span className="status-dot status-dot--off" />
-            <span style={{ fontFamily: 'var(--fh)', fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--tm)', flex: 1 }}>
+            <span style={{ fontFamily: 'var(--fh)', fontSize: 14, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--tm)', flex: 1 }}>
               Pipeline offline
             </span>
           </div>
-          <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', marginTop: 6 }}>
+          <div style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tf)', marginTop: 6 }}>
             Sistema disconnesso — in attesa di connessione
           </div>
         </div>
@@ -158,7 +157,7 @@ export function ReasoningPanel() {
 
         {/* ② Flusso pipeline */}
         <div className="card" style={{ padding: '12px 14px' }}>
-          <div style={{ fontFamily: 'var(--fh)', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)', marginBottom: 14 }}>
+          <div style={{ fontFamily: 'var(--fh)', fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)', marginBottom: 14 }}>
             Flusso pipeline
           </div>
           <div className="flow-row">
@@ -189,7 +188,7 @@ export function ReasoningPanel() {
 
         {/* ③ Token & Costo */}
         <div className="card" style={{ padding: '12px 14px' }}>
-          <div style={{ fontFamily: 'var(--fh)', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)', marginBottom: 9 }}>
+          <div style={{ fontFamily: 'var(--fh)', fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)', marginBottom: 9 }}>
             Token &amp; Costo — pipeline corrente
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
@@ -199,9 +198,9 @@ export function ReasoningPanel() {
               { lbl: 'Costo',      val: `$${llmStats.runCost.toFixed(3)}`, sub: 'questa run', accent: true },
             ].map((item) => (
               <div key={item.lbl} className="tok-item">
-                <div style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)', letterSpacing: '0.03em', textTransform: 'uppercase' }}>{item.lbl}</div>
-                <div style={{ fontFamily: 'var(--fd)', fontSize: 14, color: item.accent ? 'var(--accent)' : 'var(--tp)', marginTop: 3, fontWeight: 500 }}>{item.val}</div>
-                <div style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)', marginTop: 1 }}>{item.sub}</div>
+                <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', letterSpacing: '0.03em', textTransform: 'uppercase' }}>{item.lbl}</div>
+                <div style={{ fontFamily: 'var(--fd)', fontSize: 16, color: item.accent ? 'var(--accent)' : 'var(--tp)', marginTop: 3, fontWeight: 500 }}>{item.val}</div>
+                <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', marginTop: 1 }}>{item.sub}</div>
               </div>
             ))}
           </div>
@@ -224,8 +223,8 @@ export function ReasoningPanel() {
               ].map((bar, bi) => (
                 <div key={bar.label} style={{ marginBottom: bi === 0 ? 8 : 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', marginBottom: 5 }}>
-                    <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)', flex: 1 }}>{bar.label}</span>
-                    <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: bar.rColor }}>{bar.right}</span>
+                    <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', flex: 1 }}>{bar.label}</span>
+                    <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: bar.rColor }}>{bar.right}</span>
                   </div>
                   <div style={{ height: 3, background: 'var(--b0)', borderRadius: 99, overflow: 'hidden' }}>
                     <div style={{ width: `${bar.pct}%`, height: '100%', borderRadius: 99, background: bar.grad, transition: 'width .8s var(--e-out)' }} />
@@ -238,7 +237,7 @@ export function ReasoningPanel() {
 
         {/* ④ Contesto decisionale */}
         <div className="card" style={{ padding: '12px 14px' }}>
-          <div style={{ fontFamily: 'var(--fh)', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)', marginBottom: 8 }}>
+          <div style={{ fontFamily: 'var(--fh)', fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)', marginBottom: 8 }}>
             Contesto decisionale
           </div>
           {(() => {
@@ -260,8 +259,8 @@ export function ReasoningPanel() {
             ]
             return rows.map((row, i) => (
               <div key={i} className="ctx-row">
-                <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tm)' }}>{row.l}</span>
-                <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: row.vc }}>{row.v}</span>
+                <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tm)' }}>{row.l}</span>
+                <span style={{ fontFamily: 'var(--fd)', fontSize: 13, color: row.vc }}>{row.v}</span>
               </div>
             ))
           })()}
@@ -269,7 +268,7 @@ export function ReasoningPanel() {
 
         {/* ⑤ Coda task */}
         <div className="card" style={{ padding: '12px 14px' }}>
-          <div style={{ fontFamily: 'var(--fh)', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)', marginBottom: 9 }}>
+          <div style={{ fontFamily: 'var(--fh)', fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)', marginBottom: 9 }}>
             Coda task
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -290,10 +289,10 @@ export function ReasoningPanel() {
                 }}
                 >
                   <span className={`status-dot ${isRun ? 'status-dot--running' : 'status-dot--off'}`} />
-                  <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: isRun ? 'var(--tp)' : 'var(--tm)', flex: 1 }}>
+                  <span style={{ fontFamily: 'var(--fd)', fontSize: 13, color: isRun ? 'var(--tp)' : 'var(--tm)', flex: 1 }}>
                     {row.name} · {row.task}
                   </span>
-                  <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: isRun ? 'var(--accent)' : 'var(--tf)' }}>
+                  <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: isRun ? 'var(--accent)' : 'var(--tf)' }}>
                     {isRun ? 'RUNNING' : 'QUEUED'}
                   </span>
                 </div>

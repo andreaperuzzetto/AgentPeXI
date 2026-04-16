@@ -85,7 +85,7 @@ export function SystemOverlay() {
                 cursor: 'pointer',
                 color: 'var(--tm)',
                 fontFamily: 'var(--fb)',
-                fontSize: 13,
+                fontSize: 15,
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
@@ -123,7 +123,7 @@ export function SystemOverlay() {
           <span
             style={{
               fontFamily: 'var(--fh)',
-              fontSize: 18,
+              fontSize: 20,
               fontWeight: 800,
               letterSpacing: '0.03em',
               color: 'var(--tp)',
@@ -134,7 +134,7 @@ export function SystemOverlay() {
           <span
             style={{
               fontFamily: 'var(--fd)',
-              fontSize: 10,
+              fontSize: 12,
               color: 'var(--tf)',
               padding: '2px 9px',
               borderRadius: 99,
@@ -156,7 +156,7 @@ export function SystemOverlay() {
               color: 'var(--tm)',
               cursor: 'pointer',
               fontFamily: 'var(--fb)',
-              fontSize: 13,
+              fontSize: 15,
               transition: 'border-color .25s var(--e-io), color .25s var(--e-io), transform .2s var(--e-spring)',
             }}
             onMouseEnter={(e) => {

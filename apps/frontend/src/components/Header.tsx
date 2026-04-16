@@ -23,7 +23,7 @@ export function Header() {
         style={{
           fontFamily: 'var(--fh)',
           fontWeight: 800,
-          fontSize: 16,
+          fontSize: 18,
           letterSpacing: '-0.02em',
           color: 'var(--accent)',
         }}
@@ -31,29 +31,36 @@ export function Header() {
         AgentPeXI
       </span>
 
-      {/* Connection status */}
-      <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+      {/* Status pill */}
+      <span style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        background: 'var(--s2)',
+        border: '1px solid var(--b0)',
+        borderRadius: 99,
+        padding: '3px 10px 3px 8px',
+        transition: 'background .3s var(--e-io)',
+      }}>
         <span className={wsConnected ? 'live-dot' : 'status-dot status-dot--err'} />
-        <span style={{ fontFamily: 'var(--fb)', fontSize: 13, color: 'var(--tm)' }}>
+        <span style={{ fontFamily: 'var(--fb)', fontSize: 11, color: 'var(--tm)', lineHeight: 1 }}>
           {wsConnected ? 'Connesso' : 'Disconnesso'}
         </span>
+        {mockMode && (
+          <>
+            <span style={{ width: 1, height: 10, background: 'var(--b0)', margin: '0 2px' }} />
+            <span style={{
+              fontFamily: 'var(--fd)',
+              fontSize: 9,
+              letterSpacing: '0.08em',
+              color: 'var(--warn)',
+              lineHeight: 1,
+            }}>
+              MOCK
+            </span>
+          </>
+        )}
       </span>
-
-      {/* Mock mode badge */}
-      {mockMode && (
-        <span style={{
-          fontFamily: 'var(--fd)',
-          fontSize: 9,
-          letterSpacing: '0.08em',
-          color: 'var(--warn)',
-          border: '1px solid rgba(240,180,41,.35)',
-          borderRadius: 4,
-          padding: '2px 8px',
-          animation: 'pulse 2.4s var(--e-io) infinite',
-        }}>
-          MOCK
-        </span>
-      )}
 
       {/* Spacer */}
       <span style={{ flex: 1 }} />
@@ -81,7 +88,7 @@ function MetricChip({
       <span
         style={{
           fontFamily: 'var(--fd)',
-          fontSize: 11,
+          fontSize: 13,
           color: 'var(--tf)',
           letterSpacing: '0.03em',
         }}
@@ -91,7 +98,7 @@ function MetricChip({
       <span
         className="font-data"
         style={{
-          fontSize: 13,
+          fontSize: 15,
           color: accent ? 'var(--accent)' : 'var(--tp)',
         }}
       >

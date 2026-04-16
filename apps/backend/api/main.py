@@ -5,8 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import logging.handlers
+import os
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -17,7 +21,37 @@ from apps.backend.core.config import settings
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentTask
 
+# ------------------------------------------------------------------
+# Logging — console + file rotante in logs/
+# ------------------------------------------------------------------
+
+_LOG_DIR = Path(__file__).resolve().parents[3] / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.StreamHandler(),
+        logging.handlers.RotatingFileHandler(
+            _LOG_DIR / "agentpexi.log",
+            maxBytes=5 * 1024 * 1024,  # 5 MB
+            backupCount=5,
+            encoding="utf-8",
+        ),
+    ],
+)
+
+# Silence noisy loggers
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
 logger = logging.getLogger("agentpexi.api")
+
+
+def crypto_random_id() -> str:
+    return str(uuid.uuid4())
 
 # ------------------------------------------------------------------
 # WebSocket connection manager
@@ -64,6 +98,7 @@ memory: MemoryManager | None = None
 pepe = None  # apps.backend.core.pepe.Pepe — assegnato in lifespan
 storage = None  # apps.backend.core.storage.StorageManager — assegnato in lifespan
 etsy_api = None  # apps.backend.tools.etsy_api.EtsyAPI — assegnato in lifespan
+scheduler = None  # apps.backend.core.scheduler.Scheduler — assegnato in lifespan
 
 
 # ------------------------------------------------------------------
@@ -74,7 +109,7 @@ etsy_api = None  # apps.backend.tools.etsy_api.EtsyAPI — assegnato in lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: MemoryManager, Pepe, workers, Telegram bot. Shutdown: graceful stop."""
-    global memory, pepe, storage, etsy_api
+    global memory, pepe, storage, etsy_api, scheduler
 
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.scheduler import Scheduler
@@ -228,12 +263,52 @@ async def get_mock_status() -> dict:
     return {"mock_mode": pepe.mock_mode if pepe else False}
 
 
+@app.post("/api/run/analytics")
+async def run_analytics_now() -> dict:
+    """Trigger manuale analytics (non aspetta le 08:00)."""
+    if not pepe:
+        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
+    from apps.backend.core.models import AgentTask
+    task = AgentTask(agent_name="analytics", input_data={}, source="api_manual")
+    asyncio.create_task(pepe.dispatch_task(task))
+    return {"status": "started"}
+
+
 @app.get("/api/agents")
 async def get_agents() -> dict:
     """Stato dettagliato degli agenti registrati."""
     if not pepe:
         return {"agents": {}}
     return {"agents": pepe.get_agent_statuses()}
+
+
+@app.get("/api/sessions")
+async def get_sessions(limit: int = 20) -> dict:
+    """Lista sessioni recenti."""
+    if not memory:
+        return {"sessions": []}
+    sessions = await memory.get_sessions(limit=limit)
+    return {"sessions": sessions}
+
+
+@app.get("/api/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, limit: int = 100) -> dict:
+    """Messaggi di una sessione, ordinati dal più vecchio al più recente."""
+    if not memory:
+        return {"messages": []}
+    rows = await memory.get_conversation_history(session_id, limit=limit)
+    messages = []
+    for r in rows:
+        role = r["role"]
+        if role == "assistant":
+            role = "pepe"
+        messages.append({
+            "id": r.get("id", crypto_random_id()),
+            "role": role,
+            "content": r["content"],
+            "timestamp": r["timestamp"],
+        })
+    return {"messages": messages}
 
 
 @app.get("/api/listings")
@@ -250,14 +325,20 @@ async def get_listings() -> dict:
 
 @app.get("/api/scheduler")
 async def get_scheduler() -> dict:
-    """Task schedulati."""
-    if not memory:
-        return {"tasks": []}
-    cursor = await memory._db.execute(
-        "SELECT * FROM scheduled_tasks ORDER BY next_run"
-    )
-    rows = await cursor.fetchall()
-    return {"tasks": [dict(r) for r in rows]}
+    """Task schedulati: job APScheduler attivi + task da DB."""
+    db_tasks: list[dict] = []
+    if memory:
+        cursor = await memory._db.execute(
+            "SELECT * FROM scheduled_tasks ORDER BY next_run"
+        )
+        rows = await cursor.fetchall()
+        db_tasks = [dict(r) for r in rows]
+
+    apscheduler_jobs: list[dict] = []
+    if scheduler:
+        apscheduler_jobs = scheduler.get_jobs()
+
+    return {"tasks": db_tasks, "jobs": apscheduler_jobs}
 
 
 @app.get("/api/production-queue")

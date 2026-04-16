@@ -268,6 +268,15 @@ class MemoryManager:
             # ChromaDB/Voyage non disponibile — continua solo con SQLite
             self._chroma_collection = None
 
+        # Cleanup: chiudi agent_logs rimasti in 'running' da sessioni precedenti
+        try:
+            await self._db.execute(
+                "UPDATE agent_logs SET status='failed' WHERE status='running'"
+            )
+            await self._db.commit()
+        except Exception:
+            pass
+
     async def close(self) -> None:
         if self._db:
             await self._db.close()
@@ -566,30 +575,33 @@ class MemoryManager:
         results: list[dict] = []
 
         cursor = await self._db.execute(
-            "SELECT *, 'step' as _type FROM agent_steps WHERE task_id = ?",
+            "SELECT * FROM agent_steps WHERE task_id = ?",
             (task_id,),
         )
         for row in await cursor.fetchall():
             d = dict(row)
+            d["type"] = "agent_step"
             d["input_data"] = _json_loads(d.get("input_data"))
             d["output_data"] = _json_loads(d.get("output_data"))
             results.append(d)
 
         cursor = await self._db.execute(
-            "SELECT *, 'llm_call' as _type FROM llm_calls WHERE task_id = ?",
+            "SELECT * FROM llm_calls WHERE task_id = ?",
             (task_id,),
         )
         for row in await cursor.fetchall():
             d = dict(row)
+            d["type"] = "llm_call"
             d["messages"] = _json_loads(d.get("messages"))
             results.append(d)
 
         cursor = await self._db.execute(
-            "SELECT *, 'tool_call' as _type FROM tool_calls WHERE task_id = ?",
+            "SELECT * FROM tool_calls WHERE task_id = ?",
             (task_id,),
         )
         for row in await cursor.fetchall():
             d = dict(row)
+            d["type"] = "tool_call"
             d["input_params"] = _json_loads(d.get("input_params"))
             d["output_result"] = _json_loads(d.get("output_result"))
             results.append(d)
@@ -1057,15 +1069,16 @@ class MemoryManager:
         )
         await self._db.commit()
 
-    async def get_etsy_listings(self, status: str | None = None) -> list[dict]:
+    async def get_etsy_listings(self, status: str | None = None, limit: int | None = None) -> list[dict]:
+        limit_clause = f" LIMIT {int(limit)}" if limit else ""
         if status:
             cursor = await self._db.execute(
-                "SELECT * FROM etsy_listings WHERE status = ? ORDER BY created_at DESC",
+                f"SELECT * FROM etsy_listings WHERE status = ? ORDER BY created_at DESC{limit_clause}",
                 (status,),
             )
         else:
             cursor = await self._db.execute(
-                "SELECT * FROM etsy_listings ORDER BY created_at DESC"
+                f"SELECT * FROM etsy_listings ORDER BY created_at DESC{limit_clause}"
             )
         rows = await cursor.fetchall()
         result = []

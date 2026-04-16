@@ -189,8 +189,9 @@ class EtsyAPI:
         return self._client
 
     async def close(self) -> None:
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+        client = getattr(self, "_client", None)
+        if client and not client.is_closed:
+            await client.aclose()
             self._client = None
 
     @property

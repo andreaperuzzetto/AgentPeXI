@@ -13,6 +13,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.events import EVENT_JOB_SUBMITTED, EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 
 from apps.backend.core.config import settings
 from apps.backend.core.memory import MemoryManager
@@ -47,6 +48,10 @@ class Scheduler:
         self.finance_agent = finance_agent
         self._telegram_broadcast = telegram_broadcaster
         self._scheduler = AsyncIOScheduler()
+        # Track job execution state: job_id → {status, last_run}
+        self._job_status: dict[str, dict[str, Any]] = {}
+        # Internal jobs we hide from the user-facing scheduler panel
+        self._internal_jobs = {"ssd_health_check", "agent_status_sync"}
 
     # ------------------------------------------------------------------
     # Startup / shutdown
@@ -56,11 +61,12 @@ class Scheduler:
         """Avvia lo scheduler, registra job predefiniti e carica job da DB."""
         self._register_builtin_jobs()
         await self._load_db_jobs()
+        # Listen for job lifecycle events
+        self._scheduler.add_listener(self._on_job_submitted, EVENT_JOB_SUBMITTED)
+        self._scheduler.add_listener(self._on_job_executed, EVENT_JOB_EXECUTED)
+        self._scheduler.add_listener(self._on_job_error, EVENT_JOB_ERROR)
         self._scheduler.start()
         logger.info("Scheduler avviato")
-
-        # Catch-up: se la pipeline di oggi non è ancora stata eseguita
-        asyncio.create_task(self._check_catchup())
 
     async def stop(self) -> None:
         """Ferma lo scheduler gracefully."""
@@ -220,12 +226,15 @@ class Scheduler:
 
         statuses = self.pepe.get_agent_statuses()
         queue_size = self.pepe._queue.qsize() if hasattr(self.pepe, "_queue") else 0
+        active_tasks = sum(1 for s in statuses.values() if s == "running")
 
         await self._broadcast({
             "type": "system_status",
             "event": "agent_sync",
             "agents": statuses,
             "queue_size": queue_size,
+            "active_tasks": active_tasks,
+            "mock_mode": getattr(self.pepe, "mock_mode", False),
             "timestamp": datetime.utcnow().isoformat(),
         })
 
@@ -286,15 +295,44 @@ class Scheduler:
     # Info
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Job lifecycle listeners
+    # ------------------------------------------------------------------
+
+    def _on_job_submitted(self, event: Any) -> None:
+        jid = event.job_id
+        if jid not in self._internal_jobs:
+            self._job_status[jid] = {"status": "running", "last_run": datetime.now().isoformat()}
+
+    def _on_job_executed(self, event: Any) -> None:
+        jid = event.job_id
+        if jid not in self._internal_jobs:
+            self._job_status[jid] = {"status": "completed", "last_run": datetime.now().isoformat()}
+
+    def _on_job_error(self, event: Any) -> None:
+        jid = event.job_id
+        if jid not in self._internal_jobs:
+            self._job_status[jid] = {"status": "failed", "last_run": datetime.now().isoformat()}
+
+    # ------------------------------------------------------------------
+    # API
+    # ------------------------------------------------------------------
+
     def get_jobs(self) -> list[dict[str, Any]]:
         """Lista dei job attivi nello scheduler."""
         jobs = []
         for job in self._scheduler.get_jobs():
+            jid = job.id
+            if jid in self._internal_jobs:
+                continue
+            info = self._job_status.get(jid, {})
             jobs.append({
-                "id": job.id,
+                "id": jid,
                 "name": job.name,
                 "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
                 "trigger": str(job.trigger),
+                "status": info.get("status", "scheduled"),
+                "last_run": info.get("last_run"),
             })
         return jobs
 
@@ -309,22 +347,6 @@ class Scheduler:
         "daily journal clean design",
         "meal planner weekly",
     ]
-
-    async def _check_catchup(self) -> None:
-        """Al boot, verifica se la pipeline di oggi è già stata eseguita.
-        Se no e siamo nella finestra 09:00-18:00, lancia dopo 2 minuti."""
-        now = datetime.now()
-        if now.hour < 9 or now.hour >= 18:
-            return
-        today_str = now.strftime("%Y-%m-%d")
-        today_items = await self.memory.get_production_queue(status=None, limit=20)
-        ran_today = any(
-            item.get("created_at", "").startswith(today_str) for item in today_items
-        )
-        if not ran_today:
-            logger.info("Catch-up pipeline: nessuna produzione oggi, lancio tra 2 minuti")
-            await asyncio.sleep(120)
-            await self._run_pipeline()
 
     async def _run_pipeline(self) -> None:
         """Pipeline Research → Design. Si ferma dopo Design (Publisher in fase successiva)."""
@@ -352,7 +374,7 @@ class Scheduler:
 
         # 4. Research Agent
         keywords: list[str] = []
-        if self.research_agent:
+        if self.research_agent and self.pepe:
             from apps.backend.core.models import AgentTask as _AgentTask
 
             research_task = _AgentTask(
@@ -361,7 +383,7 @@ class Scheduler:
                 source="scheduler",
             )
             try:
-                research_result = await self.research_agent.execute(research_task)
+                research_result = await self.pepe.dispatch_task(research_task)
                 out = research_result.output_data or {}
                 # Estrai keywords dal report
                 niches_data = out.get("niches", [])
@@ -373,7 +395,7 @@ class Scheduler:
                 await self._notify_telegram(f"⚠️ Pipeline: Research fallito per '{niche}': {exc}")
                 return
         else:
-            logger.warning("Research agent non disponibile, uso keywords vuote")
+            logger.warning("Research agent o Pepe non disponibile, uso keywords vuote")
 
         # 5. Costruisci brief per Design
         template = self._pick_template(niche)
@@ -413,7 +435,7 @@ class Scheduler:
         )
 
         try:
-            design_result = await self.design_agent.execute(design_task)
+            design_result = await self.pepe.dispatch_task(design_task)
             file_paths = design_result.output_data.get("file_paths", [])
             cost = design_result.cost_usd
             logger.info(
@@ -571,7 +593,7 @@ class Scheduler:
             source="scheduler",
         )
         try:
-            result = await self.publisher_agent.execute(publish_task)
+            result = await self.pepe.dispatch_task(publish_task) if self.pepe else await self.publisher_agent.execute(publish_task)
             pub_out = result.output_data or {}
             listings_created = pub_out.get("listings_created", 0)
             total_cost = design_cost + result.cost_usd
@@ -617,7 +639,8 @@ class Scheduler:
             source="scheduler",
         )
         try:
-            await self.analytics_agent.execute(task)
+            dispatcher = self.pepe.dispatch_task if self.pepe else self.analytics_agent.execute
+            await dispatcher(task)
             logger.info("Analytics giornaliero completato")
         except Exception as exc:
             logger.error("Analytics fallito: %s", exc)
@@ -637,7 +660,8 @@ class Scheduler:
             source="scheduler",
         )
         try:
-            await self.finance_agent.execute(task)
+            dispatcher = self.pepe.dispatch_task if self.pepe else self.finance_agent.execute
+            await dispatcher(task)
             logger.info("Finance report giornaliero completato")
         except Exception as exc:
             logger.error("Finance report fallito: %s", exc)

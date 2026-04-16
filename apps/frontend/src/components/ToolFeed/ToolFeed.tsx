@@ -28,7 +28,7 @@ export function ToolFeed() {
         <span
           style={{
             fontFamily: 'var(--fh)',
-            fontSize: 9,
+            fontSize: 11,
             fontWeight: 700,
             letterSpacing: '0.08em',
             textTransform: 'uppercase' as const,
@@ -38,7 +38,7 @@ export function ToolFeed() {
           Tool Activity
         </span>
         {events.length > 0 && (
-          <span style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)' }}>
+          <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
             {events.length}
           </span>
         )}
@@ -59,7 +59,7 @@ export function ToolFeed() {
             style={{
               padding: '12px 13px',
               fontFamily: 'var(--fd)',
-              fontSize: 10,
+              fontSize: 12,
               color: 'var(--tf)',
               textAlign: 'center',
             }}

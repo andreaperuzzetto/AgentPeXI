@@ -390,8 +390,6 @@ class AgentBase(ABC):
 
         # Crea nuova istanza dello stesso tipo di agente
         sub_agent = self.__class__(
-            name=self.name,
-            model=self.model,
             anthropic_client=self.client,
             memory=self.memory,
             ws_broadcaster=self._ws_broadcast,

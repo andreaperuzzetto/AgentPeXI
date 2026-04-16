@@ -50,7 +50,7 @@ export function AgentDetailPanel() {
           <span
             style={{
               fontFamily: 'var(--fh)',
-              fontSize: 16,
+              fontSize: 18,
               fontWeight: 700,
               letterSpacing: '0.04em',
               color: 'var(--tp)',
@@ -66,7 +66,7 @@ export function AgentDetailPanel() {
               border: 'none',
               color: 'var(--tf)',
               cursor: 'pointer',
-              fontSize: 16,
+              fontSize: 18,
               padding: '4px 8px',
               transition: 'color .15s',
             }}
@@ -82,7 +82,7 @@ export function AgentDetailPanel() {
           <div
             style={{
               fontFamily: 'var(--fd)',
-              fontSize: 11,
+              fontSize: 13,
               color: 'var(--tm)',
               padding: '8px 10px',
               borderRadius: 6,
@@ -98,7 +98,7 @@ export function AgentDetailPanel() {
         <div
           style={{
             fontFamily: 'var(--fh)',
-            fontSize: 9,
+            fontSize: 11,
             fontWeight: 700,
             letterSpacing: '0.08em',
             textTransform: 'uppercase' as const,
@@ -110,7 +110,7 @@ export function AgentDetailPanel() {
         </div>
 
         {steps.length === 0 && (
-          <p style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)', textAlign: 'center', marginTop: 24 }}>
+          <p style={{ fontFamily: 'var(--fd)', fontSize: 14, color: 'var(--tf)', textAlign: 'center', marginTop: 24 }}>
             Nessuna attività registrata.<br />
             Gli step appariranno in tempo reale.
           </p>
@@ -144,7 +144,7 @@ export function AgentDetailPanel() {
                   <span
                     style={{
                       fontFamily: 'var(--fd)',
-                      fontSize: 9,
+                      fontSize: 11,
                       padding: '1px 6px',
                       borderRadius: 3,
                       color: tag.color,
@@ -159,7 +159,7 @@ export function AgentDetailPanel() {
                 <span
                   style={{
                     fontFamily: 'var(--fd)',
-                    fontSize: 9,
+                    fontSize: 11,
                     color: 'var(--tf)',
                     flexShrink: 0,
                   }}
@@ -169,7 +169,7 @@ export function AgentDetailPanel() {
                 <span
                   style={{
                     fontFamily: 'var(--fd)',
-                    fontSize: 12,
+                    fontSize: 14,
                     color: isLatest ? 'var(--tp)' : 'var(--tm)',
                     flex: 1,
                     lineHeight: 1.4,
@@ -188,7 +188,7 @@ export function AgentDetailPanel() {
                   borderTop: '1px solid var(--b0)',
                 }}
               >
-                <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)' }}>
+                <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>
                   {step.durationMs > 0 ? `${step.durationMs}ms` : '—'}
                 </span>
               </div>
@@ -214,7 +214,7 @@ export function AgentDetailPanel() {
           <div
             style={{
               fontFamily: 'var(--fh)',
-              fontSize: 9,
+              fontSize: 11,
               fontWeight: 700,
               letterSpacing: '0.08em',
               textTransform: 'uppercase' as const,
@@ -243,13 +243,13 @@ export function AgentDetailPanel() {
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(45,232,106,.03)' }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
             >
-              <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tm)' }}>
+              <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tm)' }}>
                 {row.label}
               </span>
               <span
                 style={{
                   fontFamily: 'var(--fd)',
-                  fontSize: 11,
+                  fontSize: 13,
                   color: row.accent ? 'var(--accent)' : 'var(--tp)',
                 }}
               >

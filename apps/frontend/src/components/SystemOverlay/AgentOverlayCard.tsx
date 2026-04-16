@@ -63,7 +63,7 @@ export function AgentOverlayCard({ agentName, index }: Props) {
         <span
           style={{
             fontFamily: 'var(--fh)',
-            fontSize: 14,
+            fontSize: 16,
             fontWeight: 700,
             letterSpacing: '0.05em',
             textTransform: 'uppercase' as const,
@@ -77,7 +77,7 @@ export function AgentOverlayCard({ agentName, index }: Props) {
         <span
           style={{
             fontFamily: 'var(--fd)',
-            fontSize: 9,
+            fontSize: 11,
             padding: '1px 8px',
             borderRadius: 99,
             border: `1px solid ${
@@ -96,7 +96,7 @@ export function AgentOverlayCard({ agentName, index }: Props) {
       {/* Description — .ov-card-desc */}
       <div
         style={{
-          fontSize: 13,
+          fontSize: 15,
           color: 'var(--tm)',
           marginTop: 6,
           lineHeight: 1.6,
@@ -117,7 +117,7 @@ export function AgentOverlayCard({ agentName, index }: Props) {
                 key={step.id}
                 style={{
                   fontFamily: 'var(--fd)',
-                  fontSize: 11,
+                  fontSize: 13,
                   color: isLatest ? 'var(--tm)' : 'var(--tf)',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -142,13 +142,13 @@ export function AgentOverlayCard({ agentName, index }: Props) {
           borderTop: '1px solid var(--b0)',
         }}
       >
-        <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)' }}>
+        <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>
           {steps.length} step registrati
         </span>
         <span
           style={{
             fontFamily: 'var(--fd)',
-            fontSize: 10,
+            fontSize: 12,
             color: isSelected ? 'var(--tm)' : 'var(--accent)',
             transition: 'letter-spacing .2s var(--e-out)',
           }}
