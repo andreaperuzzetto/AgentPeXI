@@ -5,6 +5,7 @@ const FALLBACK_SPARKLINE = [35, 60, 45, 75, 38, 22, 18]
 export function CostPanel() {
   const dailyCost  = useStore((s) => s.systemStatus.dailyCost)
   const llmStats   = useStore((s) => s.llmStats)
+  const budgetMonthlyUsd = useStore((s) => s.budgetMonthlyUsd)
 
   /* Use REST-fetched total; fall back to rough estimate */
   const totalCost  = llmStats.totalCost > 0
@@ -61,7 +62,7 @@ export function CostPanel() {
         <span
           style={{ fontFamily: 'var(--fd)', fontSize: 9, color: 'var(--tf)' }}
         >
-          Budget: $5.00/mese
+          Budget: {budgetMonthlyUsd ? `$${budgetMonthlyUsd.toFixed(0)}/mese` : '—'}
         </span>
       </div>
 

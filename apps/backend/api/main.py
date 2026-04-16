@@ -277,6 +277,7 @@ async def get_costs(days: int = 30) -> dict:
     if not memory:
         return {"breakdown": {}}
     breakdown = await memory.get_cost_breakdown(period_days=days)
+    breakdown["budget_threshold_eur"] = settings.COST_ALERT_THRESHOLD_EUR
     return {"days": days, "breakdown": breakdown}
 
 

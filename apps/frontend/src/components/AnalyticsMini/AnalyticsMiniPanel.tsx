@@ -11,20 +11,24 @@ interface MiniItem {
 
 export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
   const agents = useStore((s) => s.agents)
+  const summary = useStore((s) => s.analyticsSummary)
 
   // Derive counts from store
   // AgentStatusValue = 'idle' | 'running' | 'error' — 'done' is never set; idle = completed for display
   const allStatuses = Object.values(agents).map((a) => a?.status ?? 'idle')
   const running  = allStatuses.filter((s) => s === 'running').length
   const errors   = allStatuses.filter((s) => s === 'error').length
-  const total    = allStatuses.length || 4
-  const successPct = errors > 0 ? Math.round(((total - errors) / total) * 100) : 78
+
+  const pipelineTotal = summary?.total ?? 0
+  const completedTotal = summary?.completed ?? 0
+  const failedTotal = summary?.failed ?? 0
+  const successPct = pipelineTotal > 0 ? Math.round((completedTotal / pipelineTotal) * 100) : 0
 
   const items: MiniItem[] = [
-    { label: 'Pipeline', value: 14,         sub: '+3 oggi',                                          accent: running > 0 },
-    { label: 'Successi', value: total - errors, sub: `${successPct}%`,                              accent: true },
-    { label: 'Failures', value: errors,     sub: `${((errors / total) * 100).toFixed(1)}%`,         err: true },
-    { label: 'Listing',  value: 0,          sub: 'API pend.',                                        faint: true },
+    { label: 'Pipeline', value: pipelineTotal,   sub: running > 0 ? `${running} in corso` : '—',              accent: running > 0 },
+    { label: 'Successi', value: completedTotal,   sub: pipelineTotal > 0 ? `${successPct}%` : '—',            accent: true },
+    { label: 'Failures', value: failedTotal,      sub: pipelineTotal > 0 ? `${((failedTotal / pipelineTotal) * 100).toFixed(1)}%` : '0%', err: true },
+    { label: 'Listing',  value: summary?.production_queue?.completed ?? 0, sub: 'pubblicati',               faint: true },
   ]
 
   return (

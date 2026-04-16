@@ -46,10 +46,14 @@ function fmtTok(n: number): string {
 }
 
 export function ReasoningPanel() {
-  const agents    = useStore((s) => s.agents)
-  const allSteps  = useStore((s) => s.agentSteps)
-  const sysStatus = useStore((s) => s.systemStatus)
-  const llmStats  = useStore((s) => s.llmStats)
+  const agents      = useStore((s) => s.agents)
+  const allSteps    = useStore((s) => s.agentSteps)
+  const sysStatus   = useStore((s) => s.systemStatus)
+  const llmStats    = useStore((s) => s.llmStats)
+  const contextState = useStore((s) => s.contextState)
+  const chromaStats  = useStore((s) => s.chromaStats)
+  const connectedAt  = useStore((s) => s.connectedAt)
+  const wsConnected  = useStore((s) => s.wsConnected)
 
   const activeCount  = FLOW_AGENTS.filter((n) => agents[n]?.status === 'running').length
   const runningAgent = FLOW_AGENTS.find((n) => agents[n]?.status === 'running') ?? 'research'
@@ -61,23 +65,11 @@ export function ReasoningPanel() {
         desc: s.description,
         dur: s.durationMs > 0 ? `${s.durationMs}ms` : '—',
       }))
-    : [
-        { tag: 'RECV', desc: 'Richiesta utente: analisi nicchie wall art €15-25', dur: '—' },
-        { tag: 'PLAN', desc: 'Costruzione piano · Research → Design → Publisher', dur: '820ms' },
-        { tag: 'DISP', desc: 'Dispatch Research Agent · task_id a3f9…', dur: '110ms' },
-        { tag: 'WAIT', desc: 'In attesa output Research · monitoring queue…', dur: '—' },
-      ]
+    : []
 
   const queueRows = FLOW_AGENTS
-    .map((n) => ({ name: n, status: agents[n]?.status ?? 'idle', task: agents[n]?.lastTask }))
-    .filter((t) => t.status !== 'error')
-    .some((t) => t.task)
-    ? FLOW_AGENTS.map((n) => ({ name: n, status: agents[n]?.status ?? 'idle', task: agents[n]?.lastTask || '—' })).slice(0, 3)
-    : [
-        { name: 'research',  status: 'running', task: 'botanical_analysis' },
-        { name: 'design',    status: 'idle',    task: 'image_gen × 4' },
-        { name: 'publisher', status: 'idle',    task: 'listing_draft' },
-      ]
+    .map((n) => ({ name: n, status: agents[n]?.status ?? 'idle', task: agents[n]?.lastTask || '—' }))
+    .slice(0, 4)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -102,6 +94,7 @@ export function ReasoningPanel() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: 10 }}>
 
         {/* ① Pipeline attiva */}
+        {wsConnected ? (
         <div className="card card--active" style={{ padding: '13px 14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <span className="status-dot status-dot--running" />
@@ -109,14 +102,21 @@ export function ReasoningPanel() {
               Pipeline attiva
             </span>
             <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tm)' }}>
-              {sysStatus.uptime !== '—' ? sysStatus.uptime : '47s'}
+              {(() => {
+                if (!connectedAt) return '—'
+                const diff = Date.now() - connectedAt
+                const mins = Math.floor(diff / 60000)
+                const hrs = Math.floor(mins / 60)
+                if (hrs > 0) return `${hrs}h ${mins % 60}m`
+                return `${mins}m`
+              })()}
             </span>
           </div>
           <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tm)', marginTop: 6 }}>
-            → {agents[runningAgent]?.lastTask || 'Analisi nicchie wall art · avviato Research Agent'}
+            → {agents[runningAgent]?.lastTask || 'In attesa task…'}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 9 }}>
-            {pipelineSteps.map((step, i) => {
+            {pipelineSteps.length > 0 ? pipelineSteps.map((step, i) => {
               const isLatest = i === pipelineSteps.length - 1
               return (
                 <div key={i} className={`pstep${isLatest ? ' latest' : ''}`}>
@@ -127,12 +127,29 @@ export function ReasoningPanel() {
                   <span style={{ color: 'var(--tf)', fontSize: 11, flexShrink: 0 }}>{step.dur}</span>
                 </div>
               )
-            })}
+            }) : (
+              <div style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)', padding: '4px 0' }}>
+                Nessun step attivo
+              </div>
+            )}
           </div>
           <div className="pbar">
             <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,var(--accent),rgba(45,232,106,.25))', animation: 'pgrow 28s linear forwards' }} />
           </div>
         </div>
+        ) : (
+        <div className="card" style={{ padding: '13px 14px', opacity: 0.5 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <span className="status-dot status-dot--off" />
+            <span style={{ fontFamily: 'var(--fh)', fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--tm)', flex: 1 }}>
+              Pipeline offline
+            </span>
+          </div>
+          <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', marginTop: 6 }}>
+            Sistema disconnesso — in attesa di connessione
+          </div>
+        </div>
+        )}
 
         {/* ② Flusso pipeline */}
         <div className="card" style={{ padding: '12px 14px' }}>
@@ -141,16 +158,11 @@ export function ReasoningPanel() {
           </div>
           <div className="flow-row">
             {FLOW_AGENTS.map((name, i) => {
-              // Se tutti idle usa gli stati demo del prototipo
-              const allIdle = FLOW_AGENTS.every((n) => (agents[n]?.status ?? 'idle') === 'idle')
-              const DEMO_STATES: Record<string, 'run' | 'done' | 'wait'> = {
-                research: 'run', design: 'wait', publisher: 'wait', analytics: 'done'
-              }
-              const state = allIdle ? DEMO_STATES[name] : flowState(agents[name]?.status ?? 'idle')
+              const state = flowState(agents[name]?.status ?? 'idle')
               const isLast = i === FLOW_AGENTS.length - 1
               const prevName = FLOW_AGENTS[i - 1]
               const prevState = i > 0
-                ? (allIdle ? DEMO_STATES[prevName] : flowState(agents[prevName]?.status ?? 'idle'))
+                ? flowState(agents[prevName]?.status ?? 'idle')
                 : 'wait'
               const connDone = prevState === 'done'
               return (
@@ -197,9 +209,13 @@ export function ReasoningPanel() {
               const ctxLabel = llmStats.inputTokens > 0
                 ? `${fmtTok(llmStats.inputTokens)} / 128k`
                 : '— / 128k'
+              const chromaCount = chromaStats?.count ?? 0
+              const chromaMax = 200
+              const chromaPct = chromaCount > 0 ? Math.min(Math.round((chromaCount / chromaMax) * 100), 100) : 0
+              const chromaLabel = chromaStats ? `${chromaCount} / ${chromaMax}` : '— / 200'
               return [
                 { label: 'Context window',           right: ctxLabel,    rColor: 'var(--tm)',   pct: ctxPct, grad: 'linear-gradient(90deg,var(--accent),rgba(45,232,106,.4))' },
-                { label: 'ChromaDB chunks caricati', right: '38 / 200',  rColor: 'var(--warn)', pct: 19,     grad: 'linear-gradient(90deg,var(--warn),rgba(240,180,41,.35))' },
+                { label: 'ChromaDB chunks caricati', right: chromaLabel, rColor: chromaCount > 0 ? 'var(--warn)' : 'var(--tf)', pct: chromaPct, grad: 'linear-gradient(90deg,var(--warn),rgba(240,180,41,.35))' },
               ].map((bar, bi) => (
                 <div key={bar.label} style={{ marginBottom: bi === 0 ? 8 : 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', marginBottom: 5 }}>
@@ -220,19 +236,30 @@ export function ReasoningPanel() {
           <div style={{ fontFamily: 'var(--fh)', fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--tm)', marginBottom: 8 }}>
             Contesto decisionale
           </div>
-          {[
-            { l: 'Confidence gate',           v: '85% soglia',            vc: 'var(--ok)' },
-            { l: 'Strategia attiva',           v: 'research_first',        vc: 'var(--accent)' },
-            { l: 'Domain attivo',              v: 'etsy_store',            vc: 'var(--accent)' },
-            { l: 'Failure recenti (ChromaDB)', v: '12 pattern',            vc: 'var(--warn)' },
-            { l: 'Prossima azione',            v: 'await_research_output', vc: 'var(--tm)' },
-            { l: 'Retry policy',               v: 'max 3 · backoff 2s',    vc: 'var(--tm)' },
-          ].map((row, i) => (
-            <div key={i} className="ctx-row">
-              <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tm)' }}>{row.l}</span>
-              <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: row.vc }}>{row.v}</span>
-            </div>
-          ))}
+          {(() => {
+            const ctx = contextState
+            const rows = ctx ? [
+              { l: 'Confidence gate',           v: `${Math.round((ctx.confidence_threshold ?? 0.85) * 100)}% soglia`, vc: 'var(--ok)' },
+              { l: 'Strategia attiva',           v: ctx.strategy ?? '—',           vc: 'var(--accent)' },
+              { l: 'Domain attivo',              v: ctx.domain ?? '—',             vc: 'var(--accent)' },
+              { l: 'Failure recenti (ChromaDB)', v: `${ctx.failure_count ?? 0} pattern`, vc: ctx.failure_count ? 'var(--warn)' : 'var(--tm)' },
+              { l: 'Prossima azione',            v: ctx.next_action ?? '—',        vc: 'var(--tm)' },
+              { l: 'Retry policy',               v: ctx.retry_policy ?? '—',       vc: 'var(--tm)' },
+            ] : [
+              { l: 'Confidence gate',           v: '—',                    vc: 'var(--tf)' },
+              { l: 'Strategia attiva',           v: '—',                    vc: 'var(--tf)' },
+              { l: 'Domain attivo',              v: '—',                    vc: 'var(--tf)' },
+              { l: 'Failure recenti (ChromaDB)', v: '—',                    vc: 'var(--tf)' },
+              { l: 'Prossima azione',            v: '—',                    vc: 'var(--tf)' },
+              { l: 'Retry policy',               v: '—',                    vc: 'var(--tf)' },
+            ]
+            return rows.map((row, i) => (
+              <div key={i} className="ctx-row">
+                <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tm)' }}>{row.l}</span>
+                <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: row.vc }}>{row.v}</span>
+              </div>
+            ))
+          })()}
         </div>
 
         {/* ⑤ Coda task */}

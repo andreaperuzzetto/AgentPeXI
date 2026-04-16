@@ -16,8 +16,12 @@ export function ListingsPanel() {
 
   useEffect(() => {
     fetch('/api/listings')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => { setListings(Array.isArray(data) ? data : []); setLoaded(true) })
+      .then((r) => (r.ok ? r.json() : { listings: [] }))
+      .then((data) => {
+        const items = data?.listings ?? (Array.isArray(data) ? data : [])
+        setListings(items)
+        setLoaded(true)
+      })
       .catch(() => { setListings([]); setLoaded(true) })
   }, [])
 
@@ -50,41 +54,30 @@ export function ListingsPanel() {
         }}
       >
         {loaded && listings.length === 0 ? (
-          /* Draft / pending state — matches prototype listing block */
-          <>
-            <DraftCard
-              title="Botanical Wall Art — Summer Set"
-              meta="4 file · alta risoluzione"
-              price="€18"
-              status="DRAFT"
-              statusColor="var(--warn)"
-              opacity={0.55}
-            />
-            <DraftCard
-              title="Abstract Minimalism Bundle"
-              meta="5 varianti · bundle"
-              price="€22"
-              status="IN CODA"
-              statusColor="var(--tf)"
-              opacity={0.35}
-            />
-            <div style={{ padding: '10px 12px', textAlign: 'center', marginTop: 2 }}>
-              <span
-                style={{
-                  fontFamily: 'var(--fd)',
-                  fontSize: 9,
-                  color: 'var(--tf)',
-                  letterSpacing: '0.05em',
-                  padding: '5px 11px',
-                  border: '1px solid var(--b0)',
-                  borderRadius: 5,
-                  display: 'inline-block',
-                }}
-              >
-                ETSY API — PENDING APPROVAL
-              </span>
-            </div>
-          </>
+          <div style={{ padding: '16px 12px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+            <svg width="32" height="32" viewBox="0 0 20 20" fill="none" style={{ color: 'var(--tf)', opacity: 0.5 }}>
+              <path d="M5 3h7l4 4v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+              <path d="M12 3v4h4" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+            </svg>
+            <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
+              Nessun listing nel DB locale
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--fd)',
+                fontSize: 9,
+                color: 'var(--tf)',
+                letterSpacing: '0.05em',
+                padding: '5px 11px',
+                border: '1px solid var(--b0)',
+                borderRadius: 5,
+                display: 'inline-block',
+                marginTop: 4,
+              }}
+            >
+              IN ATTESA PIPELINE
+            </span>
+          </div>
         ) : (
           /* Loaded listings — .lcard style */
           listings.map((l) => (
@@ -178,83 +171,4 @@ export function ListingsPanel() {
   )
 }
 
-function DraftCard({
-  title,
-  meta,
-  price,
-  status,
-  statusColor,
-  opacity,
-}: {
-  title: string
-  meta: string
-  price: string
-  status: string
-  statusColor: string
-  opacity: number
-}) {
-  return (
-    <div
-      className="card"
-      style={{ padding: '10px 12px', display: 'flex', gap: 9, alignItems: 'flex-start', opacity }}
-    >
-      <div
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 6,
-          flexShrink: 0,
-          background: 'var(--s3)',
-          border: '1px solid var(--b0)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" style={{ color: 'var(--tm)' }}>
-          <path d="M5 3h7l4 4v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-          <path d="M12 3v4h4" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-          <path d="M7 10h6M7 13h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-        </svg>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 500,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap' as const,
-            color: 'var(--tp)',
-          }}
-        >
-          {title}
-        </div>
-        <div
-          style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tm)', marginTop: 2 }}
-        >
-          {meta}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-          <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusColor }} />
-          <span
-            style={{ fontFamily: 'var(--fd)', fontSize: 9, color: statusColor, letterSpacing: '0.04em' }}
-          >
-            {status}
-          </span>
-        </div>
-      </div>
-      <div
-        style={{
-          fontFamily: 'var(--fd)',
-          fontSize: 14,
-          color: 'var(--accent)',
-          fontWeight: 500,
-          flexShrink: 0,
-        }}
-      >
-        {price}
-      </div>
-    </div>
-  )
-}
+

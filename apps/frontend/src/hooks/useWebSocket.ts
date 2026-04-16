@@ -90,6 +90,10 @@ function handleMessage(raw: MessageEvent) {
       store.addLlmCall(data.input_tokens, data.output_tokens, data.cost_usd)
       break
 
+    case 'context_update':
+      store.setContextState(data as any)
+      break
+
     default:
       break
   }
@@ -130,6 +134,7 @@ export function useWebSocket() {
 
       ws.addEventListener('open', () => {
         useStore.getState().setWsConnected(true)
+        useStore.getState().setConnectedAt(Date.now())
         reconnectDelay.current = RECONNECT_BASE
         connectedAt.current = new Date()
       })

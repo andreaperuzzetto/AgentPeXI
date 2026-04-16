@@ -16,6 +16,8 @@ export default function App() {
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
   const setCostsData = useStore((s) => s.setCostsData)
+  const setAnalyticsSummary = useStore((s) => s.setAnalyticsSummary)
+  const setChromaStats = useStore((s) => s.setChromaStats)
   useWebSocket()
 
   /* ── Fetch real cost data from backend on mount ── */
@@ -25,14 +27,37 @@ export default function App() {
       .then((data) => {
         if (!data?.breakdown) return
         const b = data.breakdown
+        // budget_threshold_eur → USD approx (÷ 0.92)
+        const budgetUsd = b.budget_threshold_eur ? b.budget_threshold_eur / 0.92 : undefined
         setCostsData({
           total:    b.total    ?? 0,
           perAgent: b.per_agent ?? {},
           perDay:   b.per_day   ?? {},
+          budgetMonthlyUsd: budgetUsd,
         })
       })
       .catch(() => { /* ignore — fallback to accumulated WS data */ })
   }, [setCostsData])
+
+  /* ── Fetch analytics summary on mount ── */
+  useEffect(() => {
+    fetch('/api/analytics/summary?days=14')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.summary) setAnalyticsSummary(data.summary)
+      })
+      .catch(() => {})
+  }, [setAnalyticsSummary])
+
+  /* ── Fetch ChromaDB stats on mount ── */
+  useEffect(() => {
+    fetch('/api/memory/stats')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.chroma) setChromaStats(data.chroma)
+      })
+      .catch(() => {})
+  }, [setChromaStats])
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--base)' }}>

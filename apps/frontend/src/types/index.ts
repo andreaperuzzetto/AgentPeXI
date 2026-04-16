@@ -69,6 +69,19 @@ export interface LlmCallEvent {
   duration_ms: number
 }
 
+export interface ContextUpdateEvent {
+  type: 'context_update'
+  confidence_threshold: number
+  confidence_current: number | null
+  strategy: string
+  domain: string
+  next_action: string
+  retry_policy: string
+  failure_count: number
+  trigger: string
+  timestamp: string
+}
+
 export type WSIncoming =
   | PepeMessage
   | AgentStarted
@@ -78,6 +91,7 @@ export type WSIncoming =
   | ToolCallEvent
   | AgentStepEvent
   | LlmCallEvent
+  | ContextUpdateEvent
 
 /* ── Client → server ── */
 

@@ -87,24 +87,14 @@ export function SchedulerPanel() {
       </div>
 
       {schedules.length === 0 ? (
-        /* Prototype-style placeholder rows */
-        <div style={{ padding: '4px 13px' }}>
-          {[
-            { time: '09:00', label: 'Analytics · report giornaliero', tag: 'FATTO', bg: 'rgba(45,232,106,.1)', color: 'var(--ok)', border: 'rgba(45,232,106,.2)' },
-            { time: '12:00', label: 'Research · analisi nicchie',     tag: 'ORA',   bg: 'rgba(45,232,106,.06)', color: 'var(--accent)', border: 'rgba(45,232,106,.2)' },
-            { time: '18:00', label: 'Analytics · A/B test check',     tag: 'SCHED', bg: 'var(--s2)', color: 'var(--tf)', border: 'var(--b0)' },
-            { time: '22:00', label: 'Publisher · pricing review',     tag: 'SCHED', bg: 'var(--s2)', color: 'var(--tf)', border: 'var(--b0)' },
-          ].map((row) => (
-            <SchedRow
-              key={row.time}
-              time={row.time}
-              label={row.label}
-              tagLabel={row.tag}
-              tagBg={row.bg}
-              tagColor={row.color}
-              tagBorder={row.border}
-            />
-          ))}
+        <div style={{ padding: '16px 13px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+          <svg width="28" height="28" viewBox="0 0 20 20" fill="none" style={{ color: 'var(--tf)', opacity: 0.5 }}>
+            <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M10 6v4.5l3 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
+            Nessun job schedulato
+          </span>
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 13px' }}>

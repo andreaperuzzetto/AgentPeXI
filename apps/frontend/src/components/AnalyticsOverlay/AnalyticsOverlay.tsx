@@ -13,6 +13,8 @@ const DAYS_LABELS = ['L', 'M', 'M', 'G', 'V', 'S', 'D']
 export function AnalyticsOverlay({ open, onClose }: Props) {
   const dailyCost = useStore((s) => s.systemStatus.dailyCost)
   const llmStats  = useStore((s) => s.llmStats)
+  const summary   = useStore((s) => s.analyticsSummary)
+  const chromaStats = useStore((s) => s.chromaStats)
 
   /* Real data derived from store */
   const totalCost = llmStats.totalCost > 0 ? llmStats.totalCost : 1.84
@@ -75,7 +77,7 @@ export function AnalyticsOverlay({ open, onClose }: Props) {
             Analytics
           </span>
           <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)', marginLeft: 10 }}>
-            Aggiornato 09:14
+            Aggiornato {new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
           </span>
           <div style={{ flex: 1 }} />
           <button
@@ -105,9 +107,9 @@ export function AnalyticsOverlay({ open, onClose }: Props) {
 
           {/* Task Completati */}
           <AnCard title="Task Completati">
-            <div className="an-big">43</div>
-            <div className="an-sub">38 ok · 5 errori</div>
-            <div className="an-delta">↑ +3 oggi</div>
+            <div className="an-big">{summary?.total ?? '—'}</div>
+            <div className="an-sub">{summary ? `${summary.completed} ok · ${summary.failed} errori` : '—'}</div>
+            <div className="an-delta">{summary?.running ? `↑ ${summary.running} in corso` : '—'}</div>
           </AnCard>
 
           {/* Costo per Agente */}
@@ -141,11 +143,11 @@ export function AnalyticsOverlay({ open, onClose }: Props) {
           <AnCard title="Learning Loop">
             <div className="metric-list">
               {[
-                { l: 'failure_analysis', v: '12',   vc: 'var(--accent)' },
-                { l: 'success_pattern',  v: '0',    vc: 'var(--accent)' },
-                { l: 'design_outcome',   v: '0',    vc: 'var(--accent)' },
-                { l: 'chroma_entries',   v: '38',   vc: 'var(--tm)' },
-                { l: 'Ultimo update',    v: '09:14', vc: 'var(--tm)' },
+                { l: 'failure_analysis', v: String(summary?.by_status?.failed ?? 0),   vc: 'var(--accent)' },
+                { l: 'success_pattern',  v: String(summary?.by_status?.completed ?? 0), vc: 'var(--accent)' },
+                { l: 'design_outcome',   v: String(summary?.per_agent?.design?.completed ?? 0), vc: 'var(--accent)' },
+                { l: 'chroma_entries',   v: String(chromaStats?.count ?? 0),            vc: 'var(--tm)' },
+                { l: 'Ultimo update',    v: new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }), vc: 'var(--tm)' },
               ].map((row) => (
                 <div key={row.l} className="mi">
                   <span className="mi-l">{row.l}</span>
@@ -159,11 +161,11 @@ export function AnalyticsOverlay({ open, onClose }: Props) {
           <AnCard title="Pipeline — Ultimi 14 giorni" wide>
             <div className="pipe-grid">
               {[
-                { l: 'Run totali',    v: '14', vc: 'var(--tp)' },
-                { l: 'Completate',   v: '11', vc: 'var(--ok)' },
-                { l: 'Parziali',     v: '2',  vc: 'var(--warn)' },
-                { l: 'Fallite',      v: '1',  vc: 'var(--err)' },
-                { l: 'Listing creati', v: '0', vc: 'var(--accent)' },
+                { l: 'Run totali',    v: String(summary?.total ?? 0),                              vc: 'var(--tp)' },
+                { l: 'Completate',   v: String(summary?.completed ?? 0),                           vc: 'var(--ok)' },
+                { l: 'Parziali',     v: String(summary?.by_status?.partial ?? 0),                   vc: 'var(--warn)' },
+                { l: 'Fallite',      v: String(summary?.failed ?? 0),                               vc: 'var(--err)' },
+                { l: 'Listing creati', v: String(summary?.production_queue?.completed ?? 0),         vc: 'var(--accent)' },
               ].map((row) => (
                 <div key={row.l}>
                   <div className="pi-l">{row.l}</div>

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatMessage, AgentState, ToolEvent, SystemState, Session, AgentStep } from '../types'
+import type { ChatMessage, AgentState, ToolEvent, SystemState, Session, AgentStep, ContextUpdateEvent } from '../types'
 
 export interface LlmStats {
   /** Tokens accumulated in this session from WS llm_call events */
@@ -13,6 +13,18 @@ export interface LlmStats {
   perAgent: Record<string, number>
   /** Fetched from /api/costs — per-day totals (key = YYYY-MM-DD) */
   perDay: Record<string, number>
+}
+
+export interface AnalyticsSummary {
+  days: number
+  total: number
+  completed: number
+  failed: number
+  running: number
+  by_status: Record<string, number>
+  per_day: Record<string, Record<string, number>>
+  per_agent: Record<string, { total: number; completed: number; failed: number; cost: number }>
+  production_queue: Record<string, number>
 }
 
 const TOOL_FEED_MAX = 200
@@ -71,7 +83,26 @@ interface AgentPeXIStore {
   /* LLM Stats */
   llmStats: LlmStats
   addLlmCall: (input: number, output: number, cost: number) => void
-  setCostsData: (data: { total: number; perAgent: Record<string, number>; perDay: Record<string, number> }) => void
+  setCostsData: (data: { total: number; perAgent: Record<string, number>; perDay: Record<string, number>; budgetMonthlyUsd?: number }) => void
+
+  /* Context state (from WS context_update) */
+  contextState: ContextUpdateEvent | null
+  setContextState: (ctx: ContextUpdateEvent) => void
+
+  /* Analytics summary (from /api/analytics/summary) */
+  analyticsSummary: AnalyticsSummary | null
+  setAnalyticsSummary: (s: AnalyticsSummary) => void
+
+  /* ChromaDB stats (from /api/memory/stats) */
+  chromaStats: { available: boolean; count: number } | null
+  setChromaStats: (s: { available: boolean; count: number }) => void
+
+  /* WS connected timestamp */
+  connectedAt: number | null
+  setConnectedAt: (ts: number | null) => void
+
+  /* Budget threshold */
+  budgetMonthlyUsd: number | null
 
   /* WS Send */
   wsSend: ((content: string) => void) | null
@@ -143,10 +174,25 @@ export const useStore = create<AgentPeXIStore>((set) => ({
         runCost: s.llmStats.runCost + cost,
       },
     })),
-  setCostsData: ({ total, perAgent, perDay }) =>
+  setCostsData: ({ total, perAgent, perDay, budgetMonthlyUsd }) =>
     set((s) => ({
       llmStats: { ...s.llmStats, totalCost: total, perAgent, perDay },
+      budgetMonthlyUsd: budgetMonthlyUsd ?? s.budgetMonthlyUsd,
     })),
+
+  contextState: null,
+  setContextState: (ctx) => set({ contextState: ctx }),
+
+  analyticsSummary: null,
+  setAnalyticsSummary: (s) => set({ analyticsSummary: s }),
+
+  chromaStats: null,
+  setChromaStats: (s) => set({ chromaStats: s }),
+
+  connectedAt: null,
+  setConnectedAt: (ts) => set({ connectedAt: ts }),
+
+  budgetMonthlyUsd: null,
 
   wsSend: null,
   setWsSend: (fn) => set({ wsSend: fn }),
