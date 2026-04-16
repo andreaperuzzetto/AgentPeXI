@@ -1201,7 +1201,11 @@ class Pepe:
             if listings_created > 0:
                 analytics_task = AgentTask(
                     agent_name="analytics",
-                    input_data={"trigger": "post_publish", "listings_created": listings_created},
+                    input_data={
+                        "trigger": "post_publish",
+                        "listings_created": listings_created,
+                        "_run_cost_usd": output.get("_run_cost_usd", 0.0),  # cumulativo research+design+publisher
+                    },
                     source="pipeline_auto",
                 )
                 logger.info(
@@ -1247,6 +1251,7 @@ class Pepe:
                 "size": output.get("size", "A4"),
                 "production_queue_task_id": output.get("production_queue_task_id"),
                 "pricing": output.get("pricing", {}),  # da research_context, per prezzo research-driven
+                "_run_cost_usd": output.get("_run_cost_usd", 0.0),  # costo cumulativo research+design
             }
 
             publish_task = AgentTask(
@@ -1277,16 +1282,20 @@ class Pepe:
                 # Il research schema usa "name" e "recommended_product_type" (non "niche"/"product_type")
                 first = niches[0] if isinstance(niches[0], dict) else {"name": niches[0]}
                 niche_name = first.get("name") or first.get("niche", "")
+                _VALID_PRODUCT_TYPES = {"printable_pdf", "digital_art_png", "svg_bundle"}
                 product_type = (
                     first.get("recommended_product_type")
                     or first.get("product_type", "printable_pdf")
                 )
+                if product_type not in _VALID_PRODUCT_TYPES:
+                    product_type = "printable_pdf"
                 design_input = {
                     "niche": niche_name,
                     "product_type": product_type,
                     "research_context": research_output,
                     "keywords": first.get("keywords", []),
                     "color_schemes": first.get("color_schemes", []),
+                    "_run_cost_usd": result.cost_usd,  # costo research, accumulato lungo la pipeline
                 }
                 design_task = AgentTask(
                     agent_name="design",
@@ -1336,7 +1345,11 @@ class Pepe:
                     result.output_data = output
 
                 n_files = len(output.get("variants", [])) or output.get("variants_generated", 0)
-                msg = f"Design completato — {n_files} varianti in pending. Pubblicazione in avvio."
+                design_cost = result.cost_usd
+                cost_so_far = task.input_data.get("_run_cost_usd", 0.0) + design_cost
+                output["_run_cost_usd"] = cost_so_far  # propaga al publisher via output_data
+                result.output_data = output
+                msg = f"Design completato — {n_files} varianti in pending. Costo step: ${design_cost:.4f}. Pubblicazione in avvio."
                 await self.memory.save_message(session_id, "assistant", msg, "pipeline_auto")
                 await self.notify_telegram(msg)
                 # _advance_pipeline_if_autonomous gestirà Design → Publisher
@@ -1360,10 +1373,14 @@ class Pepe:
             result = await self._enqueue_and_wait(task)
             output = result.output_data or {}
             n = output.get("listings_created", 0)
+            publisher_cost = result.cost_usd
+            cost_so_far = task.input_data.get("_run_cost_usd", 0.0) + publisher_cost
+            output["_run_cost_usd"] = cost_so_far  # propaga all'analytics
+            result.output_data = output
             msg = (
-                f"Pubblicazione completata — {n} draft su Etsy. Analisi in avvio."
+                f"Pubblicazione completata — {n} draft su Etsy. Costo step: ${publisher_cost:.4f}. Analisi in avvio."
                 if n > 0
-                else "Pubblicazione completata — nessun draft creato. Verifica log publisher."
+                else f"Pubblicazione completata — nessun draft creato. Costo step: ${publisher_cost:.4f}. Verifica log publisher."
             )
             await self.memory.save_message(session_id, "assistant", msg, "pipeline_auto")
             # Publisher → Analytics: sincronizza stats dopo ogni pubblicazione
@@ -1394,7 +1411,14 @@ class Pepe:
                 or output.get("listings_analyzed_count")
                 or len(output.get("listings_analyzed", []))
             )
-            done_msg = f"Analytics completato — {listings_analyzed} listing analizzati."
+            analytics_cost = result.cost_usd
+            total_run_cost = task.input_data.get("_run_cost_usd", 0.0) + analytics_cost
+            EUR_RATE = 0.92
+            total_run_eur = total_run_cost * EUR_RATE
+            done_msg = (
+                f"Analytics completato — {listings_analyzed} listing analizzati.\n"
+                f"Costo run: ${total_run_cost:.4f} (≈ €{total_run_eur:.4f})"
+            )
             await self.memory.save_message(session_id, "assistant", done_msg, "pipeline_auto")
             await self.notify_telegram(done_msg)
             # Learning loop

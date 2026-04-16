@@ -51,8 +51,6 @@ export default function App() {
 
   /* ── Fetch costs / analytics / chroma — on mount + ogni 30 s ── */
   useEffect(() => {
-    const today = new Date().toISOString().slice(0, 10)
-
     const fetchCosts = () =>
       fetch('/api/costs?days=30')
         .then((r) => r.ok ? r.json() : null)
@@ -60,14 +58,13 @@ export default function App() {
           if (!data?.breakdown) return
           const b = data.breakdown
           const budgetUsd = b.budget_threshold_eur ? b.budget_threshold_eur / 0.92 : undefined
-          // runCost = costo accumulato oggi nel DB (si ripristina al refresh)
-          const runCost = (b.per_day as Record<string, number>)?.[today] ?? 0
+          // runCost NON viene settato dal REST — si accumula solo dagli eventi WS llm_call.
+          // In questo modo mostra il costo della sessione corrente, non il totale di oggi.
           setCostsData({
             total:    b.total    ?? 0,
             perAgent: b.per_agent ?? {},
             perDay:   b.per_day   ?? {},
             budgetMonthlyUsd: budgetUsd,
-            runCost,
           })
         })
         .catch(() => {})

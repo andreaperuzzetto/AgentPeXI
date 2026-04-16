@@ -42,9 +42,11 @@ logs/
 
 # Skills / agent config
 .github/
+.claude/
 
 # Notes private
-plan.md
+planv1.md
+planv2.md
 NOTES.md
 
 # Fonts (downloaded at setup)

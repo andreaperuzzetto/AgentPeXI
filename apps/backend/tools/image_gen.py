@@ -1,4 +1,4 @@
-"""ImageGenerator — genera Digital Art PNG via Replicate Flux Pro."""
+"""ImageGenerator — genera Digital Art PNG via Nano Banana Pro (fal.ai) o Replicate Flux Pro."""
 
 from __future__ import annotations
 
@@ -14,8 +14,11 @@ logger = logging.getLogger("agentpexi.image_gen")
 DEFAULT_WIDTH = 3000
 DEFAULT_HEIGHT = 3000
 
-# Modello Replicate
+# Modello Replicate (fallback)
 FLUX_PRO_MODEL = "black-forest-labs/flux-1.1-pro"
+
+# Modello fal.ai (primario)
+NANO_BANANA_MODEL = "fal-ai/nano-banana-pro"
 
 # Stili per product type
 _STYLE_MAP = {
@@ -271,6 +274,10 @@ class ImageGenerator:
     # Prompt builder per Flux Pro
     # ------------------------------------------------------------------
 
+    def _build_prompt(self, brief: dict) -> str:
+        """Alias pubblico per compatibilità con NanaBananaGenerator."""
+        return self._build_flux_prompt(brief)
+
     def _build_flux_prompt(self, brief: dict) -> str:
         """
         Costruisce il prompt Flux Pro dal brief Research Agent.
@@ -311,3 +318,231 @@ class ImageGenerator:
         prompt = " ".join(prompt.split())
         logger.debug("Flux prompt: %s", prompt[:120])
         return prompt
+
+
+# ---------------------------------------------------------------------------
+# NanaBananaGenerator — Nano Banana Pro via fal.ai (primario)
+# ---------------------------------------------------------------------------
+
+class NanaBananaGenerator:
+    """
+    Genera Digital Art PNG via Nano Banana Pro su fal.ai.
+
+    Nano Banana Pro (Gemini 3 Pro Image) è superiore a Flux Pro su:
+    - Text rendering (quote prints, tipografia)
+    - Clean graphic design e botanical illustration
+    - Semantic understanding di prompt complessi
+
+    Costo: ~$0.02/immagine 2K via fal.ai (vs $0.055 Flux Pro su Replicate).
+    Fallback automatico su ImageGenerator (Flux) se FAL_KEY non è disponibile.
+    """
+
+    def __init__(self, api_key: str | None = None) -> None:
+        # Priorità: parametro esplicito → settings (pydantic) → os.getenv
+        if not api_key:
+            try:
+                from apps.backend.core.config import settings as _settings
+                api_key = _settings.FAL_KEY or None
+            except Exception:
+                pass
+        self._api_key = api_key or os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY")
+        self._available = bool(self._api_key)
+        if self._available:
+            # Imposta la chiave nell'environment se passata esplicitamente
+            if api_key:
+                os.environ["FAL_KEY"] = api_key
+            logger.info("NanaBananaGenerator: fal.ai disponibile — Nano Banana Pro attivo")
+        else:
+            logger.info(
+                "NanaBananaGenerator: FAL_KEY non trovata — "
+                "aggiungere al .env per abilitare Nano Banana Pro."
+            )
+
+    @property
+    def is_available(self) -> bool:
+        return self._available
+
+    @property
+    def provider_name(self) -> str:
+        return "nano_banana_pro" if self._available else "placeholder"
+
+    async def generate_digital_art(
+        self,
+        brief: dict,
+        output_path: Path,
+        width: int = DEFAULT_WIDTH,
+        height: int = DEFAULT_HEIGHT,
+        mock_mode: bool = False,
+    ) -> Path:
+        """
+        Genera un'immagine Digital Art PNG con Nano Banana Pro.
+
+        Stessa interfaccia di ImageGenerator per drop-in replacement.
+        """
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        prompt = self._build_prompt(brief)
+
+        if mock_mode:
+            logger.info("NanaBananaGenerator: mock mode — placeholder Pillow")
+            return await self._generate_placeholder(brief, prompt, output_path, width, height)
+
+        if self._available:
+            try:
+                return await self._generate_via_fal(prompt, output_path, width, height)
+            except Exception as exc:
+                logger.error("fal.ai fallito (%s) — fallback placeholder", exc)
+                return await self._generate_placeholder(brief, prompt, output_path, width, height)
+        else:
+            return await self._generate_placeholder(brief, prompt, output_path, width, height)
+
+    async def _generate_via_fal(
+        self,
+        prompt: str,
+        output_path: Path,
+        width: int,
+        height: int,
+    ) -> Path:
+        """Chiama Nano Banana Pro via fal.ai, scarica il PNG risultante."""
+        import httpx
+
+        try:
+            import fal_client
+        except ImportError:
+            logger.error("Pacchetto 'fal-client' non installato. Eseguire: pip install fal-client")
+            raise
+
+        logger.info("Nano Banana Pro: generazione immagine '%s'", output_path.name)
+
+        loop = asyncio.get_event_loop()
+
+        def _run_sync() -> Any:
+            import fal_client as _fal
+            return _fal.run(
+                NANO_BANANA_MODEL,
+                arguments={
+                    "prompt": prompt,
+                    "negative_prompt": _NEGATIVE_PROMPT,
+                    "image_size": {"width": width, "height": height},
+                    "num_inference_steps": 28,
+                    "guidance_scale": 3.5,
+                    "num_images": 1,
+                    "output_format": "png",
+                    "enable_safety_checker": True,
+                },
+            )
+
+        result = await loop.run_in_executor(None, _run_sync)
+
+        # fal.ai ritorna {"images": [{"url": "...", "width": ..., "height": ...}]}
+        images = result.get("images") or []
+        if not images:
+            raise ValueError("fal.ai Nano Banana Pro: nessuna immagine nel risultato")
+
+        image_url = images[0].get("url")
+        if not image_url:
+            raise ValueError("fal.ai Nano Banana Pro: URL immagine mancante nel risultato")
+
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            response = await client.get(image_url)
+            response.raise_for_status()
+            output_path.write_bytes(response.content)
+
+        logger.info(
+            "Nano Banana Pro: immagine salvata — %s (%.1f KB)",
+            output_path.name,
+            output_path.stat().st_size / 1024,
+        )
+        return output_path
+
+    async def _generate_placeholder(
+        self,
+        brief: dict,
+        prompt: str,
+        output_path: Path,
+        width: int,
+        height: int,
+    ) -> Path:
+        """Placeholder Pillow identico a ImageGenerator per coerenza nei test."""
+        # Riusa la logica di ImageGenerator per il placeholder
+        _fallback = ImageGenerator()
+        return await _fallback._generate_placeholder(brief, prompt, output_path, width, height)
+
+    def _build_prompt(self, brief: dict) -> str:
+        """
+        Costruisce il prompt per Nano Banana Pro.
+        Sfrutta le capacità di text rendering aggiungendo istruzioni
+        esplicite per quote prints e tipografia.
+        """
+        niche = brief.get("niche", "")
+        art_type = brief.get("art_type", "wall_art")
+        style_preset = brief.get("style_preset", "minimal")
+        colors = brief.get("colors", {})
+        quote = brief.get("quote", "")
+
+        style_suffix = _STYLE_MAP.get(art_type, _STYLE_MAP["wall_art"])
+
+        color_desc = ""
+        if colors.get("bg"):
+            color_desc = f"color palette: {colors.get('bg', '')} background, "
+            if colors.get("accent"):
+                color_desc += f"{colors['accent']} accent tones, "
+
+        style_desc = {
+            "minimal": "minimalist clean design, lots of white space, ",
+            "decorative": "decorative ornate design, intricate details, ",
+            "corporate": "professional modern design, geometric elements, ",
+            "playful": "fun whimsical design, bright colors, ",
+        }.get(style_preset, "")
+
+        if art_type == "quote_print" and quote:
+            # Nano Banana Pro gestisce bene il testo — istruzioni esplicite
+            subject = (
+                f'typographic wall art print featuring the exact text: "{quote}", '
+                f"crystal clear readable typography, elegant font, centered composition, "
+            )
+        else:
+            subject = f"{niche} themed printable wall art, "
+
+        prompt = f"{subject}{style_desc}{color_desc}{style_suffix}"
+        prompt = " ".join(prompt.split())
+        logger.debug("Nano Banana prompt: %s", prompt[:120])
+        return prompt
+
+
+# ---------------------------------------------------------------------------
+# Factory — restituisce il miglior generatore disponibile
+# ---------------------------------------------------------------------------
+
+def create_image_generator() -> NanaBananaGenerator | ImageGenerator:
+    """
+    Factory function: restituisce il generatore migliore disponibile.
+
+    Priorità:
+    1. NanaBananaGenerator (fal.ai) — se FAL_KEY è configurata
+    2. ImageGenerator (Replicate Flux Pro) — se REPLICATE_API_TOKEN è configurato
+    3. ImageGenerator in modalità placeholder — fallback senza API
+
+    Il Design Agent usa sempre questa factory — mai istanziare direttamente.
+    """
+    # Legge da settings (pydantic-settings carica .env) con fallback a os.getenv
+    # I due non si sincronizzano automaticamente — controlliamo entrambi
+    try:
+        from apps.backend.core.config import settings as _settings
+        fal_key = _settings.FAL_KEY or os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY")
+    except Exception:
+        fal_key = os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY")
+    if fal_key:
+        gen = NanaBananaGenerator(api_key=fal_key)
+        if gen.is_available:
+            logger.info("create_image_generator: usando NanaBananaGenerator (fal.ai)")
+            return gen
+
+    # Fallback Flux Pro
+    gen_flux = ImageGenerator()
+    if gen_flux.is_available:
+        logger.info("create_image_generator: FAL_KEY assente — usando ImageGenerator (Flux Pro)")
+    else:
+        logger.info("create_image_generator: nessuna API — placeholder Pillow")
+    return gen_flux

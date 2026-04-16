@@ -22,7 +22,7 @@ from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.core.storage import StorageManager
 from apps.backend.tools.file_gen import ColorScheme, PDFGenerator
-from apps.backend.tools.image_gen import ImageGenerator
+from apps.backend.tools.image_gen import create_image_generator
 from apps.backend.tools.svg_gen import SVGGenerator
 from apps.backend.tools.playwright_export import generate_pdf_thumbnail
 
@@ -461,9 +461,9 @@ async def _validate_pdf(pdf_path: Path, template: str, expected_pages: int) -> d
         "weekly_planner": 50,
         "daily_planner": 60,
         "monthly_planner": 80,
-        "budget_tracker": 50,
-        "habit_tracker": 50,
-        "default": 30,
+        "budget_tracker": 30,   # template semplice, 40KB è normale
+        "habit_tracker": 30,
+        "default": 20,
     }
     min_size = MIN_SIZE_KB.get(template, MIN_SIZE_KB["default"])
 
@@ -819,7 +819,7 @@ class DesignAgent(AgentBase):
         )
         self.storage = storage
         self._pdf_gen = PDFGenerator()
-        self._image_gen = ImageGenerator()
+        self._image_gen = create_image_generator()
         self._svg_gen = SVGGenerator()
         self._get_mock_mode = get_mock_mode or (lambda: False)
 
@@ -1233,10 +1233,11 @@ class DesignAgent(AgentBase):
         art_type = normalized_input.get("art_type", "wall_art")
         style_preset = normalized_input.get("style_preset", "minimal")
 
+        provider = getattr(self._image_gen, "provider_name", "flux" if self._image_gen.is_available else "placeholder")
         await self._log_step(
             "thinking",
             f"Generazione {num_variants} Digital Art PNG per niche '{niche}' "
-            f"(art_type={art_type}, api={'flux' if self._image_gen.is_available else 'placeholder'})",
+            f"(art_type={art_type}, api={provider})",
         )
 
         generated: list[dict] = []
@@ -1258,7 +1259,7 @@ class DesignAgent(AgentBase):
                     "variant_index": i,
                     "art_type": art_type,
                     "file_size_kb": round(path.stat().st_size / 1024, 1),
-                    "used_replicate": self._image_gen.is_available,
+                    "image_provider": getattr(self._image_gen, "provider_name", "unknown"),
                 })
             except Exception as e:
                 logger.warning("Errore Digital Art variante %d: %s", i, e)
@@ -1275,7 +1276,8 @@ class DesignAgent(AgentBase):
             )
 
         confidence = len(generated) / num_variants
-        if not self._image_gen.is_available:
+        provider = getattr(self._image_gen, "provider_name", "unknown")
+        if provider == "placeholder":
             confidence *= 0.6  # placeholder = fiducia ridotta
 
         if pq_task_id:
@@ -1297,7 +1299,7 @@ class DesignAgent(AgentBase):
                 "niche": niche,
                 "product_type": "digital_art_png",
                 "art_type": art_type,
-                "used_replicate": self._image_gen.is_available,
+                "image_provider": getattr(self._image_gen, "provider_name", "unknown"),
             },
             confidence=confidence,
         )

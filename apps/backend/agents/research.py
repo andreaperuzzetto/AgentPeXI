@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from apps.backend.agents.base import AgentBase
-from apps.backend.core.config import MODEL_SONNET
+from apps.backend.core.config import MODEL_HAIKU
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.tools import tavily as tavily_tool
 from apps.backend.tools.trends import get_google_trends
@@ -81,7 +81,7 @@ Schema OBBLIGATORIO:
         "tag 13 esatto"
       ],
       "tag_strategy": "perché questi 13 tag — mix di high-volume e long-tail",
-      "recommended_product_type": "printable_pdf|digital_art_png|svg_bundle|mixed",
+      "recommended_product_type": "printable_pdf|digital_art_png|svg_bundle",
       "product_format_details": "specifiche esatte: A4/US Letter, pagine, formato, contenuto",
       "entry_difficulty": "low|medium|high",
       "selling_signals": {
@@ -110,7 +110,7 @@ class ResearchAgent(AgentBase):
     """Agente specializzato in ricerca di mercato Etsy."""
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(name="research", model=MODEL_SONNET, **kwargs)
+        super().__init__(name="research", model=MODEL_HAIKU, **kwargs)
 
     async def run(self, task: AgentTask) -> AgentResult:
         """Analizza una o più nicchie Etsy e produce un report strutturato."""

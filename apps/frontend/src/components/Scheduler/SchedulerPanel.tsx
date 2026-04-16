@@ -1,93 +1,87 @@
 import { useState, useEffect } from 'react'
 
-interface Schedule {
-  id: number | string
-  name: string
-  cron_expression?: string | null
-  interval?: string | null
-  trigger?: string | null      // APScheduler job: e.g. "cron[hour='8', minute='0']"
-  enabled?: boolean | number
-  next_run?: string | null
-  nextRun?: string | null
-  agent_name?: string | null
-  status?: string | null
-  last_run?: string | null
+interface QueueItem {
+  id: number
+  task_id: string
+  product_type: string
+  niche: string
+  status: 'planned' | 'in_progress' | 'completed' | 'failed' | 'skipped'
+  created_at: string
+  updated_at?: string | null
+  file_paths?: string | null
 }
 
-/* Extract HH:MM from next_run ISO, cron expression, or APScheduler trigger string */
-function formatTime(s: Schedule): string {
-  const nextRun = s.next_run ?? s.nextRun
-  if (nextRun) {
-    try {
-      return new Date(nextRun).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
-    } catch { /* ignore */ }
+function statusStyle(status: QueueItem['status']): { bg: string; color: string; border: string; label: string } {
+  switch (status) {
+    case 'in_progress':
+      return { bg: 'rgba(45,232,106,.10)', color: 'var(--accent)', border: '1px solid rgba(45,232,106,.3)', label: 'IN CORSO' }
+    case 'completed':
+      return { bg: 'rgba(45,232,106,.05)', color: 'var(--ok)', border: '1px solid rgba(45,232,106,.15)', label: 'COMPLETATO' }
+    case 'failed':
+      return { bg: 'rgba(224,82,82,.08)', color: 'var(--err)', border: '1px solid rgba(224,82,82,.2)', label: 'ERRORE' }
+    case 'skipped':
+      return { bg: 'var(--s2)', color: 'var(--tf)', border: '1px solid var(--b0)', label: 'SALTATO' }
+    case 'planned':
+    default:
+      return { bg: 'rgba(45,232,106,.04)', color: 'var(--tm)', border: '1px solid rgba(45,232,106,.12)', label: 'PIANIFICATO' }
   }
-  /* Try APScheduler trigger string: cron[hour='8', minute='0'] */
-  if (s.trigger) {
-    const hourMatch = s.trigger.match(/hour='(\d+)'/)
-    const minMatch = s.trigger.match(/minute='(\d+)'/)
-    if (hourMatch) {
-      const h = hourMatch[1].padStart(2, '0')
-      const m = minMatch ? minMatch[1].padStart(2, '0') : '00'
-      return `${h}:${m}`
-    }
-    const timeMatch = s.trigger.match(/(\d{1,2}):(\d{2})/)
-    if (timeMatch) return `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`
-  }
-  /* Try HH:MM from cron expression (field 1 = hour, field 0 = minute) */
-  const cron = s.cron_expression ?? s.interval ?? ''
-  const parts = cron.trim().split(/\s+/)
-  if (parts.length >= 2 && parts[0] !== '*' && parts[1] !== '*') {
-    return `${parts[1].padStart(2, '0')}:${parts[0].padStart(2, '0')}`
-  }
-  const m = cron.match(/(\d{1,2}:\d{2})/)
-  return m ? m[1] : cron.slice(0, 5) || '—'
 }
 
-function tagStyle(status?: string | null, enabled?: boolean | number): { bg: string; color: string; border: string; label: string } {
-  const s = (status ?? '').toLowerCase()
-  if (s === 'running' || s === 'in esecuzione') {
-    return { bg: 'rgba(45,232,106,.10)', color: 'var(--accent)', border: '1px solid rgba(45,232,106,.3)', label: 'IN ESECUZIONE' }
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso)
+    const now = new Date()
+    const diffMs = now.getTime() - d.getTime()
+    const diffH = diffMs / 3_600_000
+    if (diffH < 1) return `${Math.round(diffMs / 60_000)}m fa`
+    if (diffH < 24) return `${Math.round(diffH)}h fa`
+    return d.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
+  } catch {
+    return '—'
   }
-  if (s === 'completed' || s === 'completato') {
-    return { bg: 'rgba(45,232,106,.05)', color: 'var(--ok)', border: '1px solid rgba(45,232,106,.15)', label: 'COMPLETATO' }
+}
+
+function productTypeLabel(pt: string): string {
+  const map: Record<string, string> = {
+    quote_print: 'Quote Print',
+    wall_art: 'Wall Art',
+    digital_planner: 'Planner',
+    sticker_sheet: 'Stickers',
+    journal: 'Journal',
+    printable: 'Printable',
   }
-  if (s === 'error' || s === 'errore') {
-    return { bg: 'rgba(224,82,82,.08)', color: 'var(--err)', border: '1px solid rgba(224,82,82,.2)', label: 'ERRORE' }
-  }
-  if (s === 'paused' || enabled === false || enabled === 0) {
-    return { bg: 'var(--s2)', color: 'var(--tf)', border: '1px solid var(--b0)', label: 'OFF' }
-  }
-  /* "scheduled" or any other active state */
-  return { bg: 'rgba(45,232,106,.04)', color: 'var(--tm)', border: '1px solid rgba(45,232,106,.12)', label: 'PROGRAMMATO' }
+  return map[pt] ?? pt.replace(/_/g, ' ')
 }
 
 export function SchedulerPanel() {
-  const [schedules, setSchedules] = useState<Schedule[]>([])
+  const [items, setItems] = useState<QueueItem[]>([])
+  const [filter, setFilter] = useState<string>('all')
+
+  const fetchQueue = () =>
+    fetch('/api/production-queue?limit=50')
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((data) => setItems(Array.isArray(data.items) ? data.items : []))
+      .catch(() => setItems([]))
 
   useEffect(() => {
-    const fetchScheduler = () =>
-      fetch('/api/scheduler')
-        .then((r) => (r.ok ? r.json() : { jobs: [], tasks: [] }))
-        .then((data) => {
-          /* Prefer APScheduler jobs (active, real-time) over DB tasks */
-          const jobs: Schedule[] = Array.isArray(data.jobs) ? data.jobs : []
-          const tasks: Schedule[] = Array.isArray(data.tasks) ? data.tasks : []
-          /* Merge: jobs first, then any DB tasks not already represented */
-          const jobIds = new Set(jobs.map((j) => String(j.id)))
-          const extra = tasks.filter((t) => !jobIds.has(`db_task_${t.id}`) && !jobIds.has(String(t.id)))
-          setSchedules([...jobs, ...extra])
-        })
-        .catch(() => setSchedules([]))
-
-    fetchScheduler()
-    const id = setInterval(fetchScheduler, 30_000)
+    fetchQueue()
+    const id = setInterval(fetchQueue, 20_000)
     return () => clearInterval(id)
   }, [])
 
+  const statusFilters: { key: string; label: string }[] = [
+    { key: 'all', label: 'Tutti' },
+    { key: 'planned', label: 'Pianificati' },
+    { key: 'in_progress', label: 'In corso' },
+    { key: 'completed', label: 'Completati' },
+    { key: 'failed', label: 'Errori' },
+  ]
+
+  const visible = filter === 'all' ? items : items.filter((i) => i.status === filter)
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      {/* Mini title — matches .mini-title */}
+      {/* Header */}
       <div
         style={{
           padding: '8px 13px',
@@ -108,39 +102,85 @@ export function SchedulerPanel() {
             color: 'var(--tm)',
           }}
         >
-          Scheduler
+          Coda Produzione
+        </span>
+        <span
+          style={{
+            fontFamily: 'var(--fd)',
+            fontSize: 11,
+            color: 'var(--tf)',
+          }}
+        >
+          {items.length > 0 ? `${items.length} item${items.length !== 1 ? 's' : ''}` : ''}
         </span>
       </div>
 
-      {schedules.length === 0 ? (
+      {/* Filter tabs */}
+      {items.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            gap: 4,
+            padding: '6px 13px',
+            borderBottom: '1px solid var(--b0)',
+            flexShrink: 0,
+            overflowX: 'auto',
+          }}
+        >
+          {statusFilters.map(({ key, label }) => {
+            const count = key === 'all' ? items.length : items.filter((i) => i.status === key).length
+            if (key !== 'all' && count === 0) return null
+            const active = filter === key
+            return (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                style={{
+                  fontFamily: 'var(--fd)',
+                  fontSize: 11,
+                  padding: '2px 7px',
+                  borderRadius: 4,
+                  border: active ? '1px solid rgba(45,232,106,.35)' : '1px solid var(--b0)',
+                  background: active ? 'rgba(45,232,106,.08)' : 'transparent',
+                  color: active ? 'var(--accent)' : 'var(--tf)',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap' as const,
+                  transition: 'all .15s',
+                }}
+              >
+                {label}{count > 0 ? ` ${count}` : ''}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* List */}
+      {visible.length === 0 ? (
         <div style={{ padding: '16px 13px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
           <svg width="28" height="28" viewBox="0 0 20 20" fill="none" style={{ color: 'var(--tf)', opacity: 0.5 }}>
-            <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.2" />
-            <path d="M10 6v4.5l3 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M7 7h6M7 10h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
           </svg>
           <span style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tf)' }}>
-            Nessun job schedulato
+            {filter === 'all' ? 'Nessun prodotto in coda' : 'Nessun item con questo stato'}
           </span>
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 13px' }}>
-          {schedules.map((t) => {
-            /* enabled: DB tasks have 0/1, APScheduler jobs are always active (enabled=undefined) */
-            const isEnabled = t.enabled === undefined ? true : Boolean(t.enabled)
-            const ts = tagStyle(t.status, isEnabled)
-            const label = t.agent_name ? `${t.agent_name} · ${t.name}` : t.name
-            const lastRunStr = t.last_run ? new Date(t.last_run).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : null
+          {visible.map((item) => {
+            const st = statusStyle(item.status)
             return (
-              <SchedRow
-                key={t.id}
-                time={formatTime(t)}
-                label={label}
-                tagLabel={ts.label}
-                tagBg={ts.bg}
-                tagColor={ts.color}
-                tagBorder={ts.border}
-                labelColor={isEnabled ? 'var(--tp)' : 'var(--tm)'}
-                lastRun={lastRunStr}
+              <QueueRow
+                key={item.task_id}
+                niche={item.niche}
+                productType={productTypeLabel(item.product_type)}
+                tagLabel={st.label}
+                tagBg={st.bg}
+                tagColor={st.color}
+                tagBorder={st.border}
+                time={formatDate(item.created_at)}
+                hasFiles={Boolean(item.file_paths)}
               />
             )
           })}
@@ -150,24 +190,24 @@ export function SchedulerPanel() {
   )
 }
 
-function SchedRow({
-  time,
-  label,
+function QueueRow({
+  niche,
+  productType,
   tagLabel,
   tagBg,
   tagColor,
   tagBorder,
-  labelColor = 'var(--tm)',
-  lastRun,
+  time,
+  hasFiles,
 }: {
-  time: string
-  label: string
+  niche: string
+  productType: string
   tagLabel: string
   tagBg: string
   tagColor: string
   tagBorder: string
-  labelColor?: string
-  lastRun?: string | null
+  time: string
+  hasFiles: boolean
 }) {
   return (
     <div
@@ -175,7 +215,7 @@ function SchedRow({
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '4px 3px',
+        padding: '5px 3px',
         fontSize: 14,
         borderRadius: 4,
         transition: 'background .2s var(--e-io)',
@@ -183,24 +223,29 @@ function SchedRow({
       onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(45,232,106,.04)' }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
     >
-      {/* .sched-time */}
+      {/* Time */}
       <span
         style={{
           fontFamily: 'var(--fd)',
-          fontSize: 12,
-          color: 'var(--tm)',
-          width: 36,
+          fontSize: 11,
+          color: 'var(--tf)',
+          width: 40,
           flexShrink: 0,
         }}
       >
         {time}
       </span>
-      {/* .sched-label */}
-      <span style={{ color: labelColor, flex: 1, fontSize: 14 }}>
-        {label}
-        {lastRun && <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', marginLeft: 6 }}>ultimo {lastRun}</span>}
+
+      {/* Niche + type */}
+      <span style={{ color: 'var(--tp)', flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {niche}
+        <span style={{ color: 'var(--tf)', fontSize: 11, marginLeft: 5 }}>{productType}</span>
+        {hasFiles && (
+          <span style={{ marginLeft: 5, fontSize: 10, color: 'var(--ok)', opacity: 0.7 }}>✓</span>
+        )}
       </span>
-      {/* .sched-tag */}
+
+      {/* Status tag */}
       <span
         style={{
           fontFamily: 'var(--fd)',
@@ -210,7 +255,7 @@ function SchedRow({
           flexShrink: 0,
           background: tagBg,
           color: tagColor,
-          border: `1px solid ${tagBorder}`,
+          border: tagBorder,
         }}
       >
         {tagLabel}

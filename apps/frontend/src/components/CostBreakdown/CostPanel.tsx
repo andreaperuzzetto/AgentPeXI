@@ -7,11 +7,6 @@ export function CostPanel() {
   const llmStats   = useStore((s) => s.llmStats)
   const budgetMonthlyUsd = useStore((s) => s.budgetMonthlyUsd)
 
-  /* Use REST-fetched total; fall back to rough estimate */
-  const totalCost  = llmStats.totalCost > 0
-    ? llmStats.totalCost
-    : (dailyCost ?? 0) * 30
-
   /* Build sparkline from per_day data (last 7 days) */
   const sparkline = (() => {
     const days = Object.entries(llmStats.perDay)
@@ -23,8 +18,10 @@ export function CostPanel() {
     return days.map((v) => Math.round((v / max) * 100))
   })()
 
-  /* Today's cost: prefer accumulated run cost if we have it, else dailyCost */
-  const todayCost = llmStats.runCost > 0 ? llmStats.runCost : (dailyCost ?? 0)
+  /* sessionCost = accumulo WS da quando la tab è aperta (si azzera al refresh)
+     dailyCost   = totale oggi dal DB (aggiornato ogni 30s dal REST) */
+  const sessionCost = llmStats.runCost
+  const todayCost = dailyCost ?? 0
 
   return (
     <div
@@ -57,7 +54,7 @@ export function CostPanel() {
             color: 'var(--tm)',
           }}
         >
-          Costo oggi
+          Costo
         </span>
         <span
           style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}
@@ -69,7 +66,7 @@ export function CostPanel() {
       {/* .cost-row */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
-          {/* .cost-val */}
+          {/* sessione corrente — si azzera al refresh */}
           <div
             style={{
               fontFamily: 'var(--fd)',
@@ -78,21 +75,23 @@ export function CostPanel() {
               fontWeight: 500,
             }}
           >
-            ${todayCost.toFixed(3)}
+            ${sessionCost.toFixed(3)}
           </div>
-          {/* .cost-sub */}
           <div
             style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)', marginTop: 2 }}
           >
-            Proiezione: ${((dailyCost ?? todayCost) * 30).toFixed(2)}/mese
+            questa sessione
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>
-            Totale progetto
+            oggi
           </div>
           <div style={{ fontFamily: 'var(--fd)', fontSize: 16, color: 'var(--tm)', marginTop: 1 }}>
-            ${totalCost.toFixed(2)}
+            ${todayCost.toFixed(3)}
+          </div>
+          <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', marginTop: 2 }}>
+            proj. ${(todayCost * 30).toFixed(2)}/mese
           </div>
         </div>
       </div>

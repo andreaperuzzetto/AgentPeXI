@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Tools
     TAVILY_API_KEY: str = ""
     REPLICATE_API_KEY: str = ""
+    FAL_KEY: str = ""  # fal.ai — Nano Banana Pro (primario). Se vuoto, fallback su Replicate.
 
     # Voice
     ELEVENLABS_API_KEY: str = ""

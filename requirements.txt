@@ -4,6 +4,7 @@
 anthropic>=0.40.0
 voyageai>=0.2.3
 replicate>=1.0.0
+fal-client>=0.10.0  # Nano Banana Pro via fal.ai (primario image gen)
 
 # Web framework
 fastapi>=0.115.0
