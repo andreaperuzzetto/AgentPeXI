@@ -48,6 +48,7 @@ function fmtTok(n: number): string {
 export function ReasoningPanel() {
   const agents      = useStore((s) => s.agents)
   const allSteps    = useStore((s) => s.agentSteps)
+  const setSelectedTaskId = useStore((s) => s.setSelectedTaskId)
   const sysStatus   = useStore((s) => s.systemStatus)
   const llmStats    = useStore((s) => s.llmStats)
   const contextState = useStore((s) => s.contextState)
@@ -64,6 +65,7 @@ export function ReasoningPanel() {
         tag: s.stepType.slice(0, 4).toUpperCase(),
         desc: s.description,
         dur: s.durationMs > 0 ? `${s.durationMs}ms` : '—',
+        taskId: s.taskId,
       }))
     : []
 
@@ -119,7 +121,10 @@ export function ReasoningPanel() {
             {pipelineSteps.length > 0 ? pipelineSteps.map((step, i) => {
               const isLatest = i === pipelineSteps.length - 1
               return (
-                <div key={i} className={`pstep${isLatest ? ' latest' : ''}`}>
+                <div key={i} className={`pstep${isLatest ? ' latest' : ''}`}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setSelectedTaskId(step.taskId)}
+                >
                   <span className="ptag">{step.tag}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isLatest ? 'var(--tp)' : 'var(--tm)' }}>
                     {step.desc}
@@ -276,7 +281,14 @@ export function ReasoningPanel() {
                   padding: '6px 9px', borderRadius: 6,
                   background: isRun ? 'rgba(45,232,106,.06)' : 'var(--s2)',
                   border: `1px solid ${isRun ? 'rgba(45,232,106,.12)' : 'var(--b0)'}`,
-                }}>
+                  cursor: 'pointer',
+                }}
+                onClick={() => {
+                  const steps = allSteps[row.name]
+                  const last = steps?.[steps.length - 1]
+                  if (last) setSelectedTaskId(last.taskId)
+                }}
+                >
                   <span className={`status-dot ${isRun ? 'status-dot--running' : 'status-dot--off'}`} />
                   <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: isRun ? 'var(--tp)' : 'var(--tm)', flex: 1 }}>
                     {row.name} · {row.task}

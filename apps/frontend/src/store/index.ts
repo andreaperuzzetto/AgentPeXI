@@ -104,6 +104,10 @@ interface AgentPeXIStore {
   /* Budget threshold */
   budgetMonthlyUsd: number | null
 
+  /* Selected Task for detail overlay */
+  selectedTaskId: string | null
+  setSelectedTaskId: (id: string | null) => void
+
   /* WS Send */
   wsSend: ((content: string) => void) | null
   setWsSend: (fn: ((content: string) => void) | null) => void
@@ -193,6 +197,9 @@ export const useStore = create<AgentPeXIStore>((set) => ({
   setConnectedAt: (ts) => set({ connectedAt: ts }),
 
   budgetMonthlyUsd: null,
+
+  selectedTaskId: null,
+  setSelectedTaskId: (id) => set({ selectedTaskId: id }),
 
   wsSend: null,
   setWsSend: (fn) => set({ wsSend: fn }),

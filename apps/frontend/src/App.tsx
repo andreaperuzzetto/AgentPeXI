@@ -9,12 +9,15 @@ import { CostPanel } from './components/CostBreakdown/CostPanel'
 import { AnalyticsMiniPanel } from './components/AnalyticsMini/AnalyticsMiniPanel'
 import { AnalyticsOverlay } from './components/AnalyticsOverlay/AnalyticsOverlay'
 import { SystemOverlay } from './components/SystemOverlay/SystemOverlay'
+import { TaskDetailOverlay } from './components/TaskDetail/TaskDetailOverlay'
+import { ToolFeed } from './components/ToolFeed/ToolFeed'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useStore } from './store'
 
 export default function App() {
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
+  const [sistemiTab, setSistemiTab] = useState<'dominio' | 'tool'>('tool')
   const setCostsData = useStore((s) => s.setCostsData)
   const setAnalyticsSummary = useStore((s) => s.setAnalyticsSummary)
   const setChromaStats = useStore((s) => s.setChromaStats)
@@ -149,9 +152,33 @@ export default function App() {
             <div className="panel-header">
               <span className="section-label">Sistemi</span>
             </div>
-            {/* scrollable body */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <DomainCard />
+            {/* tab bar */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--b0)', flexShrink: 0 }}>
+              {(['dominio', 'tool'] as const).map(tab => (
+                <button key={tab}
+                  onClick={() => setSistemiTab(tab)}
+                  style={{
+                    flex: 1, height: 32, background: 'none', border: 'none', cursor: 'pointer',
+                    fontFamily: 'var(--fd)', fontSize: 10, letterSpacing: '0.05em',
+                    color: sistemiTab === tab ? 'var(--accent)' : 'var(--tf)',
+                    borderBottom: sistemiTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+                    transition: 'color .2s var(--e-io), border-color .2s var(--e-io)',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {tab === 'dominio' ? 'Dominio' : 'Tool Activity'}
+                </button>
+              ))}
+            </div>
+            {/* tab content */}
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              {sistemiTab === 'dominio' ? (
+                <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <DomainCard />
+                </div>
+              ) : (
+                <ToolFeed />
+              )}
             </div>
           </div>
         </div>
@@ -200,6 +227,8 @@ export default function App() {
       <SystemOverlay />
       {/* Analytics overlay modal */}
       <AnalyticsOverlay open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />
+      {/* Task detail overlay */}
+      <TaskDetailOverlay />
     </div>
   )
 }

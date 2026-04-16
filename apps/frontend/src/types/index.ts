@@ -153,3 +153,31 @@ export interface AgentStep {
   durationMs: number
   timestamp: string
 }
+
+/* ── Timeline (from /api/tasks/{id}/timeline) ── */
+
+export interface TimelineEntry {
+  type: 'agent_step' | 'llm_call' | 'tool_call'
+  timestamp: string
+  step_number?: number
+  step_type?: string
+  description?: string
+  duration_ms?: number
+  model?: string
+  input_tokens?: number
+  output_tokens?: number
+  cost_usd?: number
+  tool_name?: string
+  action?: string
+  success?: boolean
+}
+
+/* ── Cost breakdown (from /api/costs) ── */
+
+export interface CostsBreakdown {
+  per_agent: Record<string, number>
+  per_tool: Record<string, number>
+  per_day: Record<string, number>
+  total: number
+  budget_threshold_eur: number
+}
