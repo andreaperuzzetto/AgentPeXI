@@ -245,15 +245,21 @@ function TimelineRow({ evt }: { evt: TimelineEntry }) {
             </div>
           </>
         )}
-        {evt.type === 'tool_call' && (
-          <div style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tp)', display: 'flex', alignItems: 'center', gap: 6 }}>
-            {evt.tool_name}
-            <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>· {evt.action}</span>
-            <span className={evt.success ? 'badge-pill badge-pill--done' : 'badge-pill badge-pill--err'} style={{ fontSize: 10 }}>
-              {evt.success ? 'OK' : 'ERR'}
-            </span>
-          </div>
-        )}
+        {evt.type === 'tool_call' && (() => {
+          const ok = evt.status === 'success' || evt.status === 'ok'
+          return (
+            <div style={{ fontFamily: 'var(--fd)', fontSize: 13, color: 'var(--tp)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {evt.tool_name}
+              <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>· {evt.action}</span>
+              {evt.duration_ms != null && (
+                <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>{evt.duration_ms}ms</span>
+              )}
+              <span className={ok ? 'badge-pill badge-pill--done' : 'badge-pill badge-pill--err'} style={{ fontSize: 10 }}>
+                {ok ? 'OK' : 'ERR'}
+              </span>
+            </div>
+          )
+        })()}
       </div>
       <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', flexShrink: 0, marginTop: 2 }}>
         {new Date(evt.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}

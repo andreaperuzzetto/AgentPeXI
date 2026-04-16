@@ -136,7 +136,7 @@ class TelegramBot:
             source="telegram",
             session_id=session_id,
         )
-        await update.message.reply_text(reply)
+        await self._reply_chunked(update.message, reply)
 
     async def _cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/pause — ferma i worker di Pepe."""
@@ -156,7 +156,7 @@ class TelegramBot:
             return
         session_id = str(update.effective_chat.id)
         reply = await self.pepe.handle_user_message(text, source="telegram", session_id=session_id)
-        await update.message.reply_text(reply)
+        await self._reply_chunked(update.message, reply)
 
     async def _cmd_listings(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/listings — lista listing Etsy recenti."""
@@ -283,7 +283,7 @@ class TelegramBot:
         text = update.message.text
         session_id = str(update.effective_chat.id)
         reply = await self.pepe.handle_user_message(text, source="telegram", session_id=session_id)
-        await update.message.reply_text(reply)
+        await self._reply_chunked(update.message, reply)
 
     # ------------------------------------------------------------------
     # Handler messaggi vocali
@@ -360,10 +360,48 @@ class TelegramBot:
     # Notifiche (callback registrato in Pepe)
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    _TG_LIMIT = 4000  # Telegram max ~4096 — lascia margine
+
+    async def _reply_chunked(self, message: "telegram.Message", text: str) -> None:
+        """Invia risposta spezzandola in chunk se supera il limite Telegram."""
+        if len(text) <= self._TG_LIMIT:
+            await message.reply_text(text)
+            return
+        # Spezza su newline per non troncare a metà riga
+        lines: list[str] = text.splitlines(keepends=True)
+        chunk = ""
+        for line in lines:
+            if len(chunk) + len(line) > self._TG_LIMIT:
+                if chunk:
+                    await message.reply_text(chunk.rstrip())
+                chunk = line
+            else:
+                chunk += line
+        if chunk.strip():
+            await message.reply_text(chunk.rstrip())
+
     async def _send_notification(self, message: str, priority: bool = False) -> None:
-        """Invia notifica a Andrea via Telegram."""
+        """Invia notifica a Andrea via Telegram, spezzando se necessario."""
         if not self._app or not settings.TELEGRAM_CHAT_ID:
             return
         chat_id = int(settings.TELEGRAM_CHAT_ID)
-        prefix = "🚨 " if priority else "ℹ️ "
-        await self._app.bot.send_message(chat_id=chat_id, text=prefix + message)
+        text = message  # nessun prefisso emoji — tono consulente
+        if len(text) <= self._TG_LIMIT:
+            await self._app.bot.send_message(chat_id=chat_id, text=text)
+            return
+        # Chunk lungo
+        lines = text.splitlines(keepends=True)
+        chunk = ""
+        for line in lines:
+            if len(chunk) + len(line) > self._TG_LIMIT:
+                if chunk:
+                    await self._app.bot.send_message(chat_id=chat_id, text=chunk.rstrip())
+                chunk = line
+            else:
+                chunk += line
+        if chunk.strip():
+            await self._app.bot.send_message(chat_id=chat_id, text=chunk.rstrip())

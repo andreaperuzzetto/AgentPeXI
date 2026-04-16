@@ -47,8 +47,10 @@ class AnalyticsAgent(AgentBase):
     async def run(self, task: AgentTask) -> AgentResult:
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
 
-        # --- Passo 1 — Lettura listing attivi ---
-        listings = await self.memory.get_etsy_listings(status="active")
+        # --- Passo 1 — Lettura listing (draft + active, escluso archived) ---
+        # draft = appena pubblicato in mock/staging; active = live su Etsy
+        all_listings = await self.memory.get_etsy_listings()
+        listings = [l for l in all_listings if l.get("status") not in ("archived", "removed")]
         if not listings:
             return AgentResult(
                 task_id=task.task_id,
@@ -69,7 +71,7 @@ class AnalyticsAgent(AgentBase):
                         "get_listing",
                         {"listing_id": lid},
                         self.etsy_api.get_listing,
-                        listing_id=int(lid),
+                        listing_id=lid,
                     )
                 except Exception as exc:
                     logger.warning("Sync listing %s fallito: %s", lid, exc)
@@ -208,7 +210,7 @@ class AnalyticsAgent(AgentBase):
                 {"shop_id": shop_id, "listing_id": listing_id},
                 self.etsy_api.get_shop_transactions,
                 shop_id=shop_id,
-                listing_id=int(listing_id),
+                listing_id=listing_id,
             )
             if isinstance(transactions, dict):
                 results = transactions.get("results", [])
@@ -788,33 +790,45 @@ class AnalyticsAgent(AgentBase):
         failures = report["failures"]
         tot_failures = sum(failures.values())
 
-        bs_line = "—"
+        # Bestseller
         if report["bestsellers"]:
             bs = report["bestsellers"][0]
-            bs_line = f"{bs['title'][:35]} — {bs['sales']} vendite"
+            bs_line = f"{bs['title'][:40]} ({bs['sales']} vendite)"
+        else:
+            bs_line = "nessuno"
 
+        # A/B test
         ab = report.get("ab_performance", {})
         ab_winner = ab.get("winner")
         if ab_winner and ab_winner != "inconclusive":
-            ab_line = f"🎯 A/B Winner: Variante {ab_winner} ({ab.get('winner_confidence', '')} confidence)\n"
+            ab_line = f"A/B: variante {ab_winner} vince ({ab.get('winner_confidence', '')} confidence)\n"
         elif ab_winner == "inconclusive":
-            ab_line = "🎯 A/B: dati insufficienti per concludere\n"
+            ab_line = "A/B: dati insufficienti\n"
         else:
             ab_line = ""
 
+        # Failures con dettaglio
+        failure_detail = ""
+        if tot_failures:
+            parts = []
+            if failures.get("no_views"):
+                parts.append(f"{failures['no_views']} senza views >7gg")
+            if failures.get("no_conversion"):
+                parts.append(f"{failures['no_conversion']} senza conversioni >45gg")
+            failure_detail = f"Da ottimizzare: {', '.join(parts)}\n"
+
+        delta_sign = f"+{delta}" if delta >= 0 else str(delta)
+
         msg = (
-            f"📊 Report Etsy — {date_str}\n"
-            f"─────────────────────\n"
-            f"👁 Views: {total_views} ({delta:+d} vs ieri)\n"
-            f"❤️ Favorites: {total_fav}\n"
-            f"🛒 Vendite: {total_sales}\n"
-            f"💰 Revenue: €{total_rev:.2f}\n"
+            f"Etsy — {date_str}\n"
+            f"{'─' * 14}\n"
+            f"Views: {total_views} ({delta_sign} vs ieri)  |  Favorites: {total_fav}\n"
+            f"Vendite: {total_sales}  |  Revenue: €{total_rev:.2f}\n"
+            f"Listing attivi: {active}  |  Bozze: {drafts}\n"
             f"{ab_line}"
-            f"\n🏆 Bestseller: {bs_line}\n"
-            f"📋 Attivi: {active} | Bozze: {drafts}\n"
-            f"⚠️ Da ottimizzare: {tot_failures}\n\n"
-            f"#analytics #daily"
-        )
+            f"Bestseller: {bs_line}\n"
+            f"{failure_detail}"
+        ).rstrip()
         await self._notify_telegram(msg)
 
     # ------------------------------------------------------------------

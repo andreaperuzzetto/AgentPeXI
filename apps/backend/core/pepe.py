@@ -28,7 +28,11 @@ DELEGATION_TOOL = {
         "Delega un task a un agente specializzato. "
         "Usalo SEMPRE quando l'utente chiede di creare prodotti, fare ricerca di mercato, "
         "pubblicare listing, analizzare performance o generare report finanziari. "
-        "NON rispondere in prosa descrivendo cosa faresti — delega direttamente."
+        "NON rispondere in prosa descrivendo cosa faresti — delega direttamente. "
+        "REGOLA PIPELINE: per avviare una pipeline, creare un prodotto o analizzare una nicchia, "
+        "delega SEMPRE a 'research' come primo step — mai ad analytics o altri agenti. "
+        "'analytics' si usa SOLO quando l'utente chiede esplicitamente statistiche "
+        "o performance di listing già pubblicati."
     ),
     "input_schema": {
         "type": "object",
@@ -36,7 +40,12 @@ DELEGATION_TOOL = {
             "delegate": {
                 "type": "string",
                 "enum": ["research", "design", "publisher", "analytics", "finance"],
-                "description": "Nome dell'agente a cui delegare il task.",
+                "description": (
+                    "Nome dell'agente a cui delegare. "
+                    "Ordine pipeline obbligatorio: research → design → publisher. "
+                    "'analytics' = solo sync stats listing esistenti. "
+                    "'finance' = solo report economici."
+                ),
             },
             "input": {
                 "type": "object",
@@ -51,6 +60,59 @@ DELEGATION_TOOL = {
     },
 }
 
+
+def _format_analytics_summary(output: dict) -> str:
+    """Formatta il report analytics in formato compatto (identico al messaggio Telegram)."""
+    from datetime import date as _date
+    date_str = output.get("date", _date.today().isoformat())
+    total_views = output.get("total_views", 0)
+    total_fav   = output.get("total_favorites", 0)
+    total_sales = output.get("total_sales", 0)
+    total_rev   = output.get("total_revenue_eur", 0.0)
+    delta       = output.get("delta_views_vs_yesterday", 0)
+    active      = output.get("total_listings_active", 0)
+    drafts      = output.get("drafts", 0)
+    failures    = output.get("failures", {})
+
+    delta_sign = f"+{delta}" if delta >= 0 else str(delta)
+
+    bestsellers = output.get("bestsellers", [])
+    if bestsellers:
+        bs = bestsellers[0]
+        bs_line = f"{bs.get('title', '')[:40]} ({bs.get('sales', 0)} vendite)"
+    else:
+        bs_line = "nessuno"
+
+    ab = output.get("ab_performance", {})
+    ab_winner = ab.get("winner")
+    if ab_winner and ab_winner != "inconclusive":
+        ab_line = f"A/B: variante {ab_winner} vince ({ab.get('winner_confidence', '')} confidence)\n"
+    elif ab_winner == "inconclusive":
+        ab_line = "A/B: dati insufficienti\n"
+    else:
+        ab_line = ""
+
+    tot_failures = sum(v for v in failures.values() if isinstance(v, int))
+    failure_detail = ""
+    if tot_failures:
+        parts = []
+        if failures.get("no_views"):
+            parts.append(f"{failures['no_views']} senza views >7gg")
+        if failures.get("no_conversion"):
+            parts.append(f"{failures['no_conversion']} senza conversioni >45gg")
+        if parts:
+            failure_detail = f"Da ottimizzare: {', '.join(parts)}\n"
+
+    return (
+        f"Etsy — {date_str}\n"
+        f"{'─' * 14}\n"
+        f"Views: {total_views} ({delta_sign} vs ieri)  |  Favorites: {total_fav}\n"
+        f"Vendite: {total_sales}  |  Revenue: €{total_rev:.2f}\n"
+        f"Listing attivi: {active}  |  Bozze: {drafts}\n"
+        f"{ab_line}"
+        f"Bestseller: {bs_line}\n"
+        f"{failure_detail}"
+    ).rstrip()
 
 
 
@@ -173,6 +235,18 @@ class Pepe:
             if month_name:
                 extras += f"\n\nMese corrente: {month_name}."
 
+        # Sequenza pipeline obbligatoria — dal dominio
+        pipeline_section = ""
+        if self.domain.pipeline_steps:
+            steps_str = " → ".join(self.domain.pipeline_steps)
+            pipeline_section = (
+                f"## Sequenza pipeline obbligatoria\n"
+                f"{steps_str}\n"
+                f"Per qualsiasi richiesta di creare prodotti o analizzare nicchie, "
+                f"il primo agente da chiamare è SEMPRE '{self.domain.pipeline_steps[0]}'. "
+                f"Non saltare step e non partire da un agente diverso."
+            )
+
         # Contesto runtime — invariante
         agent_status_str = ", ".join(f"{n}: {s}" for n, s in agent_statuses.items())
         runtime = f"## Stato sistema\nAgenti: {agent_status_str}"
@@ -182,7 +256,7 @@ class Pepe:
             runtime += f"\nPerformance recente: {recent_analytics}"
 
         return "\n\n".join(filter(bool, [
-            identity, objective, rules, agents_section, extras, runtime
+            identity, objective, rules, agents_section, pipeline_section, extras, runtime
         ]))
 
     # ------------------------------------------------------------------
@@ -200,7 +274,6 @@ class Pepe:
         quick_reply = await self._check_pending_action(message, source)
         if quick_reply is not None:
             await self.memory.save_message(session_id, "assistant", quick_reply, source)
-            await self._broadcast({"type": "pepe_message", "content": quick_reply, "source": source})
             return quick_reply
 
         # AGGIUNTA 1 — Pipeline context check
@@ -275,7 +348,6 @@ class Pepe:
                 duplicate_warning = await self._check_pipeline_duplicate(delegation)
                 if duplicate_warning:
                     await self.memory.save_message(session_id, "assistant", duplicate_warning, source)
-                    await self._broadcast({"type": "pepe_message", "content": duplicate_warning, "source": source})
                     return duplicate_warning
 
             # AGGIUNTA 3 — Context enrichment
@@ -301,7 +373,6 @@ class Pepe:
                     agent_name, str(exc), task.input_data
                 )
                 await self.memory.save_message(session_id, "assistant", error_reply, source)
-                await self._broadcast({"type": "pepe_message", "content": error_reply, "source": source})
                 return error_reply
 
             # --- Confidence gate ---
@@ -312,7 +383,6 @@ class Pepe:
 
         # Risposta diretta
         await self.memory.save_message(session_id, "assistant", reply_text, source)
-        await self._broadcast({"type": "pepe_message", "content": reply_text, "source": source})
         return reply_text
 
     # ------------------------------------------------------------------
@@ -453,7 +523,7 @@ class Pepe:
     # ------------------------------------------------------------------
 
     async def _synthesize_reply(
-        self, user_message: str, agent_name: str, result: AgentResult
+        self, user_message: str, agent_name: str, result: AgentResult, autonomous: bool = False
     ) -> str:
         """Sintetizza risposta dettagliata per Andrea.
 
@@ -464,94 +534,102 @@ class Pepe:
         if len(output_str) > 8000:
             output_str = output_str[:8000] + "... [troncato]"
 
-        # System prompt differenziato per agente
+        # Formato compatto — stesso su chat e Telegram (max 500 token)
+        # Struttura identica al formato Telegram publisher/analytics:
+        # "Agente — Nicchia\n──────────────\nRiga 1\nRiga 2\nProssimo: ..."
         agent_synthesis_prompts = {
             "research": (
-                "Sintetizza il report di ricerca Etsy per Andrea. Struttura la risposta così:\n"
-                "1. **Raccomandazione** (1 riga): entra o non entra in questa nicchia e perché\n"
-                "2. **Nicchie analizzate**: per ognuna viable — nome, prezzo consigliato, "
-                "difficoltà, i 3 tag più importanti, cosa fare per differenziarsi\n"
-                "3. **Segnali di vendita**: thumbnail style, bundle vs singolo, timing stagionale\n"
-                "4. **Passo successivo**: cosa fare adesso (es: 'Posso procedere con il Design Agent')\n"
-                "Se ci sono nicchie scartate, spiegale brevemente.\n"
-                "Usa markdown con grassetti. Sii specifico, non generico."
+                "Rispondi in max 10 righe. Formato OBBLIGATORIO (niente prose, niente elenchi):\n"
+                "Research — {niche}\n"
+                "──────────────\n"
+                "Verdetto: viable/skip — {ragione 1 riga}\n"
+                "Difficoltà: {level}  |  Gap: {top gap in 5 parole}\n"
+                "Prezzo: €{launch} → €{regime}  |  Tag: {tag1}, {tag2}, {tag3}\n"
+                "Prossimo: Design in avvio."
             ),
             "design": (
-                "Sintetizza i risultati del Design Agent. Struttura:\n"
-                "1. **Prodotti generati**: quante varianti, template usato, preset visivo\n"
-                "2. **Thumbnail**: conferma se le 3 immagini Etsy sono state generate\n"
-                "3. **Confidence**: mostra il valore e cosa manca se < 0.85\n"
-                "4. **Passo successivo**: 'Posso procedere con il Publisher Agent' o cosa manca\n"
-                "Usa markdown. Sii concreto."
+                "Rispondi in max 8 righe. Formato OBBLIGATORIO:\n"
+                "Design — {niche}\n"
+                "──────────────\n"
+                "Varianti: {n}  |  Template: {nome}\n"
+                "Confidence: {pct}%  |  Thumbnail: {n}/3\n"
+                "Prossimo: Publisher in avvio."
             ),
             "publisher": (
-                "Sintetizza i risultati del Publisher Agent. Struttura:\n"
-                "1. **Listing creati**: quanti, su quale nicchia\n"
-                "2. **Dettagli SEO**: titolo usato, 13 tag impostati, prezzo A/B test\n"
-                "3. **Link**: se disponibili, includi link Etsy ai draft\n"
-                "4. **Prossimi 7 giorni**: cosa monitorare (views attese, soglia alert)\n"
-                "Usa markdown."
+                "Rispondi in max 8 righe. Formato OBBLIGATORIO:\n"
+                "Publisher — {niche}\n"
+                "──────────────\n"
+                "Draft: {n}  |  Prezzo A/B: €{a} / €{b}\n"
+                "SEO: {chars} car.  |  Tag: 13 applicati\n"
+                "Prossimo: Analytics in avvio."
             ),
             "analytics": (
-                "Sintetizza il report analytics. Struttura:\n"
-                "1. **Overview**: views totali, vendite, revenue periodo analizzato\n"
-                "2. **Top performer**: listing con più vendite o views\n"
-                "3. **Problemi rilevati**: listing con 0 views o 0 conversioni\n"
-                "4. **Azioni automatiche avviate**: se il sistema ha triggerato fix automatici\n"
-                "5. **Raccomandazione**: cosa fare questa settimana\n"
-                "Usa markdown con numeri chiari."
+                "Rispondi in max 8 righe. Formato OBBLIGATORIO:\n"
+                "Analytics — {data}\n"
+                "──────────────\n"
+                "Views: {n} ({delta})  |  Vendite: {n}  |  Revenue: €{n}\n"
+                "Top: {title} ({n} vendite)\n"
+                "Alert: {issues o 'nessuno'}"
             ),
             "finance": (
-                "Sintetizza il report finanziario. Struttura:\n"
-                "1. **P&L**: entrate lorde, fee Etsy (6.5% + €0.20/listing), costi API, margine netto\n"
-                "2. **Trend**: rispetto al periodo precedente\n"
-                "3. **Alert**: se ci sono costi fuori controllo o margine negativo\n"
-                "4. **Raccomandazione**: ottimizzazioni possibili\n"
-                "Usa markdown con €/$ chiari."
+                "Rispondi in max 8 righe. Formato OBBLIGATORIO:\n"
+                "Finance — {periodo}\n"
+                "──────────────\n"
+                "Ricavi: €{n}  |  Fee Etsy: €{n}  |  Margine: €{n} ({pct}%)\n"
+                "Trend: {delta vs periodo prec}\n"
+                "Alert: {issues o 'nessuno'}"
             ),
             "customer_service": (
-                "Sintetizza le attività customer service. Struttura:\n"
-                "1. **Messaggi gestiti**: quanti, tipologia\n"
-                "2. **Escalation**: casi che richiedono intervento di Andrea\n"
-                "3. **Pattern**: problemi ricorrenti da risolvere a monte\n"
-                "Usa markdown."
+                "Rispondi in max 6 righe. Formato OBBLIGATORIO:\n"
+                "Customer Service — {data}\n"
+                "──────────────\n"
+                "Messaggi: {n}  |  Escalation: {n}\n"
+                "Pattern: {issue principale o 'nessuno'}"
             ),
         }
 
         synthesis_instruction = agent_synthesis_prompts.get(
             agent_name,
-            "Sintetizza il risultato dell'agente in modo chiaro per Andrea. "
-            "Includi sempre: cosa è stato fatto, raccomandazione, passo successivo.",
+            "Riporta il risultato in max 6 righe: cosa è stato fatto, numeri chiave, azione immediata.",
         )
+
+        auto_note = (
+            " Il sistema procede automaticamente — non chiedere conferma, non fare domande."
+        ) if autonomous else ""
 
         try:
             response = await self.client.messages.create(
                 model=MODEL_SONNET,
+                max_tokens=500,
                 system=(
-                    f"Sei Pepe, orchestratore di AgentPeXI. Rispondi in italiano.\n"
-                    f"{synthesis_instruction}"
+                    "Sei Pepe, sistema di automazione Etsy. "
+                    "Rispondi SEMPRE nel formato compatto indicato. "
+                    "Max 10 righe. Niente prose. Niente elenchi numerati. "
+                    "Niente emoji decorative. Niente titoli in grassetto. "
+                    "Solo dati e fatti.\n"
+                    f"{synthesis_instruction}{auto_note}"
                 ),
                 messages=[
                     {
                         "role": "user",
                         "content": (
-                            f"L'utente ha chiesto: {user_message}\n\n"
-                            f"L'agente '{agent_name}' ha completato con status: {result.status.value}\n"
+                            f"Agente '{agent_name}' completato — status: {result.status.value}\n"
                             f"Confidence: {result.output_data.get('confidence', 'N/A') if isinstance(result.output_data, dict) else 'N/A'}\n\n"
-                            f"Output completo:\n{output_str}"
+                            f"Output:\n{output_str}"
                         ),
                     }
                 ],
-                max_tokens=2048,
             )
             return response.content[0].text if response.content else "Task completato."
         except Exception:
-            return f"✅ Agente {agent_name} completato. Controlla la dashboard per i dettagli."
+            return f"Agente {agent_name} completato. Controlla la dashboard per i dettagli."
 
     async def _broadcast(self, event: dict) -> None:
         """Invia evento WebSocket se broadcaster disponibile."""
         if self._ws_broadcast is not None:
             try:
+                if "timestamp" not in event:
+                    event["timestamp"] = datetime.utcnow().isoformat()
                 await self._ws_broadcast(event)
             except Exception:
                 pass
@@ -698,7 +776,6 @@ class Pepe:
             return None  # Fallback: procedi senza chiarimento
 
         await self.memory.save_message(session_id, "assistant", question, source)
-        await self._broadcast({"type": "pepe_message", "content": question, "source": source})
         return question
 
     # ------------------------------------------------------------------
@@ -989,7 +1066,6 @@ class Pepe:
             )
             reply = await self._synthesize_error(agent_name, error_msg, {}, missing_data)
             await self.memory.save_message(session_id, "assistant", reply, source)
-            await self._broadcast({"type": "pepe_message", "content": reply, "source": source})
             await self._broadcast_context_update(
                 confidence=confidence,
                 next_action="error_recovery",
@@ -999,17 +1075,18 @@ class Pepe:
 
         # confidence None o >= threshold: procedi autonomamente
         if confidence is None or confidence >= self.domain.confidence_threshold:
-            final_reply = await self._synthesize_reply(user_message, agent_name, result)
-
-            # Triggera passo successivo pipeline se in modalità autonoma
-            await self._advance_pipeline_if_autonomous(agent_name, result, session_id)
+            final_reply = await self._synthesize_reply(user_message, agent_name, result, autonomous=True)
 
             await self.memory.save_message(session_id, "assistant", final_reply, source)
-            await self._broadcast({"type": "pepe_message", "content": final_reply, "source": source})
             await self._broadcast_context_update(
                 confidence=confidence,
                 trigger="confidence_gate",
             )
+
+            # Triggera passo successivo pipeline DOPO il broadcast —
+            # garantisce che il report arrivi prima di "🎨 Design Agent avviato"
+            await self._advance_pipeline_if_autonomous(agent_name, result, session_id)
+
             return final_reply
 
         # confidence >= disclaimer threshold: procedi con disclaimer e proposta
@@ -1023,7 +1100,6 @@ class Pepe:
             )
             final_reply += disclaimer
             await self.memory.save_message(session_id, "assistant", final_reply, source)
-            await self._broadcast({"type": "pepe_message", "content": final_reply, "source": source})
             await self._broadcast_context_update(
                 confidence=confidence,
                 next_action="await_user_confirmation",
@@ -1045,7 +1121,6 @@ class Pepe:
             f"• Procedere lo stesso accettando il rischio di dati parziali"
         )
         await self.memory.save_message(session_id, "assistant", reply, source)
-        await self._broadcast({"type": "pepe_message", "content": reply, "source": source})
         await self._broadcast_context_update(
             confidence=confidence,
             next_action="blocked_low_confidence",
@@ -1066,10 +1141,15 @@ class Pepe:
     ) -> str:
         """Sintetizza errore in linguaggio naturale per l'utente."""
         error_system = (
-            f"Sei Pepe, orchestratore di AgentPeXI per il dominio {self.domain.name}. Un agente ha riscontrato "
-            "un problema. Spiega all'utente cosa è successo in modo chiaro e professionale, "
-            "proponi 2-3 soluzioni concrete e pratiche. Sii diretto, non tecnico, non "
-            "mostrare stack trace o codice. Max 150 parole."
+            f"Sei Pepe, orchestratore di AgentPeXI per il dominio {self.domain.name}. "
+            "Un agente ha fallito. Riferisci onestamente cosa è successo: "
+            "descrivi l'errore reale (anche tecnico se necessario), spiega la causa probabile "
+            "solo se deducibile dall'errore stesso — non speculare. "
+            "Proponi solo azioni concretamente applicabili nel sistema "
+            "(es. riprovare, riformulare la richiesta, verificare una configurazione specifica). "
+            "NON inventare workaround generici. NON attribuire il problema a server esterni "
+            "se non è nell'errore. NON dare consigli su volumi di dati o tempi di attesa "
+            "a meno che non siano nell'errore stesso. Sii diretto. Max 100 parole."
         )
         context_str = json.dumps(context_data, ensure_ascii=False, default=str) if context_data else "{}"
         missing_str = ", ".join(missing_data) if missing_data else "nessuno"
@@ -1088,9 +1168,9 @@ class Pepe:
                 }],
                 max_tokens=512,
             )
-            return response.content[0].text if response.content else f"L'agente {agent_name} ha riscontrato un problema. Riprova più tardi."
+            return response.content[0].text if response.content else f"L'agente {agent_name} ha fallito: {error_message}"
         except Exception:
-            return f"L'agente {agent_name} ha riscontrato un problema. Riprova più tardi."
+            return f"L'agente {agent_name} ha fallito: {error_message}"
 
     # ------------------------------------------------------------------
     # Pipeline automation (Intervento 8)
@@ -1115,15 +1195,50 @@ class Pepe:
             await self._handle_learning_loop(output)
             return
 
+        if agent_name == "publisher":
+            # Publisher completato → auto-trigger Analytics per sincronizzare stats
+            listings_created = output.get("listings_created", 0)
+            if listings_created > 0:
+                analytics_task = AgentTask(
+                    agent_name="analytics",
+                    input_data={"trigger": "post_publish", "listings_created": listings_created},
+                    source="pipeline_auto",
+                )
+                logger.info(
+                    "Publisher completato (%d listing) → auto-trigger Analytics",
+                    listings_created,
+                )
+                asyncio.create_task(self._run_analytics_auto(analytics_task, session_id))
+            return
+
         if agent_name == "design":
             file_paths = output.get("file_paths", [])
+            # Il Design Agent restituisce i file dentro "variants" (lista di dict),
+            # non come "file_paths" flat. Estrai i path da ogni variante.
+            variants = output.get("variants", [])
             if not file_paths:
-                logger.info("Design completato senza file_paths, publisher non triggerato")
+                for v in variants:
+                    path = v.get("pdf_path") or v.get("file_path") or v.get("svg_path") or v.get("path")
+                    if path:
+                        file_paths.append(path)
+            if not file_paths:
+                logger.info("Design completato senza file_paths né variants, publisher non triggerato")
                 return
+
+            # Estrai thumbnail path dai variants (generati da Playwright)
+            # I publisher li usa come immagini Etsy — passali esplicitamente.
+            thumbnail_paths: list[str] = []
+            for v in variants:
+                thumbs = v.get("thumbnails", {})
+                for key in ("mockup", "cover", "interior"):
+                    p = thumbs.get(key)
+                    if p:
+                        thumbnail_paths.append(str(p))
 
             # Recupera contesto necessario per Publisher dall'input del task originale
             publisher_input = {
                 "file_paths": file_paths,
+                "thumbnail_paths": thumbnail_paths,  # path espliciti da Design Agent
                 "product_type": output.get("product_type", "printable_pdf"),
                 "template": output.get("template", ""),
                 "niche": output.get("niche", ""),
@@ -1131,6 +1246,7 @@ class Pepe:
                 "keywords": output.get("keywords", []),
                 "size": output.get("size", "A4"),
                 "production_queue_task_id": output.get("production_queue_task_id"),
+                "pricing": output.get("pricing", {}),  # da research_context, per prezzo research-driven
             }
 
             publish_task = AgentTask(
@@ -1157,13 +1273,19 @@ class Pepe:
                     niches = [{"niche": niche, "product_type": research_output.get("product_type", "printable_pdf")}]
 
             if niches:
-                # Prendi la prima nicchia per il design
-                first = niches[0] if isinstance(niches[0], dict) else {"niche": niches[0]}
+                # Prendi la prima nicchia viable per il design
+                # Il research schema usa "name" e "recommended_product_type" (non "niche"/"product_type")
+                first = niches[0] if isinstance(niches[0], dict) else {"name": niches[0]}
+                niche_name = first.get("name") or first.get("niche", "")
+                product_type = (
+                    first.get("recommended_product_type")
+                    or first.get("product_type", "printable_pdf")
+                )
                 design_input = {
-                    "niche": first.get("niche", ""),
-                    "product_type": first.get("product_type", "printable_pdf"),
+                    "niche": niche_name,
+                    "product_type": product_type,
                     "research_context": research_output,
-                    "keywords": research_output.get("keywords", []),
+                    "keywords": first.get("keywords", []),
                     "color_schemes": first.get("color_schemes", []),
                 }
                 design_task = AgentTask(
@@ -1173,58 +1295,114 @@ class Pepe:
                 )
                 logger.info(
                     "Research completato → auto-trigger Design per nicchia '%s'",
-                    first.get("niche", "?"),
+                    niche_name or "?",
                 )
                 asyncio.create_task(self._run_design_auto(design_task, session_id))
             return
 
     async def _run_design_auto(self, task: AgentTask, session_id: str) -> None:
-        """Esegue il design in background dopo research, notifica via WS."""
+        """Esegue il design in background dopo research, notifica via WS e Telegram."""
         try:
-            msg = f"🎨 Design Agent avviato automaticamente per '{task.input_data.get('niche', '?')}'..."
-            await self._broadcast({"type": "pepe_message", "content": msg, "source": "pipeline_auto"})
+            niche = task.input_data.get('niche', '?')
+            msg = f"Design avviato — {niche}"
+            # Piccolo delay: garantisce che il reply del research (già in volo su Telegram)
+            # arrivi prima del "Design avviato" — evita inversione di ordine dei messaggi
+            await asyncio.sleep(2.0)
+            await self.notify_telegram(msg)
             result = await self._enqueue_and_wait(task)
             if result.status == TaskStatus.COMPLETED:
                 output = result.output_data or {}
-                n_files = len(output.get("file_paths", []))
-                msg = f"✅ Design completato: {n_files} file generati."
+
+                # Inietta nel result il contesto research che il Design Agent non propaga
+                # (pricing, keywords, color_schemes) — il Publisher ne ha bisogno
+                research_ctx = task.input_data.get("research_context", {})
+                if research_ctx:
+                    first_niche = next(
+                        iter(research_ctx.get("niches", [{}])), {}
+                    ) if research_ctx.get("niches") else research_ctx
+                    if not output.get("pricing") and first_niche.get("pricing"):
+                        output["pricing"] = first_niche["pricing"]
+                    if not output.get("keywords") and first_niche.get("keywords"):
+                        output["keywords"] = first_niche.get("keywords", [])
+                    # color_schemes: prendi dai variants se non già presenti
+                    if not output.get("color_schemes"):
+                        variants = output.get("variants", [])
+                        cs = [v.get("color_scheme", "") for v in variants if v.get("color_scheme")]
+                        if cs:
+                            output["color_schemes"] = cs
+                    # In alternativa usa quelli dall'input del task
+                    if not output.get("color_schemes") and task.input_data.get("color_schemes"):
+                        output["color_schemes"] = task.input_data["color_schemes"]
+                    result.output_data = output
+
+                n_files = len(output.get("variants", [])) or output.get("variants_generated", 0)
+                msg = f"Design completato — {n_files} varianti in pending. Pubblicazione in avvio."
                 await self.memory.save_message(session_id, "assistant", msg, "pipeline_auto")
-                await self._broadcast({"type": "pepe_message", "content": msg, "source": "pipeline_auto"})
+                await self.notify_telegram(msg)
                 # _advance_pipeline_if_autonomous gestirà Design → Publisher
                 await self._advance_pipeline_if_autonomous("design", result, session_id)
             else:
                 error = (result.output_data or {}).get("error", "Errore sconosciuto")
-                msg = f"❌ Design fallito: {error}"
+                msg = f"Design fallito — {error}"
                 await self.memory.save_message(session_id, "assistant", msg, "pipeline_auto")
-                await self._broadcast({"type": "pepe_message", "content": msg, "source": "pipeline_auto"})
+                await self.notify_telegram(msg, priority=True)
         except Exception as exc:
             logger.error("Design auto fallito: %s", exc)
-            await self._broadcast({
-                "type": "pepe_message",
-                "content": f"❌ Design auto fallito: {exc}",
-                "source": "pipeline_auto",
-            })
+            msg = f"Design interrotto — {exc}"
+            await self.notify_telegram(msg, priority=True)
 
     async def _run_publisher_auto(self, task: AgentTask, session_id: str) -> None:
-        """Esegue il publisher in background dopo il design, notifica via WS."""
+        """Esegue il publisher in background dopo il design, notifica via WS e Telegram."""
         try:
+            niche = task.input_data.get("niche", "?")
+            start_msg = f"Pubblicazione avviata — {niche}"
+            await self.notify_telegram(start_msg)
             result = await self._enqueue_and_wait(task)
             output = result.output_data or {}
             n = output.get("listings_created", 0)
             msg = (
-                f"✅ Publisher completato automaticamente: {n} listing creati su Etsy."
+                f"Pubblicazione completata — {n} draft su Etsy. Analisi in avvio."
                 if n > 0
-                else "⚠️ Publisher completato ma nessun listing creato. Controlla i log."
+                else "Pubblicazione completata — nessun draft creato. Verifica log publisher."
             )
             await self.memory.save_message(session_id, "assistant", msg, "pipeline_auto")
-            await self._broadcast({"type": "pepe_message", "content": msg, "source": "pipeline_auto"})
+            # Publisher → Analytics: sincronizza stats dopo ogni pubblicazione
+            await self._advance_pipeline_if_autonomous("publisher", result, session_id)
         except Exception as exc:
             logger.error("Publisher auto fallito: %s", exc)
-            await self._broadcast({
-                "type": "pepe_message",
-                "content": f"❌ Publisher auto fallito: {exc}",
-                "source": "pipeline_auto",
-            })
+            msg = f"Pubblicazione interrotta — {exc}"
+            await self.notify_telegram(msg, priority=True)
+
+    async def _run_analytics_auto(self, task: AgentTask, session_id: str) -> None:
+        """Esegue analytics in background dopo il publisher, notifica via WS e Telegram."""
+        try:
+            msg = "Analytics post-pubblicazione avviato."
+            await self.notify_telegram(msg)
+            result = await self._enqueue_and_wait(task)
+            output = result.output_data or {}
+
+            # Costruisci il report formattato (stesso formato di Telegram)
+            # per mostrarlo anche nella chat web — i due canali restano identici
+            summary_msg = _format_analytics_summary(output)
+            await self.memory.save_message(session_id, "assistant", summary_msg, "pipeline_auto")
+            # Telegram riceve il report già da analytics.py._send_daily_summary;
+            # mandiamo solo il breve "completato" per non duplicare il report
+            # Conta totale: attivi + bozze (evita "0" quando tutti i listing sono draft)
+            listings_analyzed = (
+                (output.get("total_listings_active") or 0)
+                + (output.get("drafts") or 0)
+                or output.get("listings_analyzed_count")
+                or len(output.get("listings_analyzed", []))
+            )
+            done_msg = f"Analytics completato — {listings_analyzed} listing analizzati."
+            await self.memory.save_message(session_id, "assistant", done_msg, "pipeline_auto")
+            await self.notify_telegram(done_msg)
+            # Learning loop
+            await self._advance_pipeline_if_autonomous("analytics", result, session_id)
+        except Exception as exc:
+            logger.error("Analytics auto fallito: %s", exc)
+            msg = f"Analytics interrotto — {exc}"
+            await self.notify_telegram(msg, priority=True)
 
     # ------------------------------------------------------------------
     # Learning loop (Intervento 9)

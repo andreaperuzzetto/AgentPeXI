@@ -6,6 +6,7 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import asdict
+from datetime import datetime
 from typing import Any, Callable, Coroutine
 
 import anthropic
@@ -270,7 +271,13 @@ class AgentBase(ABC):
             "max_tokens": max_tokens,
         }
         if system_prompt:
-            kwargs["system"] = system_prompt
+            kwargs["system"] = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
 
         last_exc: Exception | None = None
         for attempt in range(max_retries):
@@ -360,6 +367,7 @@ class AgentBase(ABC):
                 "status": status,
                 "duration_ms": duration_ms,
                 "cost_usd": cost_usd,
+                "timestamp": datetime.utcnow().isoformat(),
             })
 
             self._tool_call_count += 1

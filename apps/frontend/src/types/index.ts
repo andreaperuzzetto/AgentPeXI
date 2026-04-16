@@ -1,11 +1,5 @@
 /* ── WebSocket event types (server → client) ── */
 
-export interface PepeMessage {
-  type: 'pepe_message'
-  content: string
-  timestamp: string
-}
-
 export interface AgentStarted {
   type: 'agent_started'
   agent: string
@@ -84,7 +78,6 @@ export interface ContextUpdateEvent {
 }
 
 export type WSIncoming =
-  | PepeMessage
   | AgentStarted
   | AgentCompleted
   | AgentError
@@ -94,31 +87,7 @@ export type WSIncoming =
   | LlmCallEvent
   | ContextUpdateEvent
 
-/* ── Client → server ── */
-
-export interface UserMessage {
-  type: 'user_message'
-  content: string
-  session_id: string
-}
-
-/* ── Sessions ── */
-
-export interface Session {
-  session_id: string
-  last_message: string
-  timestamp: string
-}
-
 /* ── UI models ── */
-
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'pepe' | 'system'
-  content: string
-  timestamp: string
-  isNew?: boolean
-}
 
 export type AgentStatusValue = 'idle' | 'running' | 'error'
 
@@ -173,6 +142,7 @@ export interface TimelineEntry {
   tool_name?: string
   action?: string
   success?: boolean
+  status?: string
 }
 
 /* ── Cost breakdown (from /api/costs) ── */

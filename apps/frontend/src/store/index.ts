@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatMessage, AgentState, ToolEvent, SystemState, Session, AgentStep, ContextUpdateEvent } from '../types'
+import type { AgentState, ToolEvent, SystemState, AgentStep, ContextUpdateEvent } from '../types'
 
 export interface LlmStats {
   /** Tokens accumulated in this session from WS llm_call events */
@@ -43,19 +43,6 @@ interface AgentPeXIStore {
   wsConnected: boolean
   setWsConnected: (v: boolean) => void
 
-  /* Sessions */
-  sessionId: string | null
-  sessions: Session[]
-  setSessionId: (id: string | null) => void
-  setSessions: (s: Session[]) => void
-
-  /* Chat */
-  messages: ChatMessage[]
-  isTyping: boolean
-  addMessage: (msg: ChatMessage) => void
-  markMessageShown: (id: string) => void
-  setIsTyping: (v: boolean) => void
-
   /* Agents */
   agents: Record<string, AgentState>
   setAgentStatus: (name: string, status: AgentState['status'], lastTask?: string) => void
@@ -84,7 +71,7 @@ interface AgentPeXIStore {
   /* LLM Stats */
   llmStats: LlmStats
   addLlmCall: (input: number, output: number, cost: number) => void
-  setCostsData: (data: { total: number; perAgent: Record<string, number>; perDay: Record<string, number>; budgetMonthlyUsd?: number }) => void
+  setCostsData: (data: { total: number; perAgent: Record<string, number>; perDay: Record<string, number>; budgetMonthlyUsd?: number; runCost?: number }) => void
 
   /* Context state (from WS context_update) */
   contextState: ContextUpdateEvent | null
@@ -108,28 +95,11 @@ interface AgentPeXIStore {
   /* Selected Task for detail overlay */
   selectedTaskId: string | null
   setSelectedTaskId: (id: string | null) => void
-
-  /* WS Send */
-  wsSend: ((content: string) => void) | null
-  setWsSend: (fn: ((content: string) => void) | null) => void
 }
 
 export const useStore = create<AgentPeXIStore>((set) => ({
   wsConnected: false,
   setWsConnected: (v) => set({ wsConnected: v }),
-
-  sessionId: null,
-  sessions: [],
-  setSessionId: (id) => set({ sessionId: id, messages: [] }),
-  setSessions: (s) => set({ sessions: s }),
-
-  messages: [],
-  isTyping: false,
-  addMessage: (msg) =>
-    set((s) => ({ messages: [...s.messages, msg], isTyping: false })),
-  markMessageShown: (id) =>
-    set((s) => ({ messages: s.messages.map((m) => m.id === id ? { ...m, isNew: false } : m) })),
-  setIsTyping: (v) => set({ isTyping: v }),
 
   agents: { ...AGENTS_INIT },
   setAgentStatus: (name, status, lastTask) =>
@@ -181,9 +151,16 @@ export const useStore = create<AgentPeXIStore>((set) => ({
         runCost: s.llmStats.runCost + cost,
       },
     })),
-  setCostsData: ({ total, perAgent, perDay, budgetMonthlyUsd }) =>
+  setCostsData: ({ total, perAgent, perDay, budgetMonthlyUsd, runCost }) =>
     set((s) => ({
-      llmStats: { ...s.llmStats, totalCost: total, perAgent, perDay },
+      llmStats: {
+        ...s.llmStats,
+        totalCost: total,
+        perAgent,
+        perDay,
+        // runCost: usa il valore passato se > di quello accumulato in sessione
+        runCost: runCost !== undefined ? Math.max(runCost, s.llmStats.runCost) : s.llmStats.runCost,
+      },
       budgetMonthlyUsd: budgetMonthlyUsd ?? s.budgetMonthlyUsd,
     })),
 
@@ -203,7 +180,4 @@ export const useStore = create<AgentPeXIStore>((set) => ({
 
   selectedTaskId: null,
   setSelectedTaskId: (id) => set({ selectedTaskId: id }),
-
-  wsSend: null,
-  setWsSend: (fn) => set({ wsSend: fn }),
 }))

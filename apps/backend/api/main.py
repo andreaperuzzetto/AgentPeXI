@@ -46,12 +46,10 @@ logging.basicConfig(
 # Silence noisy loggers
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # niente spam GET 200 OK
 
 logger = logging.getLogger("agentpexi.api")
 
-
-def crypto_random_id() -> str:
-    return str(uuid.uuid4())
 
 # ------------------------------------------------------------------
 # WebSocket connection manager
@@ -282,34 +280,6 @@ async def get_agents() -> dict:
     return {"agents": pepe.get_agent_statuses()}
 
 
-@app.get("/api/sessions")
-async def get_sessions(limit: int = 20) -> dict:
-    """Lista sessioni recenti."""
-    if not memory:
-        return {"sessions": []}
-    sessions = await memory.get_sessions(limit=limit)
-    return {"sessions": sessions}
-
-
-@app.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str, limit: int = 100) -> dict:
-    """Messaggi di una sessione, ordinati dal più vecchio al più recente."""
-    if not memory:
-        return {"messages": []}
-    rows = await memory.get_conversation_history(session_id, limit=limit)
-    messages = []
-    for r in rows:
-        role = r["role"]
-        if role == "assistant":
-            role = "pepe"
-        messages.append({
-            "id": r.get("id", crypto_random_id()),
-            "role": role,
-            "content": r["content"],
-            "timestamp": r["timestamp"],
-        })
-    return {"messages": messages}
-
 
 @app.get("/api/listings")
 async def get_listings() -> dict:
@@ -360,6 +330,22 @@ async def get_task_timeline(task_id: str) -> dict:
     return {"task_id": task_id, "timeline": timeline}
 
 
+@app.get("/api/agents/steps/recent")
+async def get_recent_agent_steps(limit: int = 50) -> dict:
+    """Ultimi N step per agente — usato per reidratare il ReasoningPanel al refresh."""
+    if not memory:
+        return {"steps": []}
+    cursor = await memory._db.execute(
+        """SELECT id, task_id, agent_name, step_number, step_type, description, duration_ms, timestamp
+           FROM agent_steps
+           ORDER BY id DESC LIMIT ?""",
+        (limit,),
+    )
+    rows = await cursor.fetchall()
+    steps = [dict(r) for r in reversed(rows)]
+    return {"steps": steps}
+
+
 @app.get("/api/costs")
 async def get_costs(days: int = 30) -> dict:
     """Cost breakdown per periodo."""
@@ -392,50 +378,6 @@ async def get_memory_stats() -> dict:
     chroma = await memory.get_chroma_stats()
     return {"chroma": chroma}
 
-
-@app.post("/api/chat")
-async def post_chat(body: dict) -> dict:
-    """Fallback HTTP per chat (alternativo al WebSocket)."""
-    message = body.get("message", "")
-    session_id = body.get("session_id", "default")
-    if not message:
-        return JSONResponse(status_code=400, content={"error": "message richiesto"})
-    if not pepe:
-        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    reply = await pepe.handle_user_message(message, source="web", session_id=session_id)
-    return {"reply": reply}
-
-
-# ------------------------------------------------------------------
-# Session endpoints
-# ------------------------------------------------------------------
-
-
-@app.post("/api/sessions")
-async def create_session() -> dict:
-    """Crea una nuova sessione, ritorna session_id UUID."""
-    import uuid
-
-    session_id = str(uuid.uuid4())
-    return {"session_id": session_id}
-
-
-@app.get("/api/sessions")
-async def list_sessions() -> dict:
-    """Lista sessioni con ultimo messaggio e timestamp, limit 20."""
-    if not memory:
-        return {"sessions": []}
-    sessions = await memory.get_sessions(limit=20)
-    return {"sessions": sessions}
-
-
-@app.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str) -> dict:
-    """Cancella tutti i messaggi di una sessione."""
-    if not memory:
-        return JSONResponse(status_code=503, content={"error": "MemoryManager non inizializzato"})
-    await memory.clear_session(session_id)
-    return {"status": "ok"}
 
 
 # ------------------------------------------------------------------
@@ -540,41 +482,19 @@ async def get_analytics_failures(limit: int = 20) -> dict:
 
 @app.websocket("/ws/chat")
 async def ws_chat(ws: WebSocket) -> None:
-    """WebSocket bidirezionale: messaggi utente ↔ eventi sistema."""
+    """WebSocket unidirezionale: broadcast eventi sistema → client (dashboard).
+    Il frontend non invia messaggi — usa solo Telegram per interagire con Pepe.
+    """
     await ws_manager.connect(ws)
     try:
         while True:
             data = await ws.receive_json()
-            msg_type = data.get("type", "")
-
-            if msg_type == "user_message":
-                message = data.get("content", "")
-                session_id = data.get("session_id", "default")
-                if not message or not pepe:
-                    continue
-                # Gestisci in background per non bloccare il WS receiver
-                asyncio.create_task(_handle_ws_message(ws, message, session_id))
-
-            elif msg_type == "ping":
+            if data.get("type") == "ping":
                 await ws.send_json({"type": "pong"})
-
     except WebSocketDisconnect:
         ws_manager.disconnect(ws)
     except Exception:
         ws_manager.disconnect(ws)
-
-
-async def _handle_ws_message(ws: WebSocket, message: str, session_id: str) -> None:
-    """Processa messaggio utente via WS e invia risposta."""
-    try:
-        # La risposta viene broadcastata da Pepe via ws_broadcaster a tutti i client
-        await pepe.handle_user_message(message, source="web", session_id=session_id)
-    except Exception as exc:
-        logger.error("Errore WS message: %s", exc)
-        await ws.send_json({
-            "type": "error",
-            "content": str(exc),
-        })
 
 
 # ------------------------------------------------------------------

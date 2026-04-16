@@ -18,27 +18,9 @@ function handleMessage(raw: MessageEvent) {
   const store = useStore.getState()
 
   switch (data.type) {
-    case 'pepe_message':
-      store.addMessage({
-        id: crypto.randomUUID(),
-        role: 'pepe',
-        content: data.content,
-        timestamp: data.timestamp,
-        isNew: true,
-      })
+    case 'agent_started':
+      store.setAgentStatus(data.agent, 'running', data.description ?? `task ${data.task_id.slice(0, 8)}`)
       break
-
-    case 'agent_started': {
-      const desc = data.description ?? `task ${data.task_id.slice(0, 8)}`
-      store.setAgentStatus(data.agent, 'running', desc)
-      store.addMessage({
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: `Agente ${data.agent} avviato: ${desc}`,
-        timestamp: new Date().toISOString(),
-      })
-      break
-    }
 
     case 'agent_completed':
       store.setAgentStatus(data.agent, 'idle')
@@ -46,12 +28,6 @@ function handleMessage(raw: MessageEvent) {
 
     case 'agent_error':
       store.setAgentStatus(data.agent, 'error', data.error)
-      store.addMessage({
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: `Errore agente ${data.agent}: ${data.error}`,
-        timestamp: new Date().toISOString(),
-      })
       break
 
     case 'system_status':
@@ -110,12 +86,43 @@ export function useWebSocket() {
   useEffect(() => {
     let unmounted = false
 
-    function send(content: string) {
-      const ws = wsRef.current
-      if (!ws || ws.readyState !== WebSocket.OPEN) return
-      const sessionId = useStore.getState().sessionId || 'default'
-      ws.send(JSON.stringify({ type: 'user_message', content, session_id: sessionId }))
-      useStore.getState().setIsTyping(true)
+    async function hydrateOnConnect() {
+      const store = useStore.getState()
+
+      // Ripristina stati sistema (mock_mode, agenti ecc.)
+      try {
+        const r = await fetch('/api/status')
+        if (r.ok) {
+          const data = await r.json()
+          store.setSystemStatus({ mock_mode: data.mock_mode ?? false })
+        }
+      } catch {}
+
+      // Ripristina passi reasoning (ultimi 50 step da DB → ReasoningPanel)
+      try {
+        const r = await fetch('/api/agents/steps/recent?limit=50')
+        if (r.ok) {
+          const { steps } = await r.json()
+          if (Array.isArray(steps) && steps.length > 0) {
+            steps.forEach((s: {
+              id: number; task_id: string; agent_name: string;
+              step_number: number; step_type: string; description: string;
+              duration_ms: number; timestamp: string
+            }) => {
+              store.addAgentStep({
+                id: String(s.id),
+                agent: s.agent_name,
+                taskId: s.task_id,
+                stepNumber: s.step_number,
+                stepType: s.step_type,
+                description: s.description ?? '',
+                durationMs: s.duration_ms ?? 0,
+                timestamp: s.timestamp,
+              })
+            })
+          }
+        }
+      } catch {}
     }
 
     function scheduleReconnect() {
@@ -139,6 +146,7 @@ export function useWebSocket() {
         useStore.getState().setConnectedAt(Date.now())
         reconnectDelay.current = RECONNECT_BASE
         connectedAt.current = new Date()
+        hydrateOnConnect()
       })
 
       ws.addEventListener('message', handleMessage)
@@ -153,7 +161,6 @@ export function useWebSocket() {
       })
     }
 
-    useStore.getState().setWsSend(send)
     connect()
 
     return () => {
@@ -162,7 +169,6 @@ export function useWebSocket() {
       wsRef.current?.close()
       wsRef.current = null
       useStore.getState().setWsConnected(false)
-      useStore.getState().setWsSend(null)
     }
   }, [])
 

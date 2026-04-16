@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { Header } from './components/Header'
-import { ChatPanel } from './components/Chat/ChatPanel'
 import { ReasoningPanel } from './components/ReasoningPanel/ReasoningPanel'
 import { ListingsPanel } from './components/Listings/ListingsPanel'
 import { DomainCard } from './components/DomainCard/DomainCard'
@@ -15,116 +14,86 @@ import { useWebSocket } from './hooks/useWebSocket'
 import { useStore } from './store'
 
 export default function App() {
-  const [chatCollapsed, setChatCollapsed] = useState(false)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
   const [sistemiTab, setSistemiTab] = useState<'dominio' | 'tool'>('dominio')
   const setCostsData = useStore((s) => s.setCostsData)
+  const addAgentStep = useStore((s) => s.addAgentStep)
   const setAnalyticsSummary = useStore((s) => s.setAnalyticsSummary)
   const setChromaStats = useStore((s) => s.setChromaStats)
   useWebSocket()
 
-  /* ── Fetch real cost data from backend on mount ── */
+  /* ── Hydrate agent steps on mount (eager, before WS connects — fixes ReasoningPanel after refresh) ── */
   useEffect(() => {
-    fetch('/api/costs?days=30')
+    fetch('/api/agents/steps/recent?limit=50')
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
-        if (!data?.breakdown) return
-        const b = data.breakdown
-        // budget_threshold_eur → USD approx (÷ 0.92)
-        const budgetUsd = b.budget_threshold_eur ? b.budget_threshold_eur / 0.92 : undefined
-        setCostsData({
-          total:    b.total    ?? 0,
-          perAgent: b.per_agent ?? {},
-          perDay:   b.per_day   ?? {},
-          budgetMonthlyUsd: budgetUsd,
+        if (!Array.isArray(data?.steps) || data.steps.length === 0) return
+        data.steps.forEach((s: {
+          id: number; task_id: string; agent_name: string;
+          step_number: number; step_type: string; description: string;
+          duration_ms: number; timestamp: string
+        }) => {
+          addAgentStep({
+            id: String(s.id),
+            agent: s.agent_name,
+            taskId: s.task_id,
+            stepNumber: s.step_number,
+            stepType: s.step_type,
+            description: s.description ?? '',
+            durationMs: s.duration_ms ?? 0,
+            timestamp: s.timestamp,
+          })
         })
       })
-      .catch(() => { /* ignore — fallback to accumulated WS data */ })
-  }, [setCostsData])
-
-  /* ── Fetch analytics summary on mount ── */
-  useEffect(() => {
-    fetch('/api/analytics/summary?days=14')
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (data?.summary) setAnalyticsSummary(data.summary)
-      })
       .catch(() => {})
-  }, [setAnalyticsSummary])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  /* ── Fetch ChromaDB stats on mount ── */
+  /* ── Fetch costs / analytics / chroma — on mount + ogni 30 s ── */
   useEffect(() => {
-    fetch('/api/memory/stats')
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (data?.chroma) setChromaStats(data.chroma)
-      })
-      .catch(() => {})
-  }, [setChromaStats])
+    const today = new Date().toISOString().slice(0, 10)
+
+    const fetchCosts = () =>
+      fetch('/api/costs?days=30')
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (!data?.breakdown) return
+          const b = data.breakdown
+          const budgetUsd = b.budget_threshold_eur ? b.budget_threshold_eur / 0.92 : undefined
+          // runCost = costo accumulato oggi nel DB (si ripristina al refresh)
+          const runCost = (b.per_day as Record<string, number>)?.[today] ?? 0
+          setCostsData({
+            total:    b.total    ?? 0,
+            perAgent: b.per_agent ?? {},
+            perDay:   b.per_day   ?? {},
+            budgetMonthlyUsd: budgetUsd,
+            runCost,
+          })
+        })
+        .catch(() => {})
+
+    const fetchAnalytics = () =>
+      fetch('/api/analytics/summary?days=14')
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => { if (data?.summary) setAnalyticsSummary(data.summary) })
+        .catch(() => {})
+
+    const fetchChroma = () =>
+      fetch('/api/memory/stats')
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => { if (data?.chroma) setChromaStats(data.chroma) })
+        .catch(() => {})
+
+    fetchCosts(); fetchAnalytics(); fetchChroma()
+    const id = setInterval(() => { fetchCosts(); fetchAnalytics(); fetchChroma() }, 30_000)
+    return () => clearInterval(id)
+  }, [setCostsData, setAnalyticsSummary, setChromaStats])
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--base)' }}>
       <Header />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-
-        {/* ── Sidebar chat ── */}
-        <aside
-          style={{
-            width: chatCollapsed ? 0 : 400,
-            minWidth: chatCollapsed ? 0 : 400,
-            flexShrink: 0,
-            borderRight: '1px solid var(--b0)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            transition: 'width .3s var(--e-out), min-width .3s var(--e-out)',
-          }}
-        >
-          <ChatPanel onCollapse={() => setChatCollapsed(true)} />
-        </aside>
-
-        {/* ── Chat FAB (quando collassata) ── */}
-        {chatCollapsed && (
-          <button
-            onClick={() => setChatCollapsed(false)}
-            title="Apri chat"
-            style={{
-              position: 'fixed',
-              bottom: 20,
-              left: 20,
-              zIndex: 40,
-              width: 46,
-              height: 46,
-              borderRadius: '50%',
-              background: 'var(--accent)',
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 4px 16px rgba(0,0,0,.5), 0 0 24px rgba(45,232,106,.18)',
-              transition: 'transform .2s var(--e-spring), box-shadow .2s var(--e-io)',
-            }}
-            onMouseEnter={(e) => {
-              const el = e.currentTarget as HTMLElement
-              el.style.transform = 'scale(1.1)'
-              el.style.boxShadow = '0 6px 20px rgba(0,0,0,.55), 0 0 32px rgba(45,232,106,.28)'
-            }}
-            onMouseLeave={(e) => {
-              const el = e.currentTarget as HTMLElement
-              el.style.transform = 'scale(1)'
-              el.style.boxShadow = '0 4px 16px rgba(0,0,0,.5), 0 0 24px rgba(45,232,106,.18)'
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M10 2C5.58 2 2 5.36 2 9.5c0 2.08.87 3.96 2.27 5.33L3.5 18l3.35-1.1A8.1 8.1 0 0 0 10 17c4.42 0 8-3.36 8-7.5S14.42 2 10 2z" fill="#0b0c0b"/>
-              <circle cx="7" cy="9.5" r="1" fill="#0b0c0b" opacity=".7"/>
-              <circle cx="10" cy="9.5" r="1" fill="#0b0c0b"/>
-              <circle cx="13" cy="9.5" r="1" fill="#0b0c0b" opacity=".7"/>
-            </svg>
-          </button>
-        )}
 
         {/* ── Center column ── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>

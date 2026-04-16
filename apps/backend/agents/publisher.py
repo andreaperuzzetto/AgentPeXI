@@ -73,6 +73,7 @@ class PublisherAgent(AgentBase):
             raise RuntimeError("Storage non disponibile. Verificare SSD montato.")
 
         file_paths: list[str] = data.get("file_paths", [])
+        thumbnail_paths_input: list[str] = data.get("thumbnail_paths", [])
         product_type: str = data.get("product_type", "printable_pdf")
         template: str = data.get("template", "")
         niche: str = data.get("niche", "")
@@ -117,6 +118,7 @@ class PublisherAgent(AgentBase):
                     ab_variant=ab_variant,
                     pq_task_id=pq_task_id,
                     research_data=data,
+                    thumbnail_paths_input=thumbnail_paths_input,
                 )
                 publish_results.append(result)
 
@@ -189,6 +191,7 @@ class PublisherAgent(AgentBase):
         ab_variant: str,
         pq_task_id: str | None,
         research_data: dict,
+        thumbnail_paths_input: list[str] | None = None,
     ) -> dict:
         """Pubblica un singolo file come draft su Etsy. Ritorna dict con dettagli."""
         result: dict[str, Any] = {
@@ -202,7 +205,11 @@ class PublisherAgent(AgentBase):
         }
 
         # 3a. Thumbnail check — blocca se mancanti
-        thumbnails_ok, thumbnail_paths = await self._check_thumbnails(niche, product_type)
+        thumbnails_ok, thumbnail_paths = await self._check_thumbnails(
+            niche, product_type,
+            pdf_path=file_path,
+            explicit_paths=thumbnail_paths_input or [],
+        )
         if not thumbnails_ok:
             logger.error("SKIP: Listing %s non pubblicato — thumbnail mancanti", niche)
             result["status"] = "skipped_no_thumbnails"
@@ -267,7 +274,7 @@ class PublisherAgent(AgentBase):
             "upload_file",
             {"listing_id": listing_id, "file": Path(file_path).name},
             self.etsy_api.upload_file,
-            listing_id=int(listing_id),
+            listing_id=listing_id,
             file_path=file_path,
             name=Path(file_path).name,
         )
@@ -281,7 +288,7 @@ class PublisherAgent(AgentBase):
                     "upload_image",
                     {"listing_id": listing_id, "image": thumb_path.name},
                     self.etsy_api.upload_image,
-                    listing_id=int(listing_id),
+                    listing_id=listing_id,
                     file_path=str(thumb_path),
                 )
                 uploaded_count += 1
@@ -306,18 +313,21 @@ class PublisherAgent(AgentBase):
         )
 
         # 3i. Notifica Telegram
+        seo_status = "validato" if result["seo_validated"] else "non validato"
+        price_src = "research" if result["price_source"] == "research" else "fallback"
+        schema_detail = f" | schema: {color_scheme}" if color_scheme else ""
+        seo_issues = ""
+        if result.get("seo_issues"):
+            seo_issues = f"SEO issues: {', '.join(result['seo_issues'][:2])}\n"
         msg = (
-            f"\U0001f195 Draft Etsy creato!\n"
-            f"\U0001f4e6 {title[:70]}\n"
-            f"\U0001f4b0 Prezzo: \u20ac{price:.2f} (variante {ab_variant})\n"
-            f"\U0001f3a8 Schema: {color_scheme}\n"
-            f"\U0001f4cb Nicchia: {niche}\n"
-            f"\U0001f5bc Immagini: {uploaded_count}\n"
-            f"\U0001f4ca SEO validato: {'\u2705' if result['seo_validated'] else '\u26a0\ufe0f'}\n"
-            f"\U0001f4b5 Prezzo da: {result['price_source']}\n\n"
-            f"\u2705 Approva: https://www.etsy.com/your-shop/tools/listings/drafts\n"
-            f"\U0001f517 Listing ID: {listing_id}\n\n"
-            f"#draft #{template} #{color_scheme}"
+            f"Draft creato — {niche}\n"
+            f"{'─' * 14}\n"
+            f"Titolo: {title[:70]}\n"
+            f"Prezzo: \u20ac{price:.2f} (variante {ab_variant}, fonte: {price_src}){schema_detail}\n"
+            f"Immagini: {uploaded_count}/3  |  SEO: {seo_status}\n"
+            f"{seo_issues}"
+            f"ID: {listing_id}\n"
+            f"Approva: https://www.etsy.com/your-shop/tools/listings/drafts"
         )
         await self._notify_telegram(msg)
 
@@ -450,11 +460,12 @@ class PublisherAgent(AgentBase):
     def _parse_seo_json(self, text: str, etsy_tags_13: list[str] | None = None) -> dict | None:
         """Estrae e valida JSON SEO dalla risposta LLM con quality check."""
         cleaned = text.strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.split("\n")
-            start = 1 if lines[0].startswith("```") else 0
-            end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
-            cleaned = "\n".join(lines[start:end]).strip()
+        # Estrai JSON grezzo da qualsiasi wrapper (```json ... ```, ``` ... ```, o testo libero)
+        # Strategia: trova la prima { e l'ultima } — robusto su JSON annidati
+        first_brace = cleaned.find("{")
+        last_brace = cleaned.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            cleaned = cleaned[first_brace : last_brace + 1]
         try:
             data = json.loads(cleaned)
             if not ("title" in data and "description" in data and "tags" in data):
@@ -596,30 +607,62 @@ class PublisherAgent(AgentBase):
     # Thumbnail check
     # ------------------------------------------------------------------
 
-    async def _check_thumbnails(self, niche: str, file_type: str) -> tuple[bool, list[Path]]:
-        """Verifica esistenza thumbnail. Ritorna (ok, paths)."""
+    async def _check_thumbnails(
+        self,
+        niche: str,
+        file_type: str,
+        pdf_path: str | None = None,
+        explicit_paths: list[str] | None = None,
+    ) -> tuple[bool, list[Path]]:
+        """Verifica esistenza thumbnail. Ritorna (ok, paths).
+
+        Priorità di ricerca:
+        1. explicit_paths — thumbnail passati esplicitamente da Design Agent
+        2. Directory del PDF — cerca thumbnail_*.png nella stessa dir del file prodotto
+        3. assets/thumbnails/ — fallback legacy (slug-based)
+        """
+        def _valid(paths: list[Path]) -> list[Path]:
+            return [p for p in paths if p.exists() and p.stat().st_size > 10_000]
+
+        # 1. Path espliciti da Design Agent (Playwright)
+        if explicit_paths:
+            candidates = [Path(p) for p in explicit_paths]
+            valid = _valid(candidates)
+            if valid:
+                logger.info("Thumbnail da Design Agent: %d validi per '%s'", len(valid), niche)
+                return True, valid[:3]
+            logger.debug("Thumbnail espliciti forniti ma non validi/esistenti per '%s'", niche)
+
+        # 2. Directory del file PDF (thumbnail_*.png nella stessa cartella)
+        if pdf_path:
+            pdf_dir = Path(pdf_path).parent
+            found_in_dir = list(pdf_dir.glob("thumbnail_*.png"))
+            valid = _valid(found_in_dir)
+            if valid:
+                logger.info("Thumbnail trovati in dir PDF (%s): %d per '%s'", pdf_dir, len(valid), niche)
+                return True, valid[:3]
+            logger.debug("Nessun thumbnail in dir PDF '%s' per '%s'", pdf_dir, niche)
+
+        # 3. Fallback legacy — assets/thumbnails/ by niche slug
         niche_slug = niche.lower().replace(" ", "_").replace("/", "_")[:30]
         thumbnails_dir = Path("apps/backend/assets/thumbnails")
-
         found = list(thumbnails_dir.glob(f"{niche_slug}*.png"))
         if not found:
             found = list(thumbnails_dir.glob(f"*{niche_slug[:15]}*.png"))
+        valid = _valid(found)
+        if valid:
+            logger.info("Thumbnail legacy (%s): %d per '%s'", thumbnails_dir, len(valid), niche)
+            return True, valid[:3]
 
-        if len(found) < 1:
-            logger.warning(
-                "Nessun thumbnail trovato per %s (%s). Path cercato: %s/%s*.png",
-                niche, file_type, thumbnails_dir, niche_slug,
-            )
-            return False, []
-
-        # Verifica file non corrotti (size > 10KB)
-        valid = [p for p in found if p.stat().st_size > 10_000]
-        if not valid:
-            logger.warning("Thumbnail trovati ma troppo piccoli (corrotti?) per %s", niche)
-            return False, []
-
-        logger.info("Trovati %d thumbnail validi per %s", len(valid), niche)
-        return True, valid[:3]
+        logger.warning(
+            "Nessun thumbnail trovato per '%s' (%s). "
+            "Cercato in: explicit_paths=%d, pdf_dir=%s, assets/thumbnails/%s*.png",
+            niche, file_type,
+            len(explicit_paths or []),
+            Path(pdf_path).parent if pdf_path else "N/A",
+            niche_slug,
+        )
+        return False, []
 
     # ------------------------------------------------------------------
     # Failure history

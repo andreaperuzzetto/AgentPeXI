@@ -543,41 +543,82 @@ class ResearchAgent(AgentBase):
 
         # Step 3 — Raccogli tutti i dati delle sotto-analisi
         all_niche_data = []
-        for r in sub_results:
+        failed_niches = []
+        for r, niche in zip(sub_results, niches):
             if r.status == TaskStatus.COMPLETED and isinstance(r.output_data, dict):
                 niche_list = r.output_data.get("niches", [])
                 all_niche_data.extend(niche_list)
+            else:
+                failed_niches.append(niche)
 
-        # Step 4 — Sintesi comparativa LLM
-        synthesis = await self._call_llm(
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Hai analizzato {len(niches)} nicchie Etsy: {', '.join(niches)}.\n\n"
-                    f"Ecco i dati raccolti per ciascuna:\n"
-                    f"{json.dumps(all_niche_data, indent=2, default=str)}\n\n"
-                    f"Produci un report JSON comparativo completo con tutte le nicchie "
-                    f"e una raccomandazione chiara su quale/i perseguire prima. "
-                    f"Segui la struttura indicata nel system prompt."
-                ),
-            }],
-            system_prompt=SYSTEM_PROMPT,
-        )
-
-        output = await self._parse_and_validate(synthesis, SYSTEM_PROMPT)
-        if output is None:
+        if not all_niche_data:
             return AgentResult(
                 task_id=task.task_id,
                 agent_name=self.name,
                 status=TaskStatus.FAILED,
-                output_data={"error": "JSON parsing fallito dopo retry nella sintesi multi-nicchia."},
+                output_data={"error": f"Tutti i sub-agenti hanno fallito per le nicchie: {', '.join(niches)}."},
             )
+
+        # Step 4 — Sintesi comparativa: solo summary/recommendation.
+        # I niches[] sono già strutturati e validati dai sub-agenti — non vanno ri-generati
+        # via LLM perché il JSON aggregato supererebbe max_tokens e verrebbe troncato.
+        slim_summary = [
+            {
+                "name": n.get("name"),
+                "viable": n.get("viable"),
+                "viability_reason": n.get("viability_reason"),
+                "demand_level": n.get("demand", {}).get("level"),
+                "demand_trend": n.get("demand", {}).get("trend"),
+                "competition_level": n.get("competition", {}).get("level"),
+                "conversion_sweet_spot_usd": n.get("pricing", {}).get("conversion_sweet_spot_usd"),
+                "entry_difficulty": n.get("entry_difficulty"),
+                "confidence": n.get("confidence"),
+            }
+            for n in all_niche_data
+        ]
+        rec_prompt = (
+            f"Hai analizzato {len(niches)} nicchie Etsy: {', '.join(niches)}.\n"
+            f"Ecco i dati chiave per ciascuna:\n"
+            f"{json.dumps(slim_summary, indent=2, default=str)}\n\n"
+            "Rispondi SOLO con questo JSON (niente altro):\n"
+            "{\n"
+            '  "summary": "raccomandazione esecutiva: quale nicchia perseguire subito e perché",\n'
+            '  "recommended_next_steps": ["azione concreta 1", "azione concreta 2"],\n'
+            '  "data_quality_warning": "stringa vuota se dati OK, altrimenti descrivi problemi"\n'
+            "}"
+        )
+        rec_raw = await self._call_llm(
+            messages=[{"role": "user", "content": rec_prompt}],
+            system_prompt=None,
+        )
+        rec_cleaned = rec_raw.strip()
+        if rec_cleaned.startswith("```"):
+            lines = rec_cleaned.split("\n")
+            rec_cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
+        try:
+            rec = json.loads(rec_cleaned)
+        except (json.JSONDecodeError, AttributeError):
+            rec = {
+                "summary": f"Analisi completata per {len(all_niche_data)} nicchie.",
+                "recommended_next_steps": ["Valutare i dati per nicchia e procedere con la più viable."],
+                "data_quality_warning": "",
+            }
+
+        dq_warning = rec.get("data_quality_warning", "")
+        if failed_niches:
+            prefix = f"Sub-agenti falliti per: {', '.join(failed_niches)}. "
+            dq_warning = (prefix + dq_warning).strip()
 
         return AgentResult(
             task_id=task.task_id,
             agent_name=self.name,
             status=TaskStatus.COMPLETED,
-            output_data=output,
+            output_data={
+                "niches": all_niche_data,
+                "summary": rec.get("summary", ""),
+                "recommended_next_steps": rec.get("recommended_next_steps", []),
+                "data_quality_warning": dq_warning,
+            },
         )
 
     # ------------------------------------------------------------------

@@ -5,7 +5,8 @@ interface Schedule {
   name: string
   cron_expression?: string | null
   interval?: string | null
-  enabled: boolean | number
+  trigger?: string | null      // APScheduler job: e.g. "cron[hour='8', minute='0']"
+  enabled?: boolean | number
   next_run?: string | null
   nextRun?: string | null
   agent_name?: string | null
@@ -13,13 +14,25 @@ interface Schedule {
   last_run?: string | null
 }
 
-/* Extract HH:MM from next_run ISO or cron expression */
+/* Extract HH:MM from next_run ISO, cron expression, or APScheduler trigger string */
 function formatTime(s: Schedule): string {
   const nextRun = s.next_run ?? s.nextRun
   if (nextRun) {
     try {
       return new Date(nextRun).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
     } catch { /* ignore */ }
+  }
+  /* Try APScheduler trigger string: cron[hour='8', minute='0'] */
+  if (s.trigger) {
+    const hourMatch = s.trigger.match(/hour='(\d+)'/)
+    const minMatch = s.trigger.match(/minute='(\d+)'/)
+    if (hourMatch) {
+      const h = hourMatch[1].padStart(2, '0')
+      const m = minMatch ? minMatch[1].padStart(2, '0') : '00'
+      return `${h}:${m}`
+    }
+    const timeMatch = s.trigger.match(/(\d{1,2}):(\d{2})/)
+    if (timeMatch) return `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`
   }
   /* Try HH:MM from cron expression (field 1 = hour, field 0 = minute) */
   const cron = s.cron_expression ?? s.interval ?? ''
@@ -31,20 +44,21 @@ function formatTime(s: Schedule): string {
   return m ? m[1] : cron.slice(0, 5) || '—'
 }
 
-function tagStyle(status?: string | null, enabled?: boolean): { bg: string; color: string; border: string; label: string } {
-  const s = (status ?? '').toUpperCase()
-  if (s === 'IN ESECUZIONE' || s === 'RUNNING') {
+function tagStyle(status?: string | null, enabled?: boolean | number): { bg: string; color: string; border: string; label: string } {
+  const s = (status ?? '').toLowerCase()
+  if (s === 'running' || s === 'in esecuzione') {
     return { bg: 'rgba(45,232,106,.10)', color: 'var(--accent)', border: '1px solid rgba(45,232,106,.3)', label: 'IN ESECUZIONE' }
   }
-  if (s === 'COMPLETATO' || s === 'COMPLETED') {
+  if (s === 'completed' || s === 'completato') {
     return { bg: 'rgba(45,232,106,.05)', color: 'var(--ok)', border: '1px solid rgba(45,232,106,.15)', label: 'COMPLETATO' }
   }
-  if (s === 'ERRORE' || s === 'ERROR') {
+  if (s === 'error' || s === 'errore') {
     return { bg: 'rgba(224,82,82,.08)', color: 'var(--err)', border: '1px solid rgba(224,82,82,.2)', label: 'ERRORE' }
   }
-  if (enabled === false || enabled === undefined) {
+  if (s === 'paused' || enabled === false || enabled === 0) {
     return { bg: 'var(--s2)', color: 'var(--tf)', border: '1px solid var(--b0)', label: 'OFF' }
   }
+  /* "scheduled" or any other active state */
   return { bg: 'rgba(45,232,106,.04)', color: 'var(--tm)', border: '1px solid rgba(45,232,106,.12)', label: 'PROGRAMMATO' }
 }
 
@@ -52,13 +66,23 @@ export function SchedulerPanel() {
   const [schedules, setSchedules] = useState<Schedule[]>([])
 
   useEffect(() => {
-    fetch('/api/scheduler')
-      .then((r) => (r.ok ? r.json() : { tasks: [] }))
-      .then((data) => {
-        const tasks = data.tasks ?? data
-        setSchedules(Array.isArray(tasks) ? tasks : [])
-      })
-      .catch(() => setSchedules([]))
+    const fetchScheduler = () =>
+      fetch('/api/scheduler')
+        .then((r) => (r.ok ? r.json() : { jobs: [], tasks: [] }))
+        .then((data) => {
+          /* Prefer APScheduler jobs (active, real-time) over DB tasks */
+          const jobs: Schedule[] = Array.isArray(data.jobs) ? data.jobs : []
+          const tasks: Schedule[] = Array.isArray(data.tasks) ? data.tasks : []
+          /* Merge: jobs first, then any DB tasks not already represented */
+          const jobIds = new Set(jobs.map((j) => String(j.id)))
+          const extra = tasks.filter((t) => !jobIds.has(`db_task_${t.id}`) && !jobIds.has(String(t.id)))
+          setSchedules([...jobs, ...extra])
+        })
+        .catch(() => setSchedules([]))
+
+    fetchScheduler()
+    const id = setInterval(fetchScheduler, 30_000)
+    return () => clearInterval(id)
   }, [])
 
   return (
@@ -101,7 +125,8 @@ export function SchedulerPanel() {
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 13px' }}>
           {schedules.map((t) => {
-            const isEnabled = Boolean(t.enabled)
+            /* enabled: DB tasks have 0/1, APScheduler jobs are always active (enabled=undefined) */
+            const isEnabled = t.enabled === undefined ? true : Boolean(t.enabled)
             const ts = tagStyle(t.status, isEnabled)
             const label = t.agent_name ? `${t.agent_name} · ${t.name}` : t.name
             const lastRunStr = t.last_run ? new Date(t.last_run).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : null

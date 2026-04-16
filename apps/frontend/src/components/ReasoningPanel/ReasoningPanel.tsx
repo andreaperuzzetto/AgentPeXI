@@ -56,7 +56,20 @@ export function ReasoningPanel() {
   const wsConnected  = useStore((s) => s.wsConnected)
 
   const activeCount  = FLOW_AGENTS.filter((n) => agents[n]?.status === 'running').length
-  const runningAgent = FLOW_AGENTS.find((n) => agents[n]?.status === 'running') ?? 'research'
+
+  // When nothing is running, fall back to the agent with the most recently timestamped step
+  // instead of always defaulting to 'research' (which hides analytics/design steps after refresh)
+  const runningAgent =
+    FLOW_AGENTS.find((n) => agents[n]?.status === 'running') ??
+    (Object.entries(allSteps)
+      .filter(([, steps]) => steps.length > 0)
+      .sort(([, a], [, b]) => {
+        const aTs = a[a.length - 1]?.timestamp ?? ''
+        const bTs = b[b.length - 1]?.timestamp ?? ''
+        return bTs.localeCompare(aTs)
+      })[0]?.[0]) ??
+    'research'
+
   const runningSteps = allSteps[runningAgent] ?? []
 
   const pipelineSteps = runningSteps.length > 0

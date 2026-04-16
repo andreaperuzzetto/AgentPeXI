@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import { useStore } from '../../store'
-import type { CostsBreakdown } from '../../types'
 import './AnalyticsOverlay.css'
 
 interface Props {
@@ -14,8 +13,7 @@ export function AnalyticsOverlay({ open, onClose }: Props) {
   const llmStats    = useStore((s) => s.llmStats)
   const summary     = useStore((s) => s.analyticsSummary)
   const chromaStats = useStore((s) => s.chromaStats)
-
-  const [costsData, setCostsLocal] = useState<CostsBreakdown | null>(null)
+  const budgetMonthlyUsd = useStore((s) => s.budgetMonthlyUsd)
 
   const totalCost = llmStats.totalCost
   const todayCost = llmStats.runCost
@@ -45,30 +43,21 @@ export function AnalyticsOverlay({ open, onClose }: Props) {
   })()
 
   useEffect(() => {
-    if (!open || costsData) return
-    fetch('/api/costs?days=30')
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => { if (data?.breakdown) setCostsLocal(data.breakdown) })
-      .catch(() => {})
-  }, [open, costsData])
-
-  useEffect(() => {
     if (!open) return
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [open, onClose])
 
-  if (!open) return null
-
-  const dayEntries = costsData ? Object.entries(costsData.per_day).sort(([a], [b]) => a.localeCompare(b)) : []
+  const dayEntries = Object.entries(llmStats.perDay).sort(([a], [b]) => a.localeCompare(b))
   const dayValues = dayEntries.map(([, v]) => v)
   const maxDay = Math.max(...dayValues, 0.001)
   const avgDay = dayValues.length > 0 ? dayValues.reduce((s, v) => s + v, 0) / dayValues.length : 0
   const monthlyProjection = avgDay * 30
-  const budgetEur = costsData?.budget_threshold_eur ?? 0
-  const budgetUsd = budgetEur > 0 ? budgetEur / 0.92 : 0
+  const budgetUsd = budgetMonthlyUsd ?? 0
   const budgetPct = budgetUsd > 0 ? (monthlyProjection / budgetUsd) * 100 : 0
+
+  if (!open) return null
 
   const W = 260, H = 60, PAD = 4
   const sparkPoints = dayValues.length > 1
@@ -105,7 +94,7 @@ export function AnalyticsOverlay({ open, onClose }: Props) {
             <div className="an-sub">Media ${avgDay.toFixed(4)}/giorno</div>
             {budgetUsd > 0 && (
               <div className="an-delta" style={{ color: budgetPct > 80 ? 'var(--warn)' : 'var(--ok)' }}>
-                {budgetPct.toFixed(0)}% budget (€{budgetEur.toFixed(0)})
+                {budgetPct.toFixed(0)}% budget (${budgetUsd.toFixed(0)})
               </div>
             )}
           </AnCard>
@@ -185,7 +174,7 @@ export function AnalyticsOverlay({ open, onClose }: Props) {
                 </svg>
                 <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
                   {[
-                    { l: 'Totale 30gg', v: `$${costsData!.total.toFixed(2)}`, c: 'var(--tp)' },
+                    { l: 'Totale 30gg', v: `$${totalCost.toFixed(2)}`, c: 'var(--tp)' },
                     { l: 'Media/giorno', v: `$${avgDay.toFixed(4)}`, c: 'var(--tm)' },
                   ].map((item) => (
                     <div key={item.l} style={{ flex: 1 }}>

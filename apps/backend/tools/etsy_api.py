@@ -90,6 +90,19 @@ class EtsyAPI:
             "create_timestamp": int(_time.time()),
         }
 
+    async def _mock_upload_image(self, listing_id: int | str, file_path: str) -> dict:
+        """Simula upload immagine thumbnail — no-op, ritorna success."""
+        import os as _os
+        name = _os.path.basename(file_path)
+        return {
+            "listing_image_id": f"MOCKIMG_{int(_time.time())}_{random.randint(100, 999)}",
+            "listing_id": str(listing_id),
+            "url_75x75": f"https://mock.etsy.com/images/{name}?w=75",
+            "url_fullxfull": f"https://mock.etsy.com/images/{name}",
+            "is_watermarked": False,
+            "creation_tsz": int(_time.time()),
+        }
+
     async def _mock_get_listing(self, listing_id: int | str) -> dict:
         """Legge listing dal DB locale + aggiunge drift views."""
         try:
@@ -410,6 +423,21 @@ class EtsyAPI:
                 f"/application/shops/{shop_id}/listings/{listing_id}/files",
                 files=files,
                 data={"name": name},
+            )
+
+    async def upload_image(self, listing_id: int | str, file_path: str) -> dict:
+        """Carica un'immagine thumbnail su Etsy per il listing."""
+        if self.mock_mode:
+            return await self._mock_upload_image(listing_id, file_path)
+        import os as _os
+        shop_id = settings.ETSY_SHOP_ID
+        name = _os.path.basename(file_path)
+        with open(file_path, "rb") as f:
+            files = {"image": (name, f, "image/png")}
+            return await self._request(
+                "POST",
+                f"/application/shops/{shop_id}/listings/{listing_id}/images",
+                files=files,
             )
 
     async def get_listing(self, listing_id: int) -> dict:

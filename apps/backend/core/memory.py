@@ -314,7 +314,7 @@ class MemoryManager:
     ) -> list[dict]:
         """Ultimi N messaggi della sessione, ordinati ASC (dal più vecchio al più recente)."""
         cursor = await self._db.execute(
-            "SELECT role, content, timestamp FROM conversations "
+            "SELECT id, role, content, timestamp FROM conversations "
             "WHERE session_id = ? ORDER BY id DESC LIMIT ?",
             (session_id, limit),
         )
@@ -574,8 +574,10 @@ class MemoryManager:
         """Restituisce tutti gli step + llm_calls + tool_calls per un task, ordinati per timestamp."""
         results: list[dict] = []
 
+        # Escludi step_type 'tool_call' e 'llm_call': i dati sono già nelle
+        # tabelle dedicate (tool_calls, llm_calls) con info più ricche.
         cursor = await self._db.execute(
-            "SELECT * FROM agent_steps WHERE task_id = ?",
+            "SELECT * FROM agent_steps WHERE task_id = ? AND step_type NOT IN ('tool_call', 'llm_call')",
             (task_id,),
         )
         for row in await cursor.fetchall():
