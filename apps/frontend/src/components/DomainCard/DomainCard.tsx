@@ -1,207 +1,143 @@
 import { useStore } from '../../store'
 
-const AGENT_LIST = ['research', 'design', 'publisher', 'analytics']
+const ETSY_AGENTS    = ['research', 'design', 'publisher', 'analytics']
+const PERSONAL_AGENTS = ['recall', 'watcher']
 
-export function DomainCard() {
+// Componente interno riusabile per una singola service card
+function ServiceCard({
+  sectionKey,
+  label,
+  abbr,
+  title,
+  subtitle,
+  badge,
+  agentList,
+}: {
+  sectionKey: string
+  label: string
+  abbr: string
+  title: string
+  subtitle: string
+  badge: string
+  agentList: string[]
+}) {
   const setOverlaySystem = useStore((s) => s.setOverlaySystem)
   const agents = useStore((s) => s.agents)
 
   return (
-    /* .sys-card */
     <div
-        className="card"
-        onClick={() => setOverlaySystem('etsy_store')}
-        style={{ padding: '13px 14px', cursor: 'pointer' }}
-        onMouseEnter={(e) => {
-          const icon = e.currentTarget.querySelector('.sys-icon') as HTMLElement | null
-          if (icon) {
-            icon.style.borderColor = 'rgba(45,232,106,.25)'
-            icon.style.boxShadow = '0 0 8px var(--aglow)'
-          }
-          const cta = e.currentTarget.querySelector('.sys-cta-text') as HTMLElement | null
-          if (cta) cta.style.letterSpacing = '0.04em'
-        }}
-        onMouseLeave={(e) => {
-          const icon = e.currentTarget.querySelector('.sys-icon') as HTMLElement | null
-          if (icon) {
-            icon.style.borderColor = 'var(--b0)'
-            icon.style.boxShadow = 'none'
-          }
-          const cta = e.currentTarget.querySelector('.sys-cta-text') as HTMLElement | null
-          if (cta) cta.style.letterSpacing = '0'
-        }}
-      >
-        {/* Card header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* .sys-icon */}
-          <div
-            className="sys-icon"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 7,
-              background: 'var(--s3)',
-              border: '1px solid var(--b0)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontFamily: 'var(--fd)',
-              fontSize: 11,
-              color: 'var(--accent)',
-              letterSpacing: '0.02em',
-              flexShrink: 0,
-              transition: 'border-color .25s var(--e-io), box-shadow .25s var(--e-io)',
-            }}
-          >
-            ETY
-          </div>
-
-          <div>
-            {/* .sys-name */}
-            <div
-              style={{
-                fontFamily: 'var(--fh)',
-                fontSize: 16,
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-                color: 'var(--tp)',
-              }}
-            >
-              Etsy Store
-            </div>
-            {/* .sys-sub */}
-            <div
-              style={{
-                fontFamily: 'var(--fd)',
-                fontSize: 12,
-                color: 'var(--tf)',
-                marginTop: 2,
-              }}
-            >
-              {AGENT_LIST.length} agenti nel sistema
-            </div>
-          </div>
-
-          {/* .sys-badge */}
-          <span
-            style={{
-              fontFamily: 'var(--fd)',
-              fontSize: 11,
-              color: 'var(--tf)',
-              padding: '2px 8px',
-              borderRadius: 99,
-              border: '1px solid var(--b0)',
-              marginLeft: 'auto',
-              flexShrink: 0,
-            }}
-          >
-            PENDING APPROVAL
-          </span>
-        </div>
-
-        {/* Agent rows — .sys-agents */}
+      className="card"
+      onClick={() => setOverlaySystem(sectionKey)}
+      style={{ padding: '13px 14px', cursor: 'pointer', flex: 1, minWidth: 0 }}
+      onMouseEnter={(e) => {
+        const icon = e.currentTarget.querySelector('.sys-icon') as HTMLElement | null
+        if (icon) {
+          icon.style.borderColor = 'rgba(45,232,106,.25)'
+          icon.style.boxShadow = '0 0 8px var(--aglow)'
+        }
+        const cta = e.currentTarget.querySelector('.sys-cta-text') as HTMLElement | null
+        if (cta) cta.style.letterSpacing = '0.04em'
+      }}
+      onMouseLeave={(e) => {
+        const icon = e.currentTarget.querySelector('.sys-icon') as HTMLElement | null
+        if (icon) {
+          icon.style.borderColor = 'var(--b0)'
+          icon.style.boxShadow = 'none'
+        }
+        const cta = e.currentTarget.querySelector('.sys-cta-text') as HTMLElement | null
+        if (cta) cta.style.letterSpacing = '0'
+      }}
+    >
+      {/* Card header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div
+          className="sys-icon"
           style={{
+            width: 32,
+            height: 32,
+            borderRadius: 7,
+            background: 'var(--s3)',
+            border: '1px solid var(--b0)',
             display: 'flex',
-            flexDirection: 'column',
-            gap: 5,
-            marginTop: 11,
-            paddingTop: 10,
-            borderTop: '1px solid var(--b0)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'var(--fd)',
+            fontSize: 11,
+            color: 'var(--accent)',
+            letterSpacing: '0.02em',
+            flexShrink: 0,
+            transition: 'border-color .25s var(--e-io), box-shadow .25s var(--e-io)',
           }}
         >
-          {AGENT_LIST.map((name) => {
-            const agent = agents[name]
-            const isRunning = agent?.status === 'running'
-            const isError   = agent?.status === 'error'
-            return (
-              <div key={name}>
-                {/* .sys-agent-row */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
-                  <span
-                    className={isRunning ? 'status-dot status-dot--running' : 'status-dot'}
-                    style={
-                      isError ? { background: 'var(--err)' } :
-                      !isRunning ? { background: 'var(--tf)' } :
-                      undefined
-                    }
-                  />
-                  {/* .aname-sm */}
-                  <span
-                    style={{
-                      fontFamily: 'var(--fd)',
-                      fontSize: 14,
-                      color: 'var(--tm)',
-                      flex: 1,
-                      letterSpacing: '0.02em',
-                      textTransform: 'uppercase' as const,
-                    }}
-                  >
-                    {name}
-                  </span>
-                  {/* .astatus-sm */}
-                  <span
-                    style={{
-                      fontFamily: 'var(--fd)',
-                      fontSize: 12,
-                      padding: '1px 7px',
-                      borderRadius: 99,
-                      border: `1px solid ${
-                        isRunning ? 'rgba(45,232,106,.25)' :
-                        isError   ? 'rgba(224,82,82,.25)' :
-                        'var(--b0)'
-                      }`,
-                      color: isRunning ? 'var(--accent)' : isError ? 'var(--err)' : 'var(--tf)',
-                      transition: 'color .2s, border-color .2s',
-                    }}
-                  >
-                    {agent?.status?.toUpperCase() ?? 'IDLE'}
-                  </span>
-                </div>
-                {/* .atask-preview */}
-                {isRunning && agent?.lastTask && (
-                  <div
-                    style={{
-                      fontFamily: 'var(--fd)',
-                      fontSize: 12,
-                      color: 'var(--tf)',
-                      paddingLeft: 14,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap' as const,
-                      marginTop: 1,
-                    }}
-                  >
-                    {agent.lastTask}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+          {abbr}
         </div>
-
-        {/* CTA — .sys-cta */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'flex-end',
-            marginTop: 10,
-            paddingTop: 9,
-            borderTop: '1px solid var(--b0)',
-          }}
-        >
-          <span
-            className="sys-cta-text"
-            style={{
-              fontFamily: 'var(--fd)',
-              fontSize: 12,
-              color: 'var(--accent)',
-              transition: 'letter-spacing .2s var(--e-out)',
-            }}
-          >
-            Dettaglio agenti e reasoning →
-          </span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: 'var(--fh)', fontSize: 16, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--tp)' }}>
+            {title}
+          </div>
+          <div style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)', marginTop: 2 }}>
+            {subtitle}
+          </div>
         </div>
+        <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', padding: '2px 8px', borderRadius: 99, border: '1px solid var(--b0)', marginLeft: 'auto', flexShrink: 0 }}>
+          {badge}
+        </span>
       </div>
+
+      {/* Agent rows */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 11, paddingTop: 10, borderTop: '1px solid var(--b0)' }}>
+        {agentList.map((name) => {
+          const agent = agents[name]
+          const isRunning = agent?.status === 'running'
+          const isError   = agent?.status === 'error'
+          return (
+            <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+              <span
+                className={isRunning ? 'status-dot status-dot--running' : 'status-dot'}
+                style={isError ? { background: 'var(--err)' } : !isRunning ? { background: 'var(--tf)' } : undefined}
+              />
+              <span style={{ fontFamily: 'var(--fd)', fontSize: 14, color: 'var(--tm)', flex: 1, letterSpacing: '0.02em', textTransform: 'uppercase' as const, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                {name.replace('_', ' ')}
+              </span>
+              <span style={{ fontFamily: 'var(--fd)', fontSize: 12, padding: '1px 7px', borderRadius: 99, border: `1px solid ${isRunning ? 'rgba(45,232,106,.25)' : isError ? 'rgba(224,82,82,.25)' : 'var(--b0)'}`, color: isRunning ? 'var(--accent)' : isError ? 'var(--err)' : 'var(--tf)' }}>
+                {agent?.status?.toUpperCase() ?? 'IDLE'}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* CTA */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--b0)' }}>
+        <span className="sys-cta-text" style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--accent)', transition: 'letter-spacing .2s var(--e-out)' }}>
+          {label} →
+        </span>
+      </div>
+    </div>
+  )
+}
+
+export function DomainCard() {
+  return (
+    <div style={{ display: 'flex', gap: 12 }}>
+      <ServiceCard
+        sectionKey="etsy_store"
+        label="Dettaglio agenti e reasoning"
+        abbr="ETY"
+        title="Etsy Store"
+        subtitle={`${ETSY_AGENTS.length} agenti nel sistema`}
+        badge="PENDING APPROVAL"
+        agentList={ETSY_AGENTS}
+      />
+      <ServiceCard
+        sectionKey="personal"
+        label="Agenti e servizi personal"
+        abbr="PSN"
+        title="Personale"
+        subtitle="1 agente · 1 servizio · Ollama locale"
+        badge="LOCALE"
+        agentList={PERSONAL_AGENTS}
+      />
+    </div>
   )
 }

@@ -4,11 +4,30 @@ import { useStore } from '../../store'
 import { AgentOverlayCard } from './AgentOverlayCard'
 import { AgentDetailPanel } from './AgentDetailPanel'
 
+const SECTION_CONFIG: Record<string, {
+  title: string
+  badge?: string
+  agents: string[]
+}> = {
+  etsy_store: {
+    title:  'Etsy Store',
+    badge:  'PENDING APPROVAL',
+    agents: ['research', 'design', 'publisher', 'analytics'],
+  },
+  personal: {
+    title:  'Personale',
+    badge:  'LOCALE · OLLAMA',
+    agents: ['recall', 'watcher'],
+  },
+}
+
 export function SystemOverlay() {
   const overlaySystem    = useStore((s) => s.overlaySystem)
   const setOverlaySystem = useStore((s) => s.setOverlaySystem)
   const selectedAgent    = useStore((s) => s.selectedAgent)
   const setSelectedAgent = useStore((s) => s.setSelectedAgent)
+
+  const section = overlaySystem ? (SECTION_CONFIG[overlaySystem] ?? SECTION_CONFIG['etsy_store']) : null
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -129,20 +148,22 @@ export function SystemOverlay() {
               color: 'var(--tp)',
             }}
           >
-            Etsy Store
+            {section?.title ?? '—'}
           </span>
-          <span
-            style={{
-              fontFamily: 'var(--fd)',
-              fontSize: 12,
-              color: 'var(--tf)',
-              padding: '2px 9px',
-              borderRadius: 99,
-              border: '1px solid var(--b0)',
-            }}
-          >
-            PENDING APPROVAL
-          </span>
+          {section?.badge && (
+            <span
+              style={{
+                fontFamily: 'var(--fd)',
+                fontSize: 12,
+                color: 'var(--tf)',
+                padding: '2px 9px',
+                borderRadius: 99,
+                border: '1px solid var(--b0)',
+              }}
+            >
+              {section.badge}
+            </span>
+          )}
 
           {/* Close button */}
           <button
@@ -195,7 +216,7 @@ export function SystemOverlay() {
                 : {}),
             }}
           >
-            {['research', 'design', 'publisher', 'analytics'].map((name, i) => (
+            {(section?.agents ?? []).map((name, i) => (
               <AgentOverlayCard key={name} agentName={name} index={i} />
             ))}
           </div>

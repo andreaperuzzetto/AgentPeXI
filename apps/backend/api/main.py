@@ -93,10 +93,11 @@ ws_manager = ConnectionManager()
 # ------------------------------------------------------------------
 
 memory: MemoryManager | None = None
-pepe = None  # apps.backend.core.pepe.Pepe — assegnato in lifespan
-storage = None  # apps.backend.core.storage.StorageManager — assegnato in lifespan
-etsy_api = None  # apps.backend.tools.etsy_api.EtsyAPI — assegnato in lifespan
-scheduler = None  # apps.backend.core.scheduler.Scheduler — assegnato in lifespan
+pepe = None          # apps.backend.core.pepe.Pepe — assegnato in lifespan
+storage = None       # apps.backend.core.storage.StorageManager — assegnato in lifespan
+etsy_api = None      # apps.backend.tools.etsy_api.EtsyAPI — assegnato in lifespan
+scheduler = None     # apps.backend.core.scheduler.Scheduler — assegnato in lifespan
+screen_watcher = None  # apps.backend.screen.watcher.ScreenWatcher — assegnato in lifespan
 
 
 # ------------------------------------------------------------------
@@ -107,7 +108,7 @@ scheduler = None  # apps.backend.core.scheduler.Scheduler — assegnato in lifes
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: MemoryManager, Pepe, workers, Telegram bot. Shutdown: graceful stop."""
-    global memory, pepe, storage, etsy_api, scheduler
+    global memory, pepe, storage, etsy_api, scheduler, screen_watcher
 
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.scheduler import Scheduler
@@ -119,6 +120,8 @@ async def lifespan(app: FastAPI):
     from apps.backend.agents.publisher import PublisherAgent
     from apps.backend.agents.analytics import AnalyticsAgent
     from apps.backend.agents.finance import FinanceAgent
+    from apps.backend.agents.recall import RecallAgent
+    from apps.backend.screen.watcher import ScreenWatcher
 
     # 1. MemoryManager
     memory = MemoryManager()
@@ -193,6 +196,28 @@ async def lifespan(app: FastAPI):
     )
     pepe.register_agent("finance", finance_agent)
 
+    # 2h. RecallAgent — Personal domain, tutto su Ollama
+    recall_agent = RecallAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        ws_broadcaster=ws_manager.broadcast,
+    )
+    pepe.register_agent("recall", recall_agent)
+
+    # 2i. ScreenWatcher — avviato solo se pyobjc/mss disponibili
+    _screen_watcher_error: str | None = None
+    screen_watcher = ScreenWatcher(
+        memory=memory,
+        ws_broadcaster=ws_manager.broadcast,
+    )
+    try:
+        await screen_watcher.start()
+        logger.info("ScreenWatcher avviato")
+    except Exception as exc:
+        logger.warning("ScreenWatcher non avviato: %s", exc)
+        _screen_watcher_error = str(exc)
+        screen_watcher = None
+
     # 3. Scheduler APScheduler
     scheduler = Scheduler(
         memory=memory,
@@ -205,19 +230,36 @@ async def lifespan(app: FastAPI):
         analytics_agent=analytics_agent,
         finance_agent=finance_agent,
         telegram_broadcaster=telegram_broadcast,
+        screen_watcher=screen_watcher,
     )
     await scheduler.start()
     logger.info("Scheduler avviato")
 
     # 4. Bot Telegram (stesso event loop di FastAPI)
-    telegram_bot = TelegramBot(pepe=pepe)
+    telegram_bot = TelegramBot(pepe=pepe, scheduler=scheduler, screen_watcher=screen_watcher)
     await telegram_bot.start()
+
+    # Collega notifier Telegram al ScreenWatcher (ora che il bot è attivo)
+    if screen_watcher is not None:
+        screen_watcher.set_error_notifier(telegram_broadcast)
+
+    # Notifica startup deferred — inviata solo ora che il bot è attivo
+    if _screen_watcher_error:
+        await telegram_broadcast(
+            f"⚠️ ScreenWatcher non avviato all'avvio del server.\n"
+            f"Errore: {_screen_watcher_error}\n\n"
+            "Controlla che mss, pyobjc e Vision siano installati. "
+            "Il resto del sistema funziona normalmente."
+        )
 
     yield
 
     # Shutdown (ordine inverso)
     await telegram_bot.stop()
     await scheduler.stop()
+    if screen_watcher is not None:
+        await screen_watcher.stop()
+        logger.info("ScreenWatcher fermato")
     if etsy_api is not None:
         await etsy_api.close()
         logger.info("EtsyAPI chiuso")
@@ -368,6 +410,25 @@ async def get_analytics_summary_endpoint(days: int = 14) -> dict:
         return {"summary": {}}
     summary = await memory.get_agent_logs_summary(period_days=days)
     return {"summary": summary}
+
+
+@app.get("/api/screen/status")
+async def get_screen_status() -> dict:
+    """Stato corrente del ScreenWatcher — usato per idratazione al WS connect."""
+    if screen_watcher is None:
+        return {
+            "available": False,
+            "active": False,
+            "paused": False,
+            "captures_today": 0,
+            "last_capture_time": "",
+            "last_capture_app": "",
+        }
+    st = screen_watcher.get_status()
+    return {
+        "available": True,
+        **st,
+    }
 
 
 @app.get("/api/memory/stats")

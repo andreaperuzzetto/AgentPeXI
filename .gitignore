@@ -47,7 +47,8 @@ logs/
 # Notes private
 planv1.md
 planv2.md
-NOTES.md
+NOTESv1.md
+NOTESv2.md
 
 # Fonts (downloaded at setup)
 apps/backend/assets/fonts/*.ttf

@@ -72,6 +72,27 @@ function handleMessage(raw: MessageEvent) {
       store.setContextState(data as any)
       break
 
+    case 'watcher_status':
+      store.setAgentStatus(
+        'watcher',
+        data.status === 'active' ? 'running' : data.status === 'error' ? 'error' : 'idle',
+        data.last_task ?? (data.last_capture_app ? `Ultima: ${data.last_capture_app}` : undefined),
+      )
+      break
+
+    case 'watcher_capture':
+      store.addAgentStep({
+        id: data.step_id ?? crypto.randomUUID(),
+        agent: 'watcher',
+        taskId: data.task_id ?? 'watcher',
+        stepNumber: data.step_number ?? 0,
+        stepType: data.step_type ?? 'capture',
+        description: data.description ?? `${data.app_name} — ${data.chunks} chunk`,
+        durationMs: data.duration_ms ?? 0,
+        timestamp: data.timestamp,
+      })
+      break
+
     default:
       break
   }
@@ -95,6 +116,21 @@ export function useWebSocket() {
         if (r.ok) {
           const data = await r.json()
           store.setSystemStatus({ mock_mode: data.mock_mode ?? false })
+        }
+      } catch {}
+
+      // Ripristina stato ScreenWatcher
+      try {
+        const r = await fetch('/api/screen/status')
+        if (r.ok) {
+          const sw = await r.json()
+          if (sw.available) {
+            store.setAgentStatus(
+              'watcher',
+              sw.active ? 'running' : 'idle',
+              sw.last_capture_app ? `Ultima: ${sw.last_capture_app}` : '',
+            )
+          }
         }
       } catch {}
 

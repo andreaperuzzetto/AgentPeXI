@@ -8,9 +8,28 @@ MODEL_HAIKU = "claude-haiku-4-5-20251001"
 
 
 class Settings(BaseSettings):
-    # LLM
+    # LLM — Anthropic
     ANTHROPIC_API_KEY: str = ""
     VOYAGE_API_KEY: str = ""
+
+    # LLM — Ollama (Personal domain)
+    OLLAMA_MODEL: str = "qwen3:4b"
+    OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
+    OLLAMA_KEEP_ALIVE: str = "-1"
+
+    # Personal domain — filesystem
+    PERSONAL_ALLOWED_DIRS: str = ""  # CSV di path, es: /Users/andrea/Documents,/Users/andrea/Desktop
+
+    # Personal domain — API keys esterne
+    NOTION_API_TOKEN: str = ""
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REFRESH_TOKEN: str = ""
+    PERSONAL_API_KEY: str = ""  # chiave locale per /api/personal/* e /api/screen/*
+
+    # Screen Watcher (Blocco 2)
+    SCREEN_RETENTION_DAYS: int = 30          # giorni di retention ChromaDB screen_memory
+    SCREEN_BLOCKLIST: str = ""               # app aggiuntive da bloccare (CSV bundle id o nome)
 
     # Etsy
     ETSY_API_KEY: str = ""

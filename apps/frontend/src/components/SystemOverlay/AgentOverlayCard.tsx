@@ -3,11 +3,18 @@ import { useStore } from '../../store'
 const EMPTY_STEPS: never[] = []
 
 const AGENT_DESCS: Record<string, string> = {
+  // Etsy
   research:  'Analisi di mercato, ricerca nicchie, trend Etsy e dati competitivi.',
   design:    'Generazione immagini, prompt engineering, output SVG e PNG ad alta risoluzione.',
   publisher: 'Creazione listing, titoli SEO, tag e pubblicazione su Etsy.',
   analytics: 'Monitoraggio KPI, A/B test, analisi performance e reportistica.',
+  // Personal
+  recall:    'Ricerca nella memoria schermo. Risponde a "cosa stavo guardando?" via Ollama.',
+  watcher:   'Servizio di monitoraggio passivo. Cattura schermo, OCR e indicizzazione automatica in ChromaDB.',
 }
+
+/** Questi ID sono servizi di sistema, non agenti LLM */
+const SERVICES = new Set(['watcher'])
 
 interface Props {
   agentName: string
@@ -23,6 +30,7 @@ export function AgentOverlayCard({ agentName, index }: Props) {
   const isSelected = selectedAgent === agentName
   const isRunning  = agent?.status === 'running'
   const isError    = agent?.status === 'error'
+  const isService  = SERVICES.has(agentName)
 
   const statusColor =
     isRunning ? 'var(--accent)' :
@@ -60,19 +68,25 @@ export function AgentOverlayCard({ agentName, index }: Props) {
             undefined
           }
         />
-        <span
-          style={{
-            fontFamily: 'var(--fh)',
-            fontSize: 16,
-            fontWeight: 700,
-            letterSpacing: '0.05em',
-            textTransform: 'uppercase' as const,
-            color: 'var(--tp)',
-            flex: 1,
-          }}
-        >
-          {agentName}
-        </span>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' as const, gap: 2 }}>
+          <span
+            style={{
+              fontFamily: 'var(--fh)',
+              fontSize: 16,
+              fontWeight: 700,
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase' as const,
+              color: 'var(--tp)',
+            }}
+          >
+            {agentName}
+          </span>
+          {isService && (
+            <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)', letterSpacing: '0.08em', textTransform: 'uppercase' as const }}>
+              SERVIZIO
+            </span>
+          )}
+        </div>
         {/* Status badge */}
         <span
           style={{
@@ -143,7 +157,7 @@ export function AgentOverlayCard({ agentName, index }: Props) {
         }}
       >
         <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>
-          {steps.length} step registrati
+          {isService ? `${steps.length} catture` : `${steps.length} step registrati`}
         </span>
         <span
           style={{

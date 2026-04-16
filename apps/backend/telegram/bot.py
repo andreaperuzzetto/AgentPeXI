@@ -22,9 +22,12 @@ from telegram.ext import (
 )
 
 from apps.backend.core.config import settings
+from apps.backend.core.domains import DOMAIN_ETSY, DOMAIN_PERSONAL
 
 if TYPE_CHECKING:
     from apps.backend.core.pepe import Pepe
+    from apps.backend.core.scheduler import Scheduler
+    from apps.backend.screen.watcher import ScreenWatcher
 
 logger = logging.getLogger("agentpexi.telegram")
 
@@ -32,8 +35,15 @@ logger = logging.getLogger("agentpexi.telegram")
 class TelegramBot:
     """Bot Telegram per AgentPeXI — comandi + chat + vocale."""
 
-    def __init__(self, pepe: Pepe) -> None:
+    def __init__(
+        self,
+        pepe: Pepe,
+        scheduler: Scheduler | None = None,
+        screen_watcher: ScreenWatcher | None = None,
+    ) -> None:
         self.pepe = pepe
+        self.scheduler = scheduler
+        self.screen_watcher = screen_watcher
         self._app: Application | None = None
 
         # Filtro: rispondi solo ad Andrea
@@ -95,6 +105,12 @@ class TelegramBot:
         add(CommandHandler("new", self._cmd_new, filters=self._chat_filter))
         add(CommandHandler("mock", self._cmd_mock, filters=self._chat_filter))
         add(CommandHandler("analytics", self._cmd_analytics, filters=self._chat_filter))
+        add(CommandHandler("pipeline", self._cmd_pipeline, filters=self._chat_filter))
+        add(CommandHandler("finance", self._cmd_finance, filters=self._chat_filter))
+        add(CommandHandler("personal", self._cmd_personal, filters=self._chat_filter))
+        add(CommandHandler("etsy", self._cmd_etsy, filters=self._chat_filter))
+        add(CommandHandler("list", self._cmd_list, filters=self._chat_filter))
+        add(CommandHandler("screen", self._cmd_screen, filters=self._chat_filter))
 
         # Messaggi vocali
         add(MessageHandler(self._chat_filter & filters.VOICE, self._handle_voice))
@@ -121,6 +137,10 @@ class TelegramBot:
 
         queue_size = self.pepe._queue.qsize()
         lines.append(f"\n📋 Task in coda: {queue_size}")
+
+        domain = self.pepe.get_active_domain()
+        domain_icon = "🏪" if domain.name == "etsy_store" else "🧠"
+        lines.append(f"\n{domain_icon} *Dominio attivo*: {domain.name}")
 
         mock_line = "\n🟡 *MOCK MODE ATTIVO*" if self.pepe.mock_mode else ""
         if mock_line:
@@ -229,6 +249,147 @@ class TelegramBot:
         except Exception as exc:
             logger.error("Analytics manuale fallito: %s", exc)
             await update.message.reply_text(f"❌ Analytics fallito: {exc}")
+
+    async def _cmd_pipeline(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/pipeline — avvia manualmente Research → Design → Publisher."""
+        if not self.scheduler:
+            await update.message.reply_text("❌ Scheduler non disponibile.")
+            return
+        await update.message.reply_text("⏳ Pipeline avviata — Research in corso...")
+        try:
+            asyncio.create_task(self.scheduler._run_pipeline())
+        except Exception as exc:
+            logger.error("Pipeline manuale fallita: %s", exc)
+            await update.message.reply_text(f"❌ Pipeline fallita: {exc}")
+
+    async def _cmd_finance(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/finance — avvia manualmente il Finance Agent."""
+        if not self.scheduler:
+            await update.message.reply_text("❌ Scheduler non disponibile.")
+            return
+        await update.message.reply_text("⏳ Finance report in avvio...")
+        try:
+            asyncio.create_task(self.scheduler._run_finance())
+        except Exception as exc:
+            logger.error("Finance manuale fallito: %s", exc)
+            await update.message.reply_text(f"❌ Finance fallito: {exc}")
+
+    async def _cmd_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/list — lista tutti i comandi disponibili."""
+        domain = self.pepe.get_active_domain()
+        domain_icon = "🧠" if domain.name == "personal" else "🏪"
+        lines = [
+            f"📋 *Comandi AgentPeXI* ({domain_icon} {domain.name})\n",
+            "*— Sistema —*",
+            "/status — stato agenti, coda, dominio attivo",
+            "/list — questo messaggio",
+            "/pause — ferma i worker",
+            "/resume — riavvia i worker",
+            "/new — nuova sessione (azzera conversazione)",
+            "",
+            "*— Dominio —*",
+            "/personal — passa al dominio Personal (Ollama locale)",
+            "/etsy — passa al dominio Etsy store (Claude)",
+            "/screen [on|off|status] — gestione Screen Watcher",
+            "",
+            "*— Etsy —*",
+            "/pipeline — avvia manualmente Research → Design → Publisher",
+            "/analytics — esegue subito il job analytics",
+            "/finance — genera report economico",
+            "/listings — lista ultimi 10 listing",
+            "/mock [on|off] — attiva/disattiva mock mode",
+            "",
+            "*— Interazione —*",
+            "/ask <domanda> — chiede qualcosa a Pepe",
+            "/report — report stato sistema",
+            "/retry [task\\_id] — riprova ultimo task fallito",
+            "/resume\\_agent <nome> — riattiva agente sospeso",
+            "",
+            "💬 Oppure scrivi direttamente — Pepe risponde.",
+        ]
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _cmd_screen(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/screen [on|off|status] — gestione Screen Watcher."""
+        arg = (context.args[0].lower() if context.args else "status")
+
+        if not self.screen_watcher:
+            await update.message.reply_text(
+                "❌ *Screen Watcher non disponibile*\n\n"
+                "Il servizio non è partito all'avvio del server.\n"
+                "Cause probabili: `mss`, `pyobjc` o `Vision` non installati.\n\n"
+                "Controlla i log del server per il dettaglio dell'errore.",
+                parse_mode="Markdown",
+            )
+            return
+
+        if arg == "off":
+            self.screen_watcher.pause()
+            await update.message.reply_text(
+                "⏸️ *Screen Watcher in pausa*\n\nNon catturerò più lo schermo.\nUsa /screen on per riprendere.",
+                parse_mode="Markdown",
+            )
+
+        elif arg == "on":
+            self.screen_watcher.resume()
+            await update.message.reply_text(
+                "▶️ *Screen Watcher attivo*\n\nRiprendo a monitorare lo schermo.",
+                parse_mode="Markdown",
+            )
+
+        else:  # status (default)
+            st = self.screen_watcher.get_status()
+            icon = "▶️" if st["active"] else "⏸️"
+            stato = "Attivo" if st["active"] else "In pausa"
+            last_app = st["last_capture_app"] or "—"
+            last_time = st["last_capture_time"] or "—"
+            if last_time and last_time != "—":
+                try:
+                    from datetime import datetime
+                    last_time = datetime.fromisoformat(last_time).strftime("%d/%m %H:%M")
+                except Exception:
+                    pass
+            await update.message.reply_text(
+                f"{icon} *Screen Watcher*: {stato}\n\n"
+                f"📸 Catture oggi: {st['captures_today']}\n"
+                f"🖥️ Ultima app: {last_app}\n"
+                f"🕐 Ultima cattura: {last_time}\n\n"
+                "Comandi: `/screen on` · `/screen off` · `/screen status`",
+                parse_mode="Markdown",
+            )
+
+    async def _cmd_personal(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/personal — passa al dominio Personal (Ollama locale, privacy totale)."""
+        self.pepe.set_active_domain(DOMAIN_PERSONAL)
+        if self.pepe._ws_broadcast:
+            await self.pepe._ws_broadcast({
+                "type": "system_status",
+                "domain": "personal",
+                "message": "Dominio Personal attivato",
+            })
+        await update.message.reply_text(
+            "🧠 *Dominio Personal attivo*\n\n"
+            "Sono passato in modalità assistente personale.\n"
+            "LLM: Ollama locale (qwen3:4b) — privacy totale, costo zero.\n"
+            "Usa /etsy per tornare alla gestione store.",
+            parse_mode="Markdown",
+        )
+
+    async def _cmd_etsy(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/etsy — torna al dominio Etsy store."""
+        self.pepe.set_active_domain(DOMAIN_ETSY)
+        if self.pepe._ws_broadcast:
+            await self.pepe._ws_broadcast({
+                "type": "system_status",
+                "domain": "etsy_store",
+                "message": "Dominio Etsy attivato",
+            })
+        await update.message.reply_text(
+            "🏪 *Dominio Etsy attivo*\n\n"
+            "Torno alla gestione dello store.\n"
+            "LLM: Claude (Anthropic). Usa /personal per la modalità personale.",
+            parse_mode="Markdown",
+        )
 
     async def _cmd_mock(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/mock [on|off] — attiva o disattiva mock mode Etsy."""

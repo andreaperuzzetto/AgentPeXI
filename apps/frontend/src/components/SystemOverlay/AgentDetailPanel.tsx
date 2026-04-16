@@ -56,7 +56,7 @@ export function AgentDetailPanel() {
               color: 'var(--tp)',
             }}
           >
-            {selectedAgent ? selectedAgent.charAt(0).toUpperCase() + selectedAgent.slice(1) : ''} Agent
+            {selectedAgent ? selectedAgent.charAt(0).toUpperCase() + selectedAgent.slice(1) : ''}
           </span>
           <button
             onClick={() => setSelectedAgent(null)}

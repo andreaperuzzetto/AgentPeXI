@@ -10,8 +10,9 @@ from datetime import datetime
 from typing import Any, Callable, Coroutine
 
 import anthropic
+import openai
 
-from apps.backend.core.config import MODEL_SONNET
+from apps.backend.core.config import MODEL_SONNET, settings
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 
@@ -185,7 +186,25 @@ class AgentBase(ABC):
         system_prompt: str | None = None,
         model_override: str | None = None,
         max_tokens: int = 4096,
+        domain_name: str = "etsy_store",
     ) -> str:
+        """Chiama LLM con routing automatico: Ollama per dominio personal, Anthropic altrimenti.
+
+        Args:
+            domain_name: Nome del dominio attivo (es. 'personal', 'etsy_store').
+                         Se 'personal' → Ollama locale (costo zero, privacy totale).
+                         Altrimenti → Anthropic Claude (comportamento invariato).
+        """
+        use_ollama = domain_name == "personal"
+
+        if use_ollama:
+            return await self._call_llm_ollama(
+                messages=messages,
+                system_prompt=system_prompt,
+                max_tokens=max_tokens,
+            )
+
+        # --- Path Anthropic (comportamento originale) ---
         model = model_override or self.model
         t0 = time.monotonic()
 
@@ -234,6 +253,7 @@ class AgentBase(ABC):
             cache_write_tokens=cache_write,
             cost_usd=cost_usd,
             duration_ms=duration_ms,
+            provider="anthropic",
         )
 
         # WebSocket event
@@ -243,6 +263,97 @@ class AgentBase(ABC):
             "task_id": self._task_id,
             "step_id": step_id,
             "model": model,
+            "provider": "anthropic",
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": cost_usd,
+            "duration_ms": duration_ms,
+        })
+
+        # Aggiorna contatori
+        self._llm_call_count += 1
+        self._total_cost += cost_usd
+        self._total_tokens += input_tokens + output_tokens
+
+        return response_text
+
+    async def _call_llm_ollama(
+        self,
+        messages: list[dict],
+        system_prompt: str | None = None,
+        max_tokens: int = 4096,
+    ) -> str:
+        """Chiama Ollama via API compatibile OpenAI. Costo zero, privacy totale.
+
+        Ollama deve essere avviato con OLLAMA_KEEP_ALIVE=-1 per tenere il modello
+        permanentemente in RAM (configurato in .env e nel plist launchd).
+        """
+        t0 = time.monotonic()
+        model = settings.OLLAMA_MODEL
+
+        # Costruisci messages list per OpenAI SDK (system come primo messaggio)
+        ollama_messages: list[dict] = []
+        if system_prompt:
+            ollama_messages.append({"role": "system", "content": system_prompt})
+        ollama_messages.extend(messages)
+
+        ollama_client = openai.AsyncOpenAI(
+            base_url=settings.OLLAMA_BASE_URL,
+            api_key="ollama",  # Ollama non richiede API key reale
+        )
+
+        try:
+            response = await ollama_client.chat.completions.create(
+                model=model,
+                messages=ollama_messages,
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Ollama non disponibile ({model}): {exc}") from exc
+
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
+        response_text = response.choices[0].message.content or "" if response.choices else ""
+        usage = response.usage
+        input_tokens = usage.prompt_tokens if usage else 0
+        output_tokens = usage.completion_tokens if usage else 0
+        cost_usd = 0.0  # Ollama locale = €0
+
+        # Log step
+        step_id = await self._log_step(
+            step_type="llm_call",
+            description=f"Ollama {model} ({input_tokens}+{output_tokens} tok)",
+            input_data={"system_prompt": system_prompt, "messages": messages},
+            output_data={"response": response_text[:500]},
+            duration_ms=duration_ms,
+        )
+
+        # Log dettagliato in llm_calls
+        await self.memory.log_llm_call(
+            task_id=self._task_id,
+            step_id=step_id,
+            agent_name=self.name,
+            model=model,
+            system_prompt=system_prompt,
+            messages=messages,
+            response=response_text,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            cost_usd=cost_usd,
+            duration_ms=duration_ms,
+            provider="ollama",
+        )
+
+        # WebSocket event
+        await self._broadcast({
+            "type": "llm_call",
+            "agent": self.name,
+            "task_id": self._task_id,
+            "step_id": step_id,
+            "model": model,
+            "provider": "ollama",
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cost_usd": cost_usd,

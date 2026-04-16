@@ -30,12 +30,16 @@ export interface AnalyticsSummary {
 const TOOL_FEED_MAX = 200
 
 const AGENTS_INIT: Record<string, AgentState> = {
+  // --- Etsy Store ---
   research:         { status: 'idle', lastTask: '' },
   design:           { status: 'idle', lastTask: '' },
   publisher:        { status: 'idle', lastTask: '' },
   analytics:        { status: 'idle', lastTask: '' },
   customer_service: { status: 'idle', lastTask: '' },
   finance:          { status: 'idle', lastTask: '' },
+  // --- Personal ---
+  recall:           { status: 'idle', lastTask: '' },
+  watcher:          { status: 'idle', lastTask: '' },
 }
 
 interface AgentPeXIStore {

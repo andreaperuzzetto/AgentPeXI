@@ -11,7 +11,7 @@ from typing import Any, Callable, Coroutine
 import anthropic
 
 from apps.backend.core.config import MODEL_SONNET, MODEL_HAIKU, settings
-from apps.backend.core.domains import DomainContext, DOMAIN_ETSY
+from apps.backend.core.domains import DomainContext, DOMAIN_ETSY, DOMAIN_PERSONAL
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentResult, AgentStatus, AgentTask, TaskStatus
 from apps.backend.agents.base import AgentBase
@@ -123,7 +123,7 @@ class Pepe:
         self,
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
-        active_domain: DomainContext = DOMAIN_ETSY,
+        active_domain: DomainContext = DOMAIN_PERSONAL,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
@@ -517,6 +517,24 @@ class Pepe:
 
     def get_mock_mode(self) -> bool:
         return self.mock_mode
+
+    # ------------------------------------------------------------------
+    # Domain routing
+    # ------------------------------------------------------------------
+
+    def set_active_domain(self, domain: DomainContext) -> None:
+        """Cambia dominio attivo a runtime. Sticky fino al riavvio o al prossimo switch.
+
+        Al riavvio server il default torna sempre DOMAIN_ETSY (by design — nessuna
+        persistenza del dominio per sicurezza).
+        """
+        prev = self.domain.name
+        self.domain = domain
+        logger.info("Dominio cambiato: %s → %s", prev, domain.name)
+
+    def get_active_domain(self) -> DomainContext:
+        """Restituisce il dominio attualmente attivo."""
+        return self.domain
 
     # ------------------------------------------------------------------
     # Helpers privati

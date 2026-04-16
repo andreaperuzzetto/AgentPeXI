@@ -30,9 +30,11 @@ CREATE TABLE IF NOT EXISTS conversations (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'web',
+    domain TEXT NOT NULL DEFAULT 'etsy',
     timestamp TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_conv_session ON conversations(session_id);
+CREATE INDEX IF NOT EXISTS idx_conv_domain ON conversations(domain);
 
 CREATE TABLE IF NOT EXISTS agent_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +49,7 @@ CREATE TABLE IF NOT EXISTS agent_logs (
     total_tool_calls INTEGER NOT NULL DEFAULT 0,
     total_steps INTEGER NOT NULL DEFAULT 0,
     total_cost_usd REAL NOT NULL DEFAULT 0.0,
+    domain TEXT NOT NULL DEFAULT 'etsy',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -70,6 +73,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     step_id INTEGER REFERENCES agent_steps(id),
     agent_name TEXT NOT NULL,
     model TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'anthropic',
     system_prompt TEXT,
     messages TEXT,
     response TEXT,
@@ -180,6 +184,7 @@ CREATE TABLE IF NOT EXISTS production_queue (
 
 CREATE INDEX IF NOT EXISTS idx_agent_logs_task_id ON agent_logs(task_id);
 CREATE INDEX IF NOT EXISTS idx_agent_logs_agent_name ON agent_logs(agent_name);
+CREATE INDEX IF NOT EXISTS idx_agent_logs_domain ON agent_logs(domain);
 CREATE INDEX IF NOT EXISTS idx_agent_steps_task_id ON agent_steps(task_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_task_id ON llm_calls(task_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_task_id ON tool_calls(task_id);
@@ -223,7 +228,8 @@ class MemoryManager:
         self._db_path = os.path.join(settings.STORAGE_PATH, "agentpexi.db")
         self._chromadb_path = os.path.join(settings.STORAGE_PATH, "chromadb")
         self._db: aiosqlite.Connection | None = None
-        self._chroma_collection = None
+        self._chroma_collection = None          # pepe_memory — Etsy/knowledge base
+        self._screen_memory_collection = None   # screen_memory — Personal domain
 
     # ------------------------------------------------------------------
     # Init / shutdown
@@ -238,13 +244,30 @@ class MemoryManager:
         await self._db.commit()
 
         # Migrazioni schema (colonne aggiunte dopo la creazione iniziale)
-        try:
-            await self._db.execute(
-                "ALTER TABLE etsy_listings ADD COLUMN views_prev INTEGER DEFAULT 0"
-            )
-            await self._db.commit()
-        except Exception:
-            pass  # Colonna già esistente
+        _migrations = [
+            "ALTER TABLE etsy_listings ADD COLUMN views_prev INTEGER DEFAULT 0",
+            "ALTER TABLE conversations ADD COLUMN domain TEXT NOT NULL DEFAULT 'etsy'",
+            "ALTER TABLE agent_logs ADD COLUMN domain TEXT NOT NULL DEFAULT 'etsy'",
+            "ALTER TABLE llm_calls ADD COLUMN provider TEXT NOT NULL DEFAULT 'anthropic'",
+        ]
+        for migration_sql in _migrations:
+            try:
+                await self._db.execute(migration_sql)
+                await self._db.commit()
+            except Exception:
+                pass  # Colonna già esistente — ignorato
+
+        # Indici per nuove colonne (idempotenti)
+        _new_indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_conv_domain ON conversations(domain)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_logs_domain ON agent_logs(domain)",
+        ]
+        for idx_sql in _new_indexes:
+            try:
+                await self._db.execute(idx_sql)
+                await self._db.commit()
+            except Exception:
+                pass
 
         # ChromaDB + Voyage AI (lazy: fallisce silenziosamente se non disponibile)
         try:
@@ -264,9 +287,16 @@ class MemoryManager:
                 name="pepe_memory",
                 embedding_function=voyage_ef,
             )
+            # screen_memory: collection separata per il dominio Personal
+            # Stessa embedding function, path ChromaDB condiviso
+            self._screen_memory_collection = chroma_client.get_or_create_collection(
+                name="screen_memory",
+                embedding_function=voyage_ef,
+            )
         except Exception:
             # ChromaDB/Voyage non disponibile — continua solo con SQLite
             self._chroma_collection = None
+            self._screen_memory_collection = None
 
         # Cleanup: chiudi agent_logs rimasti in 'running' da sessioni precedenti
         try:
@@ -300,24 +330,44 @@ class MemoryManager:
         return [dict(r) for r in reversed(rows)]
 
     async def save_message(
-        self, session_id: str, role: str, content: str, source: str = "web"
+        self, session_id: str, role: str, content: str, source: str = "web",
+        domain: str = "etsy",
     ) -> None:
-        """Salva messaggio in una sessione specifica."""
+        """Salva messaggio in una sessione specifica.
+
+        Args:
+            domain: Dominio attivo al momento del salvataggio ('etsy' o 'personal').
+                    Usato per separare cronologia Etsy da Personal nella stessa sessione.
+        """
         await self._db.execute(
-            "INSERT INTO conversations (session_id, role, content, source) VALUES (?, ?, ?, ?)",
-            (session_id, role, content, source),
+            "INSERT INTO conversations (session_id, role, content, source, domain) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (session_id, role, content, source, domain),
         )
         await self._db.commit()
 
     async def get_conversation_history(
-        self, session_id: str, limit: int = 20
+        self, session_id: str, limit: int = 20, domain: str | None = None
     ) -> list[dict]:
-        """Ultimi N messaggi della sessione, ordinati ASC (dal più vecchio al più recente)."""
-        cursor = await self._db.execute(
-            "SELECT id, role, content, timestamp FROM conversations "
-            "WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-            (session_id, limit),
-        )
+        """Ultimi N messaggi della sessione, ordinati ASC (dal più vecchio al più recente).
+
+        Args:
+            domain: Se specificato, filtra per dominio ('etsy' o 'personal').
+                    Se None, restituisce tutti i messaggi della sessione indipendentemente
+                    dal dominio (comportamento legacy).
+        """
+        if domain is not None:
+            cursor = await self._db.execute(
+                "SELECT id, role, content, timestamp, domain FROM conversations "
+                "WHERE session_id = ? AND domain = ? ORDER BY id DESC LIMIT ?",
+                (session_id, domain, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT id, role, content, timestamp, domain FROM conversations "
+                "WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+                (session_id, limit),
+            )
         rows = await cursor.fetchall()
         return [dict(r) for r in reversed(rows)]
 
@@ -510,18 +560,25 @@ class MemoryManager:
         cache_write_tokens: int = 0,
         cost_usd: float = 0.0,
         duration_ms: int = 0,
+        provider: str = "anthropic",
     ) -> int:
+        """Logga una chiamata LLM nel DB.
+
+        Args:
+            provider: 'anthropic' o 'ollama'. Default 'anthropic' per backward compat.
+        """
         cursor = await self._db.execute(
             """INSERT INTO llm_calls
-               (task_id, step_id, agent_name, model, system_prompt, messages,
+               (task_id, step_id, agent_name, model, provider, system_prompt, messages,
                 response, input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, cost_usd, duration_ms)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task_id,
                 step_id,
                 agent_name,
                 model,
+                provider,
                 system_prompt,
                 _json_dumps(messages),
                 response,
@@ -1425,6 +1482,117 @@ class MemoryManager:
 
         # Nessun dato recente disponibile
         return []
+
+    # ------------------------------------------------------------------
+    # Screen memory — ChromaDB collection separata (dominio Personal)
+    # ------------------------------------------------------------------
+
+    async def add_screen_memory(
+        self,
+        chunks: list[str],
+        metadatas: list[dict],
+        ids: list[str],
+    ) -> bool:
+        """Aggiunge chunks OCR alla collection screen_memory.
+
+        Args:
+            chunks:    Testi estratti (post-redaction, pre-chunked).
+            metadatas: Un dict per chunk con timestamp, app_name, bundle_id, chunk_index.
+            ids:       ID univoci per ogni chunk (es. f"{timestamp}_{bundle_id}_{i}").
+
+        Returns True se l'operazione ha avuto successo, False se ChromaDB non disponibile.
+        """
+        if self._screen_memory_collection is None:
+            return False
+        try:
+            self._screen_memory_collection.add(
+                documents=chunks,
+                metadatas=metadatas,
+                ids=ids,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("add_screen_memory fallito: %s", exc)
+            return False
+
+    async def search_screen_memory(
+        self,
+        query: str,
+        n_results: int = 10,
+        where: dict | None = None,
+    ) -> list[dict]:
+        """Similarity search sulla collection screen_memory.
+
+        Args:
+            query:     Query in linguaggio naturale.
+            n_results: Numero massimo di risultati.
+            where:     Filtro ChromaDB sui metadata (es. filtro temporale).
+
+        Returns lista di dict {document, metadata, id, distance}.
+        """
+        if self._screen_memory_collection is None:
+            return []
+        try:
+            # ChromaDB richiede n_results <= count collection
+            count = self._screen_memory_collection.count()
+            if count == 0:
+                return []
+            n = min(n_results, count)
+            kwargs: dict = {"query_texts": [query], "n_results": n}
+            if where:
+                kwargs["where"] = where
+            results = self._screen_memory_collection.query(**kwargs)
+            out = []
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0] if results.get("metadatas") else []
+            ids_list = results.get("ids", [[]])[0] if results.get("ids") else []
+            dists = results.get("distances", [[]])[0] if results.get("distances") else []
+            for i, doc in enumerate(docs):
+                out.append({
+                    "document": doc,
+                    "metadata": metas[i] if i < len(metas) else {},
+                    "id": ids_list[i] if i < len(ids_list) else None,
+                    "distance": dists[i] if i < len(dists) else None,
+                })
+            return out
+        except Exception as exc:
+            logger.warning("search_screen_memory fallito: %s", exc)
+            return []
+
+    async def delete_old_screen_memory(self, older_than_iso: str) -> int:
+        """Elimina dalla screen_memory tutti i chunk con timestamp < older_than_iso.
+
+        Args:
+            older_than_iso: Timestamp ISO8601 (es. '2026-03-17T00:00:00').
+
+        Returns il numero di chunk eliminati (0 se errore o ChromaDB non disponibile).
+        """
+        if self._screen_memory_collection is None:
+            return 0
+        try:
+            results = self._screen_memory_collection.get(
+                where={"timestamp": {"$lt": older_than_iso}},
+                include=[],
+            )
+            ids_to_delete = results.get("ids", [])
+            if not ids_to_delete:
+                return 0
+            self._screen_memory_collection.delete(ids=ids_to_delete)
+            logger.info("screen_memory cleanup: eliminati %d chunk prima di %s", len(ids_to_delete), older_than_iso)
+            return len(ids_to_delete)
+        except Exception as exc:
+            logger.warning("delete_old_screen_memory fallito: %s", exc)
+            return 0
+
+    async def get_screen_memory_stats(self) -> dict:
+        """Statistiche collection screen_memory."""
+        if self._screen_memory_collection is None:
+            return {"available": False, "count": 0}
+        try:
+            count = self._screen_memory_collection.count()
+            return {"available": True, "count": count}
+        except Exception as exc:
+            return {"available": False, "count": 0, "error": str(exc)}
 
 
 # ---------------------------------------------------------------------------

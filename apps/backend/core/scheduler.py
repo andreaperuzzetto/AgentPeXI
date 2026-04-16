@@ -36,6 +36,7 @@ class Scheduler:
         analytics_agent: Any = None,
         finance_agent: Any = None,
         telegram_broadcaster: Callable | None = None,
+        screen_watcher: Any = None,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
@@ -47,6 +48,7 @@ class Scheduler:
         self.analytics_agent = analytics_agent
         self.finance_agent = finance_agent
         self._telegram_broadcast = telegram_broadcaster
+        self.screen_watcher = screen_watcher
         self._scheduler = AsyncIOScheduler()
         # Track job execution state: job_id → {status, last_run}
         self._job_status: dict[str, dict[str, Any]] = {}
@@ -97,34 +99,22 @@ class Scheduler:
             replace_existing=True,
         )
 
-        # Pipeline giornaliera Research → Design → Publish alle 09:00
-        self._scheduler.add_job(
-            self._run_pipeline,
-            trigger=CronTrigger(hour=9, minute=0),
-            id="daily_pipeline",
-            name="Pipeline giornaliera Research → Design → Publish",
-            replace_existing=True,
-        )
+        # daily_pipeline, analytics_daily, finance_daily rimossi (Blocco 0 planv2).
+        # Pipeline, analytics e finance si avviano SOLO via comandi Telegram:
+        # /pipeline, /analytics, /finance
 
-        # Analytics giornaliero alle 08:00
-        self._scheduler.add_job(
-            self._run_analytics,
-            trigger=CronTrigger(hour=8, minute=0),
-            id="analytics_daily",
-            name="Analytics giornaliero",
-            replace_existing=True,
-        )
+        # Screen cleanup nightly (Blocco 2) — elimina chunk più vecchi di SCREEN_RETENTION_DAYS
+        if self.screen_watcher is not None:
+            self._scheduler.add_job(
+                self._run_screen_cleanup,
+                trigger=CronTrigger(hour=3, minute=0),
+                id="screen_cleanup",
+                name="Screen memory cleanup",
+                replace_existing=True,
+            )
+            logger.info("Job screen_cleanup registrato (03:00 nightly)")
 
-        # Finance report giornaliero alle 20:00 (dopo chiusura pipeline)
-        self._scheduler.add_job(
-            self._run_finance,
-            trigger=CronTrigger(hour=20, minute=0),
-            id="finance_daily",
-            name="Finance report giornaliero",
-            replace_existing=True,
-        )
-
-        logger.info("Job predefiniti registrati (ssd_health_check, agent_status_sync, daily_pipeline, analytics_daily, finance_daily)")
+        logger.info("Job predefiniti registrati (ssd_health_check, agent_status_sync)")
 
     # ------------------------------------------------------------------
     # Caricamento job da SQLite
@@ -172,6 +162,20 @@ class Scheduler:
     # ------------------------------------------------------------------
     # Implementazione job predefiniti
     # ------------------------------------------------------------------
+
+    async def _run_screen_cleanup(self) -> None:
+        """Job nightly 03:00 — elimina chunk screen_memory più vecchi di SCREEN_RETENTION_DAYS."""
+        if self.screen_watcher is None:
+            return
+        try:
+            deleted = await self.screen_watcher.cleanup_old_memories()
+            if deleted and self._telegram_broadcast:
+                await self._telegram_broadcast(
+                    f"🧹 Screen cleanup: eliminati {deleted} chunk "
+                    f"(retention {settings.SCREEN_RETENTION_DAYS}gg)"
+                )
+        except Exception as exc:
+            logger.error("screen_cleanup fallito: %s", exc)
 
     async def _health_check_ssd(self) -> None:
         """Verifica che STORAGE_PATH sia montato e accessibile tramite StorageManager."""

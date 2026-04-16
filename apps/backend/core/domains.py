@@ -1,4 +1,9 @@
-"""Domain context per Pepe — separa identità (invariante) da obiettivo/comportamento (per dominio)."""
+"""Domain context per Pepe — separa identità (invariante) da obiettivo/comportamento (per dominio).
+
+Domini disponibili:
+- DOMAIN_ETSY    — Gestione store Etsy (pipeline research → design → publisher)
+- DOMAIN_PERSONAL — Assistente personale Andrea (Ollama locale, privacy totale, costo zero)
+"""
 
 from __future__ import annotations
 
@@ -99,5 +104,79 @@ DOMAIN_ETSY = DomainContext(
         "Hai già un'idea di prezzo target o lasci decidere al sistema?",
         "Vuoi privilegiare volume (più listing a prezzo basso) "
         "o margine (meno listing a prezzo premium)?",
+    ],
+)
+
+
+# ---------------------------------------------------------------------------
+# Dominio Personal — assistente personale Andrea
+# LLM: Ollama locale (qwen3:4b) — nessuna API key, privacy totale, costo zero
+# Attivazione: /personal su Telegram | Disattivazione: /etsy
+# ---------------------------------------------------------------------------
+
+DOMAIN_PERSONAL = DomainContext(
+    name="personal",
+
+    objective=(
+        "Supporto quotidiano ad Andrea: memoria contestuale dello schermo, "
+        "gestione reminder, ricerca personale, accesso a Notion/Gmail/Calendar/File. "
+        "Priorità: risposta rapida, privacy totale, costo zero."
+    ),
+
+    business_rules=[
+        "I dati schermo non escono mai dal Mac — solo Ollama locale li processa",
+        "Operazioni irreversibili (invia email, cancella file, modifica evento) "
+        "richiedono conferma esplicita su Telegram prima dell'esecuzione",
+        "FileAgent opera solo dentro le directory in PERSONAL_ALLOWED_DIRS — mai fuori",
+        "Confidence < 0.60 blocca l'esecuzione — stessa soglia di DOMAIN_ETSY",
+        "API key locale obbligatoria per tutti gli endpoint /api/personal/* e /api/screen/*",
+    ],
+
+    agents={
+        "recall": (
+            'input: {"query": "...", "time_from": "ISO8601|null", "time_to": "ISO8601|null"} '
+            '— similarity search ChromaDB screen_memory con filtro temporale'
+        ),
+        "remind": (
+            'input: {"message": "...", "when": "stringa data naturale"} '
+            '— crea job APScheduler DateTrigger, notifica Telegram alla scadenza'
+        ),
+        "summarize": (
+            'input: {"content": "...", "style": "bullet|prose|short"} '
+            '— sintetizza testo lungo con Ollama'
+        ),
+        "research_personal": (
+            'input: {"query": "...", "depth": "quick|deep"} '
+            '— Tavily search + sintesi Ollama, nessun contesto business'
+        ),
+        "file": (
+            'input: {"operation": "read|write|move|search|list", "path": "...", "content": "..."} '
+            '— operazioni filesystem dentro PERSONAL_ALLOWED_DIRS'
+        ),
+        "notion": (
+            'input: {"operation": "read|create|update|search", "page_id": "...", "content": "..."} '
+            '— Notion API diretta, OAuth token da .env'
+        ),
+        "gmail": (
+            'input: {"operation": "read|search|draft", "query": "...", "draft": {...}} '
+            '— Gmail API diretta. Invio: solo con conferma esplicita Telegram'
+        ),
+        "calendar": (
+            'input: {"operation": "read|create", "event": {...}, "range": "..."} '
+            '— Calendar API diretta. Modifica/cancellazione: solo con conferma esplicita'
+        ),
+    },
+
+    confidence_threshold=0.90,
+    confidence_disclaimer=0.60,
+
+    pipeline_steps=[],   # nessuna pipeline automatica — tutto su richiesta
+
+    learning_triggers={},
+
+    clarification_questions=[
+        "Vuoi cercare qualcosa che hai visto di recente?",
+        "Hai bisogno di un reminder o una nota?",
+        "Stai cercando qualcosa su Notion, Gmail o Calendar?",
     ],
 )
