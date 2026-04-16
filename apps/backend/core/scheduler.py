@@ -114,6 +114,38 @@ class Scheduler:
             )
             logger.info("Job screen_cleanup registrato (03:00 nightly)")
 
+        # Personal Learning Loop (Blocco 3)
+        # 1. Decay pesi ogni 7 giorni (domenica 04:00)
+        self._scheduler.add_job(
+            self._run_learning_decay,
+            trigger=CronTrigger(day_of_week="sun", hour=4, minute=0),
+            id="learning_decay",
+            name="Personal learning decay",
+            replace_existing=True,
+        )
+        # 2. Reminder checker ogni 5 minuti — invia reminder scaduti
+        remind_interval = getattr(settings, "REMIND_CHECKER_INTERVAL", 5)
+        self._scheduler.add_job(
+            self._run_reminder_checker,
+            trigger=IntervalTrigger(minutes=remind_interval),
+            id="reminder_checker",
+            name="Reminder checker",
+            replace_existing=True,
+        )
+        # 3. Unacknowledged reminder ping ogni ora
+        ping_hours = getattr(settings, "REMIND_UNACK_PING_HOURS", 1)
+        self._scheduler.add_job(
+            self._run_unack_ping,
+            trigger=IntervalTrigger(hours=ping_hours),
+            id="reminder_unack_ping",
+            name="Reminder unacknowledged ping",
+            replace_existing=True,
+        )
+        logger.info(
+            "Job Personal registrati: learning_decay, reminder_checker (%dm), reminder_unack_ping (%dh)",
+            remind_interval, ping_hours,
+        )
+
         logger.info("Job predefiniti registrati (ssd_health_check, agent_status_sync)")
 
     # ------------------------------------------------------------------
@@ -294,6 +326,76 @@ class Scheduler:
             logger.info("Task schedulato %d eseguito → %s", task_id, agent_name)
         except Exception as exc:
             logger.error("Errore task schedulato %d: %s", task_id, exc)
+
+    # ------------------------------------------------------------------
+    # Personal Learning Loop — job implementations
+    # ------------------------------------------------------------------
+
+    async def _run_learning_decay(self) -> None:
+        """Domenica 04:00 — applica decay ai pesi personal_learning (fattore 0.98/7gg)."""
+        try:
+            decay_days = getattr(settings, "LEARNING_DECAY_DAYS", 7)
+            decay_factor = getattr(settings, "LEARNING_DECAY_FACTOR", 0.98)
+            decayed = await self.memory.decay_old_patterns(
+                older_than_days=decay_days, factor=decay_factor
+            )
+            logger.info("Learning decay: %d pattern aggiornati", decayed)
+        except Exception as exc:
+            logger.error("learning_decay fallito: %s", exc)
+
+    async def _run_reminder_checker(self) -> None:
+        """Ogni N minuti — invia reminder scaduti via Telegram."""
+        if not self.pepe or not hasattr(self.pepe, "notify_telegram"):
+            return
+        try:
+            due = await self.memory.get_due_reminders()
+            if not due:
+                return
+
+            for reminder in due:
+                rid = reminder.get("id")
+                text = reminder.get("text", "")
+                recurring = reminder.get("recurring_rule")
+
+                # Invia notifica
+                msg = f"⏰ Reminder: {text}"
+                if recurring:
+                    msg += f"\n🔄 Ricorrente: {recurring}"
+                await self.pepe.notify_telegram(msg, priority=True)
+
+                # Aggiorna stato → sent
+                await self.memory.mark_reminder_sent(rid)
+
+                # Se ricorrente: ri-schedula prossima occorrenza
+                if recurring:
+                    await self.memory.reschedule_recurring(rid)
+
+                logger.info("Reminder %d inviato: %s", rid, text[:50])
+
+        except Exception as exc:
+            logger.error("reminder_checker fallito: %s", exc)
+
+    async def _run_unack_ping(self) -> None:
+        """Ogni N ore — ri-notifica reminder inviati ma non confermati."""
+        if not self.pepe or not hasattr(self.pepe, "notify_telegram"):
+            return
+        try:
+            unacked = await self.memory.get_sent_unacknowledged()
+            if not unacked:
+                return
+
+            for reminder in unacked:
+                rid = reminder.get("id")
+                text = reminder.get("text", "")
+                msg = (
+                    f"📌 Reminder non confermato:\n«{text}»\n"
+                    f"Rispondi a questo messaggio per confermarlo."
+                )
+                await self.pepe.notify_telegram(msg)
+                logger.info("Unack ping per reminder %d", rid)
+
+        except Exception as exc:
+            logger.error("reminder_unack_ping fallito: %s", exc)
 
     # ------------------------------------------------------------------
     # Info

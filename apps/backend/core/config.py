@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     VOYAGE_API_KEY: str = ""
 
     # LLM — Ollama (Personal domain)
-    OLLAMA_MODEL: str = "qwen3:4b"
+    OLLAMA_MODEL: str = "qwen3:8b"           # upgraded da 4b per migliore accuracy classificazione
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
     OLLAMA_KEEP_ALIVE: str = "-1"
 
@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # Personal domain — API keys esterne
     NOTION_API_TOKEN: str = ""
+    NOTION_REMINDERS_DB_ID: str = ""         # se vuoto: cerca/crea DB automaticamente
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REFRESH_TOKEN: str = ""
@@ -30,6 +31,23 @@ class Settings(BaseSettings):
     # Screen Watcher (Blocco 2)
     SCREEN_RETENTION_DAYS: int = 30          # giorni di retention ChromaDB screen_memory
     SCREEN_BLOCKLIST: str = ""               # app aggiuntive da bloccare (CSV bundle id o nome)
+
+    # Personal Agents — Urgency system
+    URGENCY_OLLAMA_TIMEOUT: int = 8          # secondi timeout classificatore Ollama
+
+    # Personal Agents — Remind
+    REMIND_CHECKER_INTERVAL: int = 5         # minuti tra check reminder scaduti
+    REMIND_UNACK_PING_HOURS: int = 1         # ore tra re-ping reminder non confermati
+
+    # Personal Agents — Summarize
+    SUMMARIZE_MAX_CHARS: int = 20_000        # soglia per passare a map-reduce
+
+    # Personal Agents — Research Personal
+    DDGS_MAX_RESULTS: int = 8                # risultati DuckDuckGo per quick mode
+
+    # Personal Agents — Learning loop
+    LEARNING_DECAY_DAYS: int = 7             # applicazione decay ogni N giorni
+    LEARNING_DECAY_FACTOR: float = 0.98      # fattore moltiplicativo decay peso
 
     # Etsy
     ETSY_API_KEY: str = ""

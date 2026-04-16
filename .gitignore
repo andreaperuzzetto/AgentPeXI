@@ -45,10 +45,7 @@ logs/
 .claude/
 
 # Notes private
-planv1.md
-planv2.md
-NOTESv1.md
-NOTESv2.md
+docs/
 
 # Fonts (downloaded at setup)
 apps/backend/assets/fonts/*.ttf

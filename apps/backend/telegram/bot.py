@@ -112,6 +112,13 @@ class TelegramBot:
         add(CommandHandler("list", self._cmd_list, filters=self._chat_filter))
         add(CommandHandler("screen", self._cmd_screen, filters=self._chat_filter))
 
+        # Comandi Personal (Blocco 3)
+        add(CommandHandler("remind", self._cmd_remind, filters=self._chat_filter))
+        add(CommandHandler("reminders", self._cmd_remind_list, filters=self._chat_filter))
+        add(CommandHandler("summarize", self._cmd_summarize, filters=self._chat_filter))
+        add(CommandHandler("research", self._cmd_research, filters=self._chat_filter))
+        add(CommandHandler("feedback", self._cmd_feedback, filters=self._chat_filter))
+
         # Messaggi vocali
         add(MessageHandler(self._chat_filter & filters.VOICE, self._handle_voice))
 
@@ -299,6 +306,13 @@ class TelegramBot:
             "/listings — lista ultimi 10 listing",
             "/mock [on|off] — attiva/disattiva mock mode",
             "",
+            "*— Personal —*",
+            "/remind <testo> alle <quando> — crea reminder",
+            "/reminders — lista reminder attivi",
+            "/summarize <url|testo> [short] — riassumi contenuto",
+            "/research <domanda> [quick] — ricerca web strutturata",
+            "/feedback positivo|negativo <keyword> — insegna al sistema",
+            "",
             "*— Interazione —*",
             "/ask <domanda> — chiede qualcosa a Pepe",
             "/report — report stato sistema",
@@ -434,6 +448,169 @@ class TelegramBot:
                 "Uso: `/mock on` oppure `/mock off`",
                 parse_mode="Markdown",
             )
+
+    # ------------------------------------------------------------------
+    # Comandi Personal (Blocco 3)
+    # ------------------------------------------------------------------
+
+    async def _cmd_remind(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/remind <testo> alle <quando> [ogni <ricorrenza>]
+        Es: /remind chiamare il dentista alle 15:00 domani
+            /remind bolletta luce entro venerdì ogni monthly:1
+        """
+        text = " ".join(context.args) if context.args else ""
+        if not text:
+            await update.message.reply_text(
+                "Uso: `/remind <testo> alle <quando>`\n"
+                "Esempio: `/remind riunione alle 15:00 domani`",
+                parse_mode="Markdown",
+            )
+            return
+
+        # Parsing grezzo: tutto prima di "ogni" è testo+quando
+        recurring = None
+        if " ogni " in text:
+            parts = text.split(" ogni ", 1)
+            text = parts[0].strip()
+            recurring = parts[1].strip()
+
+        # Divide testo da quando: cerca "alle", "entro", "il ", "tra "
+        when = ""
+        for kw in (" alle ", " entro ", " il ", " tra ", " domani", " dopodomani"):
+            if kw in text.lower():
+                idx = text.lower().index(kw)
+                when = text[idx:].strip()
+                text = text[:idx].strip()
+                break
+        if not when:
+            when = text   # fallback: tutto è when
+
+        session_id = str(update.effective_chat.id)
+        reply = await self.pepe.handle_user_message(
+            f"remind create: {text} | quando: {when} | ricorrenza: {recurring or 'nessuna'}",
+            source="telegram",
+            session_id=session_id,
+        )
+        await self._reply_chunked(update.message, reply)
+
+    async def _cmd_remind_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/reminders — lista reminder attivi."""
+        session_id = str(update.effective_chat.id)
+        reply = await self.pepe.handle_user_message(
+            "remind list",
+            source="telegram",
+            session_id=session_id,
+        )
+        await self._reply_chunked(update.message, reply)
+
+    async def _cmd_summarize(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/summarize <url|testo> [short] — riassume URL o testo.
+        Supporta anche allegati inoltrati al bot.
+        """
+        args = context.args or []
+        mode = "short" if args and args[-1].lower() == "short" else "detailed"
+        if mode == "short":
+            args = args[:-1]
+
+        content = " ".join(args).strip()
+
+        # Controlla se c'è un documento allegato nel messaggio
+        file_id = None
+        if update.message.document:
+            file_id = update.message.document.file_id
+
+        if not content and not file_id:
+            await update.message.reply_text(
+                "Uso: `/summarize <url> [short]` oppure inoltra un PDF/TXT al bot.\n"
+                "Esempio: `/summarize https://example.com/article short`",
+                parse_mode="Markdown",
+            )
+            return
+
+        session_id = str(update.effective_chat.id)
+        if file_id:
+            msg = f"summarize file_id: {file_id} mode: {mode}"
+        elif content.startswith("http"):
+            msg = f"summarize url: {content} mode: {mode}"
+        else:
+            msg = f"summarize text: {content} mode: {mode}"
+
+        await update.message.reply_text("📄 Sto leggendo e riassumendo…")
+        reply = await self.pepe.handle_user_message(msg, source="telegram", session_id=session_id)
+        await self._reply_chunked(update.message, reply)
+
+    async def _cmd_research(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/research <query> [quick] — ricerca web + risposta strutturata.
+        Es: /research come funziona la VAT UE per i venditori Etsy
+            /research meteo Milano quick
+        """
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(
+                "Uso: `/research <domanda> [quick]`\n"
+                "Esempio: `/research vantaggi regime forfettario`",
+                parse_mode="Markdown",
+            )
+            return
+
+        mode = "quick" if args[-1].lower() == "quick" else "deep"
+        if mode == "quick":
+            args = args[:-1]
+        query = " ".join(args).strip()
+
+        session_id = str(update.effective_chat.id)
+        await update.message.reply_text(f"🔍 Ricerco: «{query}»…")
+        reply = await self.pepe.handle_user_message(
+            f"research_personal query: {query} mode: {mode}",
+            source="telegram",
+            session_id=session_id,
+        )
+        await self._reply_chunked(update.message, reply)
+
+    async def _cmd_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/feedback <positivo|negativo> <parola_chiave>
+        Insegna al sistema cosa è importante o no.
+        Es: /feedback positivo scadenza
+            /feedback negativo netflix
+        """
+        args = context.args or []
+        if len(args) < 2:
+            await update.message.reply_text(
+                "Uso: `/feedback positivo|negativo <parola_chiave>`\n"
+                "Esempio: `/feedback positivo scadenza`",
+                parse_mode="Markdown",
+            )
+            return
+
+        signal_raw = args[0].lower()
+        keyword = " ".join(args[1:]).lower().strip()
+
+        if signal_raw in ("positivo", "positive", "sì", "si", "yes"):
+            signal = "positive"
+        elif signal_raw in ("negativo", "negative", "no"):
+            signal = "negative"
+        else:
+            await update.message.reply_text(
+                "Segnale non riconosciuto. Usa `positivo` o `negativo`.",
+                parse_mode="Markdown",
+            )
+            return
+
+        weight_delta = 0.1 if signal == "positive" else -0.1
+        try:
+            await self.pepe.memory.upsert_learning(
+                agent="urgency",
+                pattern_type="keyword",
+                pattern_value=keyword,
+                signal_type=signal,
+                weight_delta=weight_delta,
+            )
+            icon = "✅" if signal == "positive" else "🔕"
+            reply = f"{icon} Capito. Quando vedo «{keyword}» lo tratterò come {'prioritario' if signal == 'positive' else 'rumore'}."
+        except Exception as exc:
+            reply = f"❌ Errore salvataggio feedback: {exc}"
+
+        await update.message.reply_text(reply)
 
     # ------------------------------------------------------------------
     # Handler messaggi testo

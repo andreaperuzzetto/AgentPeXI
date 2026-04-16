@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Callable, Coroutine
 
@@ -59,6 +60,40 @@ DELEGATION_TOOL = {
         "required": ["delegate", "input"],
     },
 }
+
+
+# ------------------------------------------------------------------
+# Urgency system — costanti
+# ------------------------------------------------------------------
+
+_NOISE_APPS: frozenset[str] = frozenset({
+    "Spotify", "Music", "Apple Music", "Netflix", "YouTube", "Prime Video",
+    "Steam", "Minecraft", "IINA", "VLC", "Podcasts", "Audible",
+    "Disney+", "Twitch", "Discord",
+})
+
+_NOISE_PATTERNS: list[re.Pattern] = [
+    re.compile(r"^\s*[\d\s\W]{0,15}\s*$"),   # solo numeri/simboli
+    re.compile(r"^.{0,9}$"),                   # meno di 10 caratteri
+]
+
+# Pattern che fanno auto-invoke Recall senza passare dal confidence gate
+_RECALL_PATTERN = re.compile(
+    r"(cosa|quando|dove).{0,20}(stav[oa]|ho\s+(visto|letto|aperto|cercato)|"
+    r"guardav[oa]|leggev[oa]|facev[oa]|usav[oa]|era\s+aperto)",
+    re.IGNORECASE,
+)
+
+# Prompt Ollama caveman per classificazione urgenza
+_URGENCY_SYSTEM = (
+    "Rate urgency. Output ONLY this format:\n"
+    "LEVEL: HIGH|MEDIUM|LOW\n"
+    "REASON: max 8 words, italian\n"
+    "---\n"
+    "HIGH = azione richiesta oggi, scadenza, finanziario, medico\n"
+    "MEDIUM = info utile, nessuna azione immediata\n"
+    "LOW = intrattenimento, navigazione generica, rumore"
+)
 
 
 def _format_analytics_summary(output: dict) -> str:
@@ -151,6 +186,10 @@ class Pepe:
 
         # Mock mode — attivabile via /mock Telegram
         self.mock_mode: bool = False
+
+        # Urgency system — stato runtime
+        self._last_watcher_app: str = ""
+        self._urgency_medium_buffer: list[dict] = []
 
     # ------------------------------------------------------------------
     # Startup / shutdown
@@ -270,11 +309,31 @@ class Pepe:
         # Salva messaggio utente nella sessione
         await self.memory.save_message(session_id, "user", message, source)
 
-        # --- Handler "sì/no" per pending_actions ---
+        # --- Handler "sì/no" per pending_actions (incluso urgency_proposal) ---
         quick_reply = await self._check_pending_action(message, source)
         if quick_reply is not None:
             await self.memory.save_message(session_id, "assistant", quick_reply, source)
             return quick_reply
+
+        # --- RECALL_PATTERN auto-invoke ---
+        # Se il messaggio corrisponde a "cosa stavo guardando / cosa ho aperto..."
+        # bypassa il gate LLM e delega direttamente a Recall.
+        if _RECALL_PATTERN.search(message) and "recall" in self._agents:
+            context_hint = f"last_app={self._last_watcher_app}" if self._last_watcher_app else ""
+            recall_task = AgentTask(
+                agent_name="recall",
+                input_data={"query": message, "context": context_hint},
+                source=source,
+            )
+            try:
+                result = await self._enqueue_and_wait(recall_task)
+                final_reply = await self._apply_confidence_gate(
+                    message, "recall", result, session_id, source
+                )
+            except Exception as exc:
+                final_reply = await self._synthesize_error("recall", str(exc), {})
+                await self.memory.save_message(session_id, "assistant", final_reply, source)
+            return final_reply
 
         # AGGIUNTA 1 — Pipeline context check
         pipeline_summary = await self._get_pipeline_summary()
@@ -535,6 +594,168 @@ class Pepe:
     def get_active_domain(self) -> DomainContext:
         """Restituisce il dominio attualmente attivo."""
         return self.domain
+
+    # ------------------------------------------------------------------
+    # Urgency system — metodi
+    # ------------------------------------------------------------------
+
+    def _is_obvious_noise(self, text: str, source: str) -> bool:
+        """Pre-filter rapido: True se sicuramente rumore, senza chiamate LLM.
+
+        Quando source == 'watcher' controlla _last_watcher_app (l'app attiva al
+        momento della cattura) invece di source stesso, perché source indica
+        l'origine della cattura, non l'applicazione.
+        """
+        app_to_check = self._last_watcher_app if source == "watcher" else source
+        if app_to_check in _NOISE_APPS:
+            return True
+        for pattern in _NOISE_PATTERNS:
+            if pattern.match(text):
+                return True
+        return False
+
+    async def _ollama_urgency_classify(
+        self, text: str, source: str = "", context: str = ""
+    ) -> tuple[str, str]:
+        """Classifica urgenza via Ollama qwen3:8b con caveman prompt.
+
+        Ritorna (level, reason) — level in {"HIGH", "MEDIUM", "LOW"}.
+        Timeout 8 s, fallback LOW su qualsiasi errore.
+        """
+        import aiohttp
+        from datetime import datetime as _dt
+
+        now = _dt.now()
+        _WEEKDAYS_IT = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
+        weekday_it = _WEEKDAYS_IT[now.weekday()]
+
+        parts = [f"TEXT: {text[:500]}"]
+        if source:
+            parts.append(f"Source: {source}")
+        parts.append(f"Context: {now.hour}:00 {weekday_it}")
+        if context:
+            parts.append(f"Hint: {context[:100]}")
+        user_msg = "\n".join(parts)
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=8)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    "http://localhost:11434/api/chat",
+                    json={
+                        "model": "qwen3:8b",
+                        "messages": [
+                            {"role": "system", "content": _URGENCY_SYSTEM},
+                            {"role": "user",   "content": user_msg},
+                        ],
+                        "stream": False,
+                        "options": {"temperature": 0.0, "num_predict": 40},
+                    },
+                ) as resp:
+                    data = await resp.json()
+
+            raw = data.get("message", {}).get("content", "").strip()
+            level = "LOW"
+            reason = "non classificato"
+            for line in raw.splitlines():
+                if line.startswith("LEVEL:"):
+                    val = line.split(":", 1)[1].strip().upper()
+                    if val in {"HIGH", "MEDIUM", "LOW"}:
+                        level = val
+                elif line.startswith("REASON:"):
+                    reason = line.split(":", 1)[1].strip()
+            return level, reason
+
+        except Exception as exc:
+            logger.warning("Ollama urgency classify fallito: %s", exc)
+            return "LOW", "timeout o errore classificatore"
+
+    async def _apply_user_rules(self, level: str, text: str) -> str:
+        """Sovrascrive il livello in base alle regole apprese dall'utente.
+
+        Legge personal_learning per agent="urgency", pattern_type="keyword".
+        weight > 0.7 → promuove a HIGH; weight < 0.3 → degrada a MEDIUM.
+        """
+        try:
+            patterns = await self.memory.get_learning_patterns(
+                agent="urgency", pattern_type="keyword"
+            )
+            text_lower = text.lower()
+            for p in patterns:
+                kw = p.get("pattern_value", "").lower()
+                if not kw or kw not in text_lower:
+                    continue
+                w = p.get("weight", 0.5)
+                if w > 0.7 and level in ("MEDIUM", "LOW"):
+                    return "HIGH"
+                if w < 0.3 and level == "HIGH":
+                    return "MEDIUM"
+        except Exception as exc:
+            logger.debug("_apply_user_rules fallito: %s", exc)
+        return level
+
+    async def score_urgency(
+        self, text: str, source: str = "", context: str = ""
+    ) -> tuple[str, str]:
+        """Pipeline completa: pre-filter → Ollama classify → user rules.
+
+        Ritorna (level, reason).
+        """
+        if self._is_obvious_noise(text, source):
+            return "LOW", "filtro rumore"
+        level, reason = await self._ollama_urgency_classify(text, source=source, context=context)
+        level = await self._apply_user_rules(level, text)
+        return level, reason
+
+    async def _propose_action(self, text: str, reason: str, source: str) -> None:
+        """Invia a Telegram una proposta di azione su cattura HIGH.
+
+        Salva come pending_action per l'handler sì/no in handle_user_message.
+        """
+        msg = (
+            f"⚠️ Rilevato qualcosa da gestire:\n"
+            f"«{text[:200]}»\n"
+            f"Motivo: {reason}\n\n"
+            f"Vuoi che lo gestisca? (rispondi sì/no)"
+        )
+        await self.notify_telegram(msg, priority=True)
+        await self.memory.save_pending_action(
+            action_type="urgency_proposal",
+            payload={"text": text, "source": source, "reason": reason},
+        )
+
+    async def process_watcher_capture(self, text: str, app_name: str) -> None:
+        """Punto di ingresso per ogni cattura dello ScreenWatcher.
+
+        Aggiorna _last_watcher_app, valuta urgenza, propone azione se HIGH.
+        Buffering MEDIUM: accumula fino a 5 catture poi invia riepilogo.
+        """
+        self._last_watcher_app = app_name
+
+        # source="watcher" → _is_obvious_noise userà _last_watcher_app per il check NOISE_APPS
+        level, reason = await self.score_urgency(text, source="watcher")
+        logger.info(
+            "Watcher capture — app=%s level=%s reason=%s",
+            app_name, level, reason[:60],
+        )
+
+        if level == "HIGH":
+            await self._propose_action(text, reason, source=app_name)
+
+        elif level == "MEDIUM":
+            self._urgency_medium_buffer.append(
+                {"text": text, "app": app_name, "reason": reason}
+            )
+            if len(self._urgency_medium_buffer) >= 5:
+                summary = "\n".join(
+                    f"• [{e['app']}] {e['text'][:80]}"
+                    for e in self._urgency_medium_buffer
+                )
+                await self.notify_telegram(
+                    f"📋 Riepilogo attività recente:\n{summary}"
+                )
+                self._urgency_medium_buffer.clear()
+        # LOW: silenzio — nessuna azione
 
     # ------------------------------------------------------------------
     # Helpers privati
@@ -1012,9 +1233,43 @@ class Pepe:
     async def _check_pending_action(self, message: str, source: str) -> str | None:
         """Controlla se esiste un pending_action e il messaggio è sì/no.
 
+        Gestisce:
+        - urgency_proposal (sì/no) → feedback learning loop
+        - production_queue_proposal (sì/no) → aggiunge alla queue
+
         Ritorna la risposta da inviare, oppure None se non applicabile.
         """
         normalized = message.strip().lower()
+        yes_words = {"sì", "si", "yes", "s"}
+        no_words = {"no", "n", "nope"}
+
+        # --- urgency_proposal ---
+        urgency_pending = await self.memory.get_pending_action("urgency_proposal")
+        if urgency_pending and normalized in yes_words | no_words:
+            payload = urgency_pending.get("payload", {})
+            text = payload.get("text", "")
+            signal = "positive" if normalized in yes_words else "negative"
+            weight_delta = 0.1 if signal == "positive" else -0.1
+            # Estrai prime 2 parole chiave dal testo come pattern keyword
+            words = [w.lower() for w in text.split() if len(w) > 4][:2]
+            for kw in words:
+                try:
+                    await self.memory.upsert_learning(
+                        agent="urgency",
+                        pattern_type="keyword",
+                        pattern_value=kw,
+                        signal_type=signal,
+                        weight_delta=weight_delta,
+                    )
+                except Exception:
+                    pass
+            await self.memory.delete_pending_action("urgency_proposal")
+            if normalized in yes_words:
+                # Segnala a Pepe di gestire — per ora risposta testuale
+                return "✅ Gestisco. Ti aggiorno a breve."
+            else:
+                return "👍 Ok, non lo gestisco. Ho preso nota per il futuro."
+
         pending = await self.memory.get_pending_action("production_queue_proposal")
 
         if not pending:

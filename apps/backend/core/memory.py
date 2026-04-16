@@ -206,6 +206,34 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_tokens_provider ON oauth_tokens(provider);
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    text            TEXT    NOT NULL,
+    trigger_at      TEXT    NOT NULL,
+    recurring_rule  TEXT,
+    status          TEXT    NOT NULL DEFAULT 'pending',
+    notion_page_id  TEXT,
+    telegram_msg_id INTEGER,
+    acknowledged_at TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_trigger ON reminders (trigger_at, status);
+CREATE INDEX IF NOT EXISTS idx_reminders_msg     ON reminders (telegram_msg_id);
+
+CREATE TABLE IF NOT EXISTS personal_learning (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent         TEXT    NOT NULL,
+    pattern_type  TEXT    NOT NULL,
+    pattern_value TEXT    NOT NULL,
+    signal_type   TEXT    NOT NULL,
+    weight        REAL    NOT NULL DEFAULT 0.5,
+    occurrences   INTEGER NOT NULL DEFAULT 1,
+    last_seen     TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (agent, pattern_type, pattern_value)
+);
+CREATE INDEX IF NOT EXISTS idx_pl_agent ON personal_learning (agent, pattern_type);
+CREATE INDEX IF NOT EXISTS idx_pl_seen  ON personal_learning (last_seen);
 """
 
 
@@ -1593,6 +1621,306 @@ class MemoryManager:
             return {"available": True, "count": count}
         except Exception as exc:
             return {"available": False, "count": 0, "error": str(exc)}
+
+    # ------------------------------------------------------------------
+    # Reminders
+    # ------------------------------------------------------------------
+
+    async def add_reminder(
+        self,
+        text: str,
+        trigger_at: str,
+        recurring_rule: str | None = None,
+    ) -> int:
+        """Inserisce un reminder. Restituisce l'id generato."""
+        async with self._db.execute(
+            """INSERT INTO reminders (text, trigger_at, recurring_rule)
+               VALUES (?, ?, ?)""",
+            (text, trigger_at, recurring_rule),
+        ) as cur:
+            await self._db.commit()
+            return cur.lastrowid
+
+    async def get_due_reminders(self) -> list[dict]:
+        """Reminder con trigger_at <= now() e status pending."""
+        async with self._db.execute(
+            """SELECT * FROM reminders
+               WHERE trigger_at <= datetime('now')
+               AND status = 'pending'
+               ORDER BY trigger_at ASC"""
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def mark_reminder_sent(self, reminder_id: int, telegram_msg_id: int) -> None:
+        await self._db.execute(
+            "UPDATE reminders SET status='sent', telegram_msg_id=? WHERE id=?",
+            (telegram_msg_id, reminder_id),
+        )
+        await self._db.commit()
+
+    async def acknowledge_reminder(self, telegram_msg_id: int) -> bool:
+        """Marca come acknowledged via message_id della reply. Restituisce True se trovato."""
+        async with self._db.execute(
+            "SELECT id FROM reminders WHERE telegram_msg_id=? AND status='sent'",
+            (telegram_msg_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return False
+        await self._db.execute(
+            "UPDATE reminders SET status='acknowledged', acknowledged_at=datetime('now') WHERE id=?",
+            (row["id"],),
+        )
+        await self._db.commit()
+        return True
+
+    async def get_reminder_notion_id(self, telegram_msg_id: int) -> str | None:
+        """Restituisce notion_page_id per un reminder dato il telegram_msg_id."""
+        async with self._db.execute(
+            "SELECT notion_page_id FROM reminders WHERE telegram_msg_id=?",
+            (telegram_msg_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return row["notion_page_id"] if row else None
+
+    async def get_reminder_notion_id_by_id(self, reminder_id: int) -> str | None:
+        """Restituisce notion_page_id per un reminder dato il suo id (per cancel)."""
+        async with self._db.execute(
+            "SELECT notion_page_id FROM reminders WHERE id=?",
+            (reminder_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return row["notion_page_id"] if row else None
+
+    async def cancel_reminder(self, reminder_id: int) -> None:
+        await self._db.execute(
+            "UPDATE reminders SET status='cancelled' WHERE id=?",
+            (reminder_id,),
+        )
+        await self._db.commit()
+
+    async def get_pending_reminders(self) -> list[dict]:
+        """Tutti i reminder pending con trigger futuri, ordinati per trigger_at."""
+        async with self._db.execute(
+            """SELECT * FROM reminders
+               WHERE status = 'pending'
+               AND trigger_at > datetime('now')
+               ORDER BY trigger_at ASC"""
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_sent_unacknowledged(self, hours: int = 4) -> list[dict]:
+        """Reminder inviati ma non acknowledged da più di N ore."""
+        async with self._db.execute(
+            """SELECT * FROM reminders
+               WHERE status = 'sent'
+               AND acknowledged_at IS NULL
+               AND trigger_at <= datetime('now', ?)
+               ORDER BY trigger_at ASC""",
+            (f"-{hours} hours",),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def reschedule_recurring(self, reminder_id: int) -> None:
+        """Calcola il prossimo trigger_at da recurring_rule e resetta lo status a pending."""
+        from datetime import datetime, timedelta
+
+        async with self._db.execute(
+            "SELECT trigger_at, recurring_rule FROM reminders WHERE id=?",
+            (reminder_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row or not row["recurring_rule"]:
+            return
+
+        try:
+            current = datetime.fromisoformat(row["trigger_at"])
+        except ValueError:
+            return
+
+        rule: str = row["recurring_rule"]
+        next_dt: datetime | None = None
+
+        if rule == "daily":
+            next_dt = current + timedelta(days=1)
+        elif rule == "weekdays":
+            next_dt = current + timedelta(days=1)
+            while next_dt.weekday() >= 5:
+                next_dt += timedelta(days=1)
+        elif rule.startswith("weekly:"):
+            day_names = {"MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4, "SAT": 5, "SUN": 6}
+            days_str = rule.split(":", 1)[1].split(",")
+            target_days = sorted(day_names[d.strip()] for d in days_str if d.strip() in day_names)
+            if target_days:
+                candidate = current + timedelta(days=1)
+                for _ in range(8):
+                    if candidate.weekday() in target_days:
+                        next_dt = candidate
+                        break
+                    candidate += timedelta(days=1)
+        elif rule.startswith("monthly:"):
+            try:
+                day_num = int(rule.split(":", 1)[1])
+                month = current.month + 1
+                year = current.year + (month - 1) // 12
+                month = (month - 1) % 12 + 1
+                import calendar
+                max_day = calendar.monthrange(year, month)[1]
+                next_dt = current.replace(year=year, month=month, day=min(day_num, max_day))
+            except (ValueError, IndexError):
+                pass
+
+        if next_dt:
+            await self._db.execute(
+                """UPDATE reminders
+                   SET trigger_at=?, status='pending', telegram_msg_id=NULL, acknowledged_at=NULL
+                   WHERE id=?""",
+                (next_dt.isoformat(), reminder_id),
+            )
+            await self._db.commit()
+
+    async def update_reminder_notion_id(self, reminder_id: int, notion_page_id: str) -> None:
+        await self._db.execute(
+            "UPDATE reminders SET notion_page_id=? WHERE id=?",
+            (notion_page_id, reminder_id),
+        )
+        await self._db.commit()
+
+    # ------------------------------------------------------------------
+    # Personal Learning
+    # ------------------------------------------------------------------
+
+    _WEIGHT_MIN = 0.1
+    _WEIGHT_MAX = 0.9
+
+    async def upsert_learning(
+        self,
+        agent: str,
+        pattern_type: str,
+        pattern_value: str,
+        signal_type: str,
+        weight_delta: float,
+    ) -> None:
+        """INSERT OR UPDATE con UNIQUE(agent, pattern_type, pattern_value).
+        Weight clampato a [0.1, 0.9]. Aggiorna occurrences e last_seen."""
+        async with self._db.execute(
+            "SELECT id, weight, occurrences FROM personal_learning WHERE agent=? AND pattern_type=? AND pattern_value=?",
+            (agent, pattern_type, pattern_value),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row:
+            new_weight = max(self._WEIGHT_MIN, min(self._WEIGHT_MAX, row["weight"] + weight_delta))
+            await self._db.execute(
+                """UPDATE personal_learning
+                   SET weight=?, occurrences=?, last_seen=datetime('now'), signal_type=?
+                   WHERE id=?""",
+                (new_weight, row["occurrences"] + 1, signal_type, row["id"]),
+            )
+        else:
+            initial = max(self._WEIGHT_MIN, min(self._WEIGHT_MAX, 0.5 + weight_delta))
+            await self._db.execute(
+                """INSERT INTO personal_learning
+                   (agent, pattern_type, pattern_value, signal_type, weight)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (agent, pattern_type, pattern_value, signal_type, initial),
+            )
+        await self._db.commit()
+
+    async def get_learning_patterns(
+        self,
+        agent: str,
+        pattern_type: str | None = None,
+        min_weight: float = 0.0,
+    ) -> list[dict]:
+        if pattern_type:
+            async with self._db.execute(
+                "SELECT * FROM personal_learning WHERE agent=? AND pattern_type=? AND weight>=? ORDER BY weight DESC",
+                (agent, pattern_type, min_weight),
+            ) as cur:
+                rows = await cur.fetchall()
+        else:
+            async with self._db.execute(
+                "SELECT * FROM personal_learning WHERE agent=? AND weight>=? ORDER BY weight DESC",
+                (agent, min_weight),
+            ) as cur:
+                rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def decay_old_patterns(self, days: int = 7, factor: float = 0.98) -> int:
+        """Applica decay ai pattern non visti da più di N giorni. Restituisce numero di righe aggiornate."""
+        await self._db.execute(
+            f"""UPDATE personal_learning
+               SET weight = MAX({self._WEIGHT_MIN}, weight * ?)
+               WHERE last_seen < datetime('now', ?)""",
+            (factor, f"-{days} days"),
+        )
+        await self._db.commit()
+        async with self._db.execute(
+            f"SELECT changes()"
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else 0
+
+    async def detect_watcher_habits(self, days: int = 7, min_days: int = 5) -> list[dict]:
+        """Rileva pattern abitudinali Watcher: stessa app in stesso slot orario per min_days+.
+        Slot orario = ora arrotondata al multiplo di 2 (0,2,4,...,22)."""
+        async with self._db.execute(
+            """SELECT
+                 json_extract(description, '$.app_name') AS app_name,
+                 (CAST(strftime('%H', timestamp) AS INTEGER) / 2 * 2) AS hour_slot,
+                 COUNT(DISTINCT date(timestamp)) AS day_count
+               FROM agent_steps
+               WHERE agent = 'watcher'
+               AND timestamp >= datetime('now', ?)
+               AND json_valid(description)
+               GROUP BY app_name, hour_slot
+               HAVING day_count >= ?""",
+            (f"-{days} days", min_days),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [
+            {
+                "pattern": f"{r['app_name']}_slot{r['hour_slot']:02d}",
+                "app_name": r["app_name"],
+                "hour_slot": r["hour_slot"],
+                "day_count": r["day_count"],
+            }
+            for r in rows
+            if r["app_name"]
+        ]
+
+    async def get_frequent_queries(self, days: int = 7, min_occurrences: int = 3) -> list[str]:
+        """Pattern_value di tipo 'topic' con occurrences >= min e last_seen recente."""
+        async with self._db.execute(
+            """SELECT pattern_value FROM personal_learning
+               WHERE pattern_type = 'topic'
+               AND last_seen >= datetime('now', ?)
+               AND occurrences >= ?
+               ORDER BY occurrences DESC""",
+            (f"-{days} days", min_occurrences),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [r["pattern_value"] for r in rows]
+
+    async def get_agent_steps_count(self, agent: str = "*", hours: int = 24) -> int:
+        """Conta gli step registrati nelle ultime N ore. agent='*' per tutti gli agenti."""
+        if agent == "*":
+            async with self._db.execute(
+                "SELECT COUNT(*) FROM agent_steps WHERE timestamp >= datetime('now', ?)",
+                (f"-{hours} hours",),
+            ) as cur:
+                row = await cur.fetchone()
+        else:
+            async with self._db.execute(
+                "SELECT COUNT(*) FROM agent_steps WHERE agent=? AND timestamp >= datetime('now', ?)",
+                (agent, f"-{hours} hours"),
+            ) as cur:
+                row = await cur.fetchone()
+        return row[0] if row else 0
 
 
 # ---------------------------------------------------------------------------

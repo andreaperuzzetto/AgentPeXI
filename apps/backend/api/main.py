@@ -121,6 +121,9 @@ async def lifespan(app: FastAPI):
     from apps.backend.agents.analytics import AnalyticsAgent
     from apps.backend.agents.finance import FinanceAgent
     from apps.backend.agents.recall import RecallAgent
+    from apps.backend.agents.remind import RemindAgent
+    from apps.backend.agents.summarize import SummarizeAgent
+    from apps.backend.agents.research_personal import ResearchPersonalAgent
     from apps.backend.screen.watcher import ScreenWatcher
 
     # 1. MemoryManager
@@ -203,6 +206,30 @@ async def lifespan(app: FastAPI):
         ws_broadcaster=ws_manager.broadcast,
     )
     pepe.register_agent("recall", recall_agent)
+
+    # 2h2. RemindAgent — gestione reminder + Notion Calendar
+    remind_agent = RemindAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        ws_broadcaster=ws_manager.broadcast,
+    )
+    pepe.register_agent("remind", remind_agent)
+
+    # 2h3. SummarizeAgent — riassume URL, file, testo (Haiku + Ollama fallback)
+    summarize_agent = SummarizeAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        ws_broadcaster=ws_manager.broadcast,
+    )
+    pepe.register_agent("summarize", summarize_agent)
+
+    # 2h4. ResearchPersonalAgent — ricerca web DuckDuckGo + sintesi Perplexity-style
+    research_personal_agent = ResearchPersonalAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        ws_broadcaster=ws_manager.broadcast,
+    )
+    pepe.register_agent("research_personal", research_personal_agent)
 
     # 2i. ScreenWatcher — avviato solo se pyobjc/mss disponibili
     _screen_watcher_error: str | None = None
