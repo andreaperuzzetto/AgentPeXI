@@ -141,6 +141,7 @@ export interface SystemState {
   activeTasks: number
   uptime: string
   dailyCost: number
+  mock_mode?: boolean
 }
 
 export interface AgentStep {

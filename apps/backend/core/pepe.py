@@ -54,6 +54,9 @@ class Pepe:
         # Callback notifiche Telegram (impostato dal bot module)
         self._telegram_notifier: Callable[[str, bool], Coroutine] | None = None
 
+        # Mock mode — attivabile via /mock Telegram
+        self.mock_mode: bool = False
+
     # ------------------------------------------------------------------
     # Startup / shutdown
     # ------------------------------------------------------------------
@@ -393,6 +396,18 @@ class Pepe:
     def set_telegram_notifier(self, fn: Callable[[str, bool], Coroutine]) -> None:
         """Registra il callback per notifiche Telegram (chiamato dal bot module)."""
         self._telegram_notifier = fn
+
+    # ------------------------------------------------------------------
+    # Mock mode
+    # ------------------------------------------------------------------
+
+    def set_mock_mode(self, value: bool) -> None:
+        """Attiva/disattiva mock mode a runtime. Thread-safe (GIL)."""
+        self.mock_mode = value
+        logger.info("Mock mode: %s", "ON" if value else "OFF")
+
+    def get_mock_mode(self) -> bool:
+        return self.mock_mode
 
     # ------------------------------------------------------------------
     # Helpers privati

@@ -114,6 +114,7 @@ async def lifespan(app: FastAPI):
         memory=memory,
         storage=storage,
         ws_broadcaster=ws_manager.broadcast,
+        get_mock_mode=pepe.get_mock_mode,
     )
     pepe.register_agent("design", design_agent)
 
@@ -217,7 +218,14 @@ async def get_status() -> dict:
         "agents": agent_statuses,
         "queue_size": pepe._queue.qsize() if pepe else 0,
         "connected_clients": len(ws_manager._connections),
+        "mock_mode": pepe.mock_mode if pepe else False,
     }
+
+
+@app.get("/api/mock/status")
+async def get_mock_status() -> dict:
+    """Stato corrente del mock mode."""
+    return {"mock_mode": pepe.mock_mode if pepe else False}
 
 
 @app.get("/api/agents")

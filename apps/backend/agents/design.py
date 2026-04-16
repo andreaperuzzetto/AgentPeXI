@@ -808,6 +808,7 @@ class DesignAgent(AgentBase):
         memory: MemoryManager,
         storage: StorageManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
+        get_mock_mode: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(
             name="design",
@@ -820,6 +821,7 @@ class DesignAgent(AgentBase):
         self._pdf_gen = PDFGenerator()
         self._image_gen = ImageGenerator()
         self._svg_gen = SVGGenerator()
+        self._get_mock_mode = get_mock_mode or (lambda: False)
 
     # ------------------------------------------------------------------
     # Input validation (Intervento 19)
@@ -1250,7 +1252,7 @@ class DesignAgent(AgentBase):
             }
             out_path = output_dir / f"{slug}_art_{i + 1}.png"
             try:
-                path = await self._image_gen.generate_digital_art(brief, out_path)
+                path = await self._image_gen.generate_digital_art(brief, out_path, mock_mode=self._get_mock_mode())
                 generated.append({
                     "file_path": str(path),
                     "variant_index": i,

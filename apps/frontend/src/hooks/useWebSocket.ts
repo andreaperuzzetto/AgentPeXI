@@ -57,6 +57,7 @@ function handleMessage(raw: MessageEvent) {
       store.setSystemStatus({
         queueSize: data.queue_size,
         activeTasks: data.active_tasks,
+        mock_mode: data.mock_mode,
       })
       break
 

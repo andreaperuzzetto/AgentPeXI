@@ -3,6 +3,7 @@ import { useStore } from '../store'
 export function Header() {
   const wsConnected = useStore((s) => s.wsConnected)
   const { queueSize, activeTasks, uptime, dailyCost } = useStore((s) => s.systemStatus)
+  const mockMode = useStore((s) => s.systemStatus?.mock_mode)
 
   return (
     <header
@@ -37,6 +38,22 @@ export function Header() {
           {wsConnected ? 'Connesso' : 'Disconnesso'}
         </span>
       </span>
+
+      {/* Mock mode badge */}
+      {mockMode && (
+        <span style={{
+          fontFamily: 'var(--fd)',
+          fontSize: 9,
+          letterSpacing: '0.08em',
+          color: 'var(--warn)',
+          border: '1px solid rgba(240,180,41,.35)',
+          borderRadius: 4,
+          padding: '2px 8px',
+          animation: 'pulse 2.4s var(--e-io) infinite',
+        }}>
+          MOCK
+        </span>
+      )}
 
       {/* Spacer */}
       <span style={{ flex: 1 }} />

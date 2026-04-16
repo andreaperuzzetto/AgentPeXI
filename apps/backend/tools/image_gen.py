@@ -74,6 +74,7 @@ class ImageGenerator:
         output_path: Path,
         width: int = DEFAULT_WIDTH,
         height: int = DEFAULT_HEIGHT,
+        mock_mode: bool = False,
     ) -> Path:
         """
         Genera un'immagine Digital Art PNG dal brief Research.
@@ -82,6 +83,7 @@ class ImageGenerator:
             brief: dict con niche, art_type, style, colors, quote (opzionale)
             output_path: percorso output .png
             width/height: dimensioni in pixel (default 3000x3000)
+            mock_mode: se True, usa placeholder Pillow senza Replicate
 
         Returns:
             Path del file generato
@@ -90,6 +92,16 @@ class ImageGenerator:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         prompt = self._build_flux_prompt(brief)
+
+        if mock_mode:
+            logger.info("ImageGenerator: mock mode — usando placeholder Pillow")
+            return await self._generate_placeholder(
+                brief=brief,
+                prompt=prompt,
+                output_path=output_path,
+                width=width,
+                height=height,
+            )
 
         if self._available:
             return await self._generate_via_replicate(

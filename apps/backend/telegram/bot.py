@@ -93,6 +93,7 @@ class TelegramBot:
         add(CommandHandler("retry", self._cmd_retry, filters=self._chat_filter))
         add(CommandHandler("resume_agent", self._cmd_resume_agent, filters=self._chat_filter))
         add(CommandHandler("new", self._cmd_new, filters=self._chat_filter))
+        add(CommandHandler("mock", self._cmd_mock, filters=self._chat_filter))
 
         # Messaggi vocali
         add(MessageHandler(self._chat_filter & filters.VOICE, self._handle_voice))
@@ -119,6 +120,10 @@ class TelegramBot:
 
         queue_size = self.pepe._queue.qsize()
         lines.append(f"\n📋 Task in coda: {queue_size}")
+
+        mock_line = "\n🟡 *MOCK MODE ATTIVO*" if self.pepe.mock_mode else ""
+        if mock_line:
+            lines.append(mock_line)
 
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -201,6 +206,50 @@ class TelegramBot:
         await update.message.reply_text(
             "✅ Nuova sessione avviata. La conversazione precedente è stata archiviata."
         )
+
+    async def _cmd_mock(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/mock [on|off] — attiva o disattiva mock mode Etsy."""
+        args = context.args or []
+        arg = args[0].lower() if args else ""
+
+        if arg == "on":
+            self.pepe.set_mock_mode(True)
+            if self.pepe._ws_broadcast:
+                await self.pepe._ws_broadcast({
+                    "type": "system_status",
+                    "mock_mode": True,
+                    "message": "Mock mode attivato",
+                })
+            await update.message.reply_text(
+                "🟡 *MOCK MODE ATTIVO*\n\n"
+                "Etsy API e Replicate sono simulati.\n"
+                "I listing vengono salvati nel DB locale.\n"
+                "Usa /ask per avviare una pipeline di test.",
+                parse_mode="Markdown",
+            )
+
+        elif arg == "off":
+            self.pepe.set_mock_mode(False)
+            if self.pepe._ws_broadcast:
+                await self.pepe._ws_broadcast({
+                    "type": "system_status",
+                    "mock_mode": False,
+                    "message": "Mock mode disattivato",
+                })
+            await update.message.reply_text(
+                "✅ *Mock mode disattivato*\n\n"
+                "Il sistema tornerà a usare Etsy API reale "
+                "non appena i token saranno disponibili.",
+                parse_mode="Markdown",
+            )
+
+        else:
+            status = "🟡 ATTIVO" if self.pepe.mock_mode else "⚫ INATTIVO"
+            await update.message.reply_text(
+                f"*Mock Mode*: {status}\n\n"
+                "Uso: `/mock on` oppure `/mock off`",
+                parse_mode="Markdown",
+            )
 
     # ------------------------------------------------------------------
     # Handler messaggi testo

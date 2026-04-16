@@ -6,6 +6,8 @@ import asyncio
 import base64
 import hashlib
 import logging
+import random
+import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -34,6 +36,10 @@ class EtsyAPI:
         self.memory = memory
         self.pepe = pepe
 
+    @property
+    def mock_mode(self) -> bool:
+        return bool(getattr(self.pepe, 'mock_mode', False))
+
         # Rate limiting: max 10 req/sec
         self._semaphore = asyncio.Semaphore(10)
         self._last_request_time: float = 0.0
@@ -45,6 +51,133 @@ class EtsyAPI:
 
         # HTTP client (lazy init)
         self._client: httpx.AsyncClient | None = None
+
+    # ------------------------------------------------------------------
+    # Mock implementations — usati quando self.mock_mode is True
+    # ------------------------------------------------------------------
+
+    def _mock_listing_id(self) -> str:
+        """Genera listing_id mock univoco."""
+        return f"MOCK_{int(_time.time())}_{random.randint(1000, 9999)}"
+
+    async def _mock_create_listing(self, title: str, price: float, tags: list[str], **kwargs) -> dict:
+        """Simula creazione listing Etsy — salva nel DB locale."""
+        listing_id = self._mock_listing_id()
+        return {
+            "listing_id": listing_id,
+            "title": title,
+            "description": kwargs.get("description", ""),
+            "price": {"amount": int(price * 100), "divisor": 100, "currency_code": "EUR"},
+            "tags": tags,
+            "state": "active",
+            "views": 0,
+            "num_favorers": 0,
+            "quantity": 999,
+            "is_digital": True,
+            "url": f"https://www.etsy.com/listing/{listing_id}/mock-product",
+            "creation_timestamp": int(_time.time()),
+            "shop_id": "MOCK_SHOP_001",
+        }
+
+    async def _mock_upload_file(self, listing_id: int | str, file_path: str, name: str) -> dict:
+        """Simula upload file — no-op, ritorna success."""
+        return {
+            "listing_file_id": f"MOCKFILE_{int(_time.time())}",
+            "listing_id": str(listing_id),
+            "filename": name,
+            "filesize": "1.2 MB",
+            "filetype": "application/pdf",
+            "create_timestamp": int(_time.time()),
+        }
+
+    async def _mock_get_listing(self, listing_id: int | str) -> dict:
+        """Legge listing dal DB locale + aggiunge drift views."""
+        try:
+            listings = await self.memory.get_etsy_listings()
+            listing = next(
+                (l for l in listings if str(l.get("listing_id")) == str(listing_id)),
+                None
+            )
+        except Exception:
+            listing = None
+
+        if listing:
+            current_views = listing.get("views", 0)
+            view_drift = random.randint(0, 15)
+            return {
+                "listing_id": str(listing_id),
+                "title": listing.get("title", "Mock Product"),
+                "price": {
+                    "amount": int(listing.get("price_eur", 4.99) * 100),
+                    "divisor": 100,
+                    "currency_code": "EUR",
+                },
+                "state": listing.get("status", "active"),
+                "views": current_views + view_drift,
+                "num_favorers": listing.get("favorites", 0) + random.randint(0, 3),
+                "shop_id": "MOCK_SHOP_001",
+            }
+
+        return {
+            "listing_id": str(listing_id),
+            "title": "Mock Product",
+            "price": {"amount": 499, "divisor": 100, "currency_code": "EUR"},
+            "state": "active",
+            "views": random.randint(10, 150),
+            "num_favorers": random.randint(0, 20),
+            "shop_id": "MOCK_SHOP_001",
+        }
+
+    async def _mock_get_shop_transactions(
+        self, shop_id: str | None = None, listing_id: int | None = None
+    ) -> dict:
+        """
+        Simula transazioni realistiche.
+        Distribuzione: 60% → 0 vendite, 25% → 1-2, 10% → 3-5, 5% → 6-10.
+        """
+        roll = random.random()
+        if roll < 0.60:
+            num_sales = 0
+        elif roll < 0.85:
+            num_sales = random.randint(1, 2)
+        elif roll < 0.95:
+            num_sales = random.randint(3, 5)
+        else:
+            num_sales = random.randint(6, 10)
+
+        results = []
+        for i in range(num_sales):
+            results.append({
+                "transaction_id": f"MOCKTX_{int(_time.time())}_{i}",
+                "listing_id": str(listing_id) if listing_id else "0",
+                "quantity": 1,
+                "price": {"amount": 499, "divisor": 100, "currency_code": "EUR"},
+                "create_timestamp": int(_time.time()) - random.randint(0, 86400 * 30),
+            })
+
+        return {"count": num_sales, "results": results}
+
+    async def _mock_get_shop(self, shop_id: str | None = None) -> dict:
+        """Shop info mock."""
+        return {
+            "shop_id": "MOCK_SHOP_001",
+            "shop_name": "AgentPeXI Mock Shop",
+            "title": "Digital Products by AgentPeXI",
+            "listing_active_count": 0,
+            "currency_code": "EUR",
+            "is_vacation": False,
+            "url": "https://www.etsy.com/shop/AgentPeXIMock",
+        }
+
+    async def _mock_check_auth_status(self) -> dict:
+        """Mock auth — sempre autenticato."""
+        from datetime import datetime, timezone, timedelta
+        return {
+            "authenticated": True,
+            "expired": False,
+            "mock": True,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+        }
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -245,6 +378,9 @@ class EtsyAPI:
         is_digital: bool = True,
         **kwargs: Any,
     ) -> dict:
+        if self.mock_mode:
+            return await self._mock_create_listing(title=title, price=price, tags=tags,
+                                                    description=description, **kwargs)
         shop_id = settings.ETSY_SHOP_ID
         payload = {
             "title": title,
@@ -263,6 +399,8 @@ class EtsyAPI:
         return await self._request("POST", f"/application/shops/{shop_id}/listings", json_data=payload)
 
     async def upload_file(self, listing_id: int, file_path: str, name: str) -> dict:
+        if self.mock_mode:
+            return await self._mock_upload_file(listing_id, file_path, name)
         shop_id = settings.ETSY_SHOP_ID
         with open(file_path, "rb") as f:
             files = {"file": (name, f, "application/octet-stream")}
@@ -274,9 +412,13 @@ class EtsyAPI:
             )
 
     async def get_listing(self, listing_id: int) -> dict:
+        if self.mock_mode:
+            return await self._mock_get_listing(listing_id)
         return await self._request("GET", f"/application/listings/{listing_id}")
 
     async def update_listing(self, listing_id: int, **kwargs: Any) -> dict:
+        if self.mock_mode:
+            return {}
         shop_id = settings.ETSY_SHOP_ID
         return await self._request(
             "PATCH",
@@ -285,6 +427,9 @@ class EtsyAPI:
         )
 
     async def get_listings(self, shop_id: str | None = None, limit: int = 100) -> list[dict]:
+        if self.mock_mode:
+            listings = await self.memory.get_etsy_listings(status="active")
+            return listings[:limit]
         sid = shop_id or settings.ETSY_SHOP_ID
         result = await self._request(
             "GET",
@@ -298,11 +443,15 @@ class EtsyAPI:
     # ------------------------------------------------------------------
 
     async def get_messages(self, shop_id: str | None = None) -> list[dict]:
+        if self.mock_mode:
+            return []
         raise NotImplementedError("Etsy v3 non espone un endpoint messaggi pubblico")
 
     async def reply_message(
         self, shop_id: str, conversation_id: str, message: str
     ) -> dict:
+        if self.mock_mode:
+            return {}
         raise NotImplementedError("Etsy v3 non espone un endpoint messaggi pubblico")
 
     # ------------------------------------------------------------------
@@ -310,16 +459,22 @@ class EtsyAPI:
     # ------------------------------------------------------------------
 
     async def get_shop(self, shop_id: str | None = None) -> dict:
+        if self.mock_mode:
+            return await self._mock_get_shop(shop_id)
         sid = shop_id or settings.ETSY_SHOP_ID
         return await self._request("GET", f"/application/shops/{sid}")
 
     async def get_shop_stats(self, shop_id: str | None = None) -> dict:
         """Info shop (Etsy v3 non ha endpoint stats dedicato, usa shop info)."""
+        if self.mock_mode:
+            return await self._mock_get_shop(shop_id)
         return await self.get_shop(shop_id)
 
     async def get_shop_receipts(
         self, shop_id: str | None = None, min_created: int | None = None
     ) -> list[dict]:
+        if self.mock_mode:
+            return []
         sid = shop_id or settings.ETSY_SHOP_ID
         params: dict[str, Any] = {"limit": 100}
         if min_created is not None:
@@ -335,6 +490,8 @@ class EtsyAPI:
         self, shop_id: str | None = None, listing_id: int | None = None,
     ) -> dict:
         """Transazioni per un listing specifico o per tutto lo shop."""
+        if self.mock_mode:
+            return await self._mock_get_shop_transactions(shop_id, listing_id)
         sid = shop_id or settings.ETSY_SHOP_ID
         if listing_id is not None:
             return await self._request(
@@ -354,6 +511,8 @@ class EtsyAPI:
 
     async def check_auth_status(self) -> dict:
         """Verifica se i token Etsy sono validi."""
+        if self.mock_mode:
+            return await self._mock_check_auth_status()
         tokens = await self.memory.get_oauth_tokens("etsy")
         if not tokens:
             return {"authenticated": False, "reason": "no_tokens"}
