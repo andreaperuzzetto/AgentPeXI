@@ -1652,7 +1652,7 @@ class MemoryManager:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
-    async def mark_reminder_sent(self, reminder_id: int, telegram_msg_id: int) -> None:
+    async def mark_reminder_sent(self, reminder_id: int, telegram_msg_id: int = 0) -> None:
         await self._db.execute(
             "UPDATE reminders SET status='sent', telegram_msg_id=? WHERE id=?",
             (telegram_msg_id, reminder_id),
@@ -1852,18 +1852,15 @@ class MemoryManager:
 
     async def decay_old_patterns(self, days: int = 7, factor: float = 0.98) -> int:
         """Applica decay ai pattern non visti da più di N giorni. Restituisce numero di righe aggiornate."""
-        await self._db.execute(
+        cursor = await self._db.execute(
             f"""UPDATE personal_learning
                SET weight = MAX({self._WEIGHT_MIN}, weight * ?)
                WHERE last_seen < datetime('now', ?)""",
             (factor, f"-{days} days"),
         )
+        updated = cursor.rowcount
         await self._db.commit()
-        async with self._db.execute(
-            f"SELECT changes()"
-        ) as cur:
-            row = await cur.fetchone()
-        return row[0] if row else 0
+        return updated if updated is not None else 0
 
     async def detect_watcher_habits(self, days: int = 7, min_days: int = 5) -> list[dict]:
         """Rileva pattern abitudinali Watcher: stessa app in stesso slot orario per min_days+.
@@ -1874,7 +1871,7 @@ class MemoryManager:
                  (CAST(strftime('%H', timestamp) AS INTEGER) / 2 * 2) AS hour_slot,
                  COUNT(DISTINCT date(timestamp)) AS day_count
                FROM agent_steps
-               WHERE agent = 'watcher'
+               WHERE agent_name = 'watcher'
                AND timestamp >= datetime('now', ?)
                AND json_valid(description)
                GROUP BY app_name, hour_slot
@@ -1916,7 +1913,7 @@ class MemoryManager:
                 row = await cur.fetchone()
         else:
             async with self._db.execute(
-                "SELECT COUNT(*) FROM agent_steps WHERE agent=? AND timestamp >= datetime('now', ?)",
+                "SELECT COUNT(*) FROM agent_steps WHERE agent_name=? AND timestamp >= datetime('now', ?)",
                 (agent, f"-{hours} hours"),
             ) as cur:
                 row = await cur.fetchone()

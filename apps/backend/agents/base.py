@@ -279,35 +279,60 @@ class AgentBase(ABC):
 
     async def _call_llm_ollama(
         self,
-        messages: list[dict],
+        messages: list[dict] | None = None,
         system_prompt: str | None = None,
         max_tokens: int = 4096,
+        *,
+        system: str | None = None,
+        user: str | None = None,
+        temperature: float | None = None,
     ) -> str:
         """Chiama Ollama via API compatibile OpenAI. Costo zero, privacy totale.
+
+        Supporta due convenzioni di chiamata:
+          1. messages/system_prompt (stile _call_llm)
+          2. system/user/temperature (stile caveman, usato dagli agenti Personal)
 
         Ollama deve essere avviato con OLLAMA_KEEP_ALIVE=-1 per tenere il modello
         permanentemente in RAM (configurato in .env e nel plist launchd).
         """
+        # Risolve i parametri convenience (system/user) in messages/system_prompt
+        effective_system = system_prompt or system
+        if messages is None:
+            effective_messages: list[dict] = (
+                [{"role": "user", "content": user}] if user else []
+            )
+        else:
+            effective_messages = messages
+
         t0 = time.monotonic()
         model = settings.OLLAMA_MODEL
 
         # Costruisci messages list per OpenAI SDK (system come primo messaggio)
         ollama_messages: list[dict] = []
-        if system_prompt:
-            ollama_messages.append({"role": "system", "content": system_prompt})
-        ollama_messages.extend(messages)
+        if effective_system:
+            ollama_messages.append({"role": "system", "content": effective_system})
+        ollama_messages.extend(effective_messages)
+
+        # Aggiorna le variabili usate nel log a fine metodo
+        system_prompt = effective_system
+        messages = effective_messages
 
         ollama_client = openai.AsyncOpenAI(
             base_url=settings.OLLAMA_BASE_URL,
             api_key="ollama",  # Ollama non richiede API key reale
         )
 
+        create_kwargs: dict = {
+            "model": model,
+            "messages": ollama_messages,
+            "max_tokens": max_tokens,
+        }
+        if temperature is not None:
+            create_kwargs["temperature"] = temperature
+
         try:
-            response = await ollama_client.chat.completions.create(
-                model=model,
-                messages=ollama_messages,
-                max_tokens=max_tokens,
-            )
+            response = await ollama_client.chat.completions.create(**create_kwargs)
         except Exception as exc:
             raise RuntimeError(f"Ollama non disponibile ({model}): {exc}") from exc
 

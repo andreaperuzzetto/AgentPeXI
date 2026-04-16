@@ -382,12 +382,3 @@ class RecallAgent(AgentBase):
             parts.append(f"[App: {app} — {ts_fmt}]\n{texts}")
         return "\n\n---\n\n".join(parts)
 
-    async def _log_step(self, step_type: str, description: str) -> None:
-        self._step_counter += 1
-        await self._broadcast({
-            "type": "agent_step",
-            "agent": self.name,
-            "step": self._step_counter,
-            "step_type": step_type,
-            "description": description,
-        })

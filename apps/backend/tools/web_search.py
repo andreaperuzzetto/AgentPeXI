@@ -9,11 +9,12 @@ import asyncio
 import logging
 from typing import Any
 
+from apps.backend.core.config import settings
+
 logger = logging.getLogger("agentpexi.web_search")
 
 # Intervallo minimo tra chiamate DuckDuckGo (anti rate-limit)
 _DDGS_MIN_INTERVAL = 2.0   # secondi
-_DDGS_RETRY_WAIT   = 3     # secondi prima del retry
 _DDGS_MAX_RETRIES  = 2
 
 
@@ -78,7 +79,7 @@ class WebSearchTool:
                     attempt + 1, _DDGS_MAX_RETRIES, exc_name, exc,
                 )
                 if attempt < _DDGS_MAX_RETRIES - 1:
-                    await asyncio.sleep(_DDGS_RETRY_WAIT)
+                    await asyncio.sleep(getattr(settings, "DDGS_RETRY_WAIT_SECS", 3))
 
         logger.warning("DuckDuckGo: tutti i tentativi falliti per query '%s'", query[:60])
         return []

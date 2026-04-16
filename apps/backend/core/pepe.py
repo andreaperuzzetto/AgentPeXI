@@ -40,12 +40,16 @@ DELEGATION_TOOL = {
         "properties": {
             "delegate": {
                 "type": "string",
-                "enum": ["research", "design", "publisher", "analytics", "finance"],
+                "enum": ["research", "design", "publisher", "analytics", "finance", "remind", "summarize", "research_personal", "recall"],
                 "description": (
                     "Nome dell'agente a cui delegare. "
                     "Ordine pipeline obbligatorio: research → design → publisher. "
                     "'analytics' = solo sync stats listing esistenti. "
-                    "'finance' = solo report economici."
+                    "'finance' = solo report economici. "
+                    "'remind' = crea/lista/cancella/conferma reminder. "
+                    "'summarize' = riassume URL, file o testo. "
+                    "'research_personal' = ricerca web DuckDuckGo. "
+                    "'recall' = recupera memoria schermo e insights."
                 ),
             },
             "input": {
@@ -158,7 +162,7 @@ class Pepe:
         self,
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
-        active_domain: DomainContext = DOMAIN_PERSONAL,
+        active_domain: DomainContext = DOMAIN_ETSY,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
@@ -638,12 +642,16 @@ class Pepe:
         user_msg = "\n".join(parts)
 
         try:
-            timeout = aiohttp.ClientTimeout(total=8)
+            from urllib.parse import urlparse as _urlparse
+            _parsed = _urlparse(settings.OLLAMA_BASE_URL)
+            _ollama_chat_url = f"{_parsed.scheme}://{_parsed.netloc}/api/chat"
+
+            timeout = aiohttp.ClientTimeout(total=getattr(settings, "URGENCY_OLLAMA_TIMEOUT", 8))
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
-                    "http://localhost:11434/api/chat",
+                    _ollama_chat_url,
                     json={
-                        "model": "qwen3:8b",
+                        "model": settings.OLLAMA_MODEL,
                         "messages": [
                             {"role": "system", "content": _URGENCY_SYSTEM},
                             {"role": "user",   "content": user_msg},
@@ -743,19 +751,30 @@ class Pepe:
             await self._propose_action(text, reason, source=app_name)
 
         elif level == "MEDIUM":
+            # Accumula nel buffer — il flush avviene via CronTrigger alle 18:00
             self._urgency_medium_buffer.append(
                 {"text": text, "app": app_name, "reason": reason}
             )
-            if len(self._urgency_medium_buffer) >= 5:
-                summary = "\n".join(
-                    f"• [{e['app']}] {e['text'][:80]}"
-                    for e in self._urgency_medium_buffer
-                )
-                await self.notify_telegram(
-                    f"📋 Riepilogo attività recente:\n{summary}"
-                )
-                self._urgency_medium_buffer.clear()
         # LOW: silenzio — nessuna azione
+
+    async def flush_medium_digest(self) -> None:
+        """Invia il digest giornaliero dei MEDIUM e svuota il buffer.
+
+        Chiamato dal job CronTrigger alle URGENCY_MEDIUM_DIGEST_HOUR.
+        Se il buffer è vuoto non invia nulla.
+        """
+        if not self._urgency_medium_buffer:
+            return
+        lines = [
+            f"• [{e['app']}] {e['text'][:80]} — {e['reason']}"
+            for e in self._urgency_medium_buffer
+        ]
+        summary = "\n".join(lines)
+        count = len(self._urgency_medium_buffer)
+        await self.notify_telegram(
+            f"📋 Riepilogo giornaliero ({count} eventi):\n{summary}"
+        )
+        self._urgency_medium_buffer.clear()
 
     # ------------------------------------------------------------------
     # Helpers privati

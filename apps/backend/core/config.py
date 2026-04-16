@@ -34,16 +34,19 @@ class Settings(BaseSettings):
 
     # Personal Agents — Urgency system
     URGENCY_OLLAMA_TIMEOUT: int = 8          # secondi timeout classificatore Ollama
+    URGENCY_MEDIUM_DIGEST_HOUR: int = 18     # ora (0-23) invio digest MEDIUM giornaliero
 
     # Personal Agents — Remind
-    REMIND_CHECKER_INTERVAL: int = 5         # minuti tra check reminder scaduti
+    REMIND_CHECKER_INTERVAL: int = 2         # minuti tra check reminder scaduti
     REMIND_UNACK_PING_HOURS: int = 1         # ore tra re-ping reminder non confermati
 
     # Personal Agents — Summarize
     SUMMARIZE_MAX_CHARS: int = 20_000        # soglia per passare a map-reduce
+    SUMMARIZE_MAX_CHUNKS: int = 5            # massimo chunk da processare (≈15.000 chars)
 
     # Personal Agents — Research Personal
     DDGS_MAX_RESULTS: int = 8                # risultati DuckDuckGo per quick mode
+    DDGS_RETRY_WAIT_SECS: int = 3            # attesa tra retry DuckDuckGo (rate limit)
 
     # Personal Agents — Learning loop
     LEARNING_DECAY_DAYS: int = 7             # applicazione decay ogni N giorni

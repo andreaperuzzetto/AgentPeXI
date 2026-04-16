@@ -42,14 +42,19 @@ logger = logging.getLogger("agentpexi.research_personal")
 # ------------------------------------------------------------------
 
 _DECOMPOSE_SYSTEM = (
-    "Decompose query into 2-3 focused sub-queries.\n"
-    "Output ONLY numbered lines: 1. ... 2. ... 3. ...\n"
-    "Italian. No intro. No explanation."
+    "Split question into 3 search queries. Output ONLY:\n"
+    "Q1: ...\n"
+    "Q2: ...\n"
+    "Q3: ..."
 )
 
-_GRADE_SYSTEM = (
-    "Grade chunk relevance.\n"
-    "Output ONLY: RELEVANT or IRRELEVANT"
+_GRADE_SYSTEM = "Relevant? Output ONLY: YES|NO"
+
+_REWRITE_SYSTEM = "Rewrite search query to find better results. Output ONLY the new query."
+
+_STOP_SYSTEM = (
+    "Enough info to answer? Output ONLY: YES|NO\n"
+    "If NO, output: NO\nMISSING: what specific aspect is missing"
 )
 
 # Prompt output Perplexity-style (user-facing, non caveman)
@@ -91,6 +96,7 @@ class ResearchPersonalAgent(AgentBase):
         anthropic_client: anthropic.AsyncAnthropic,
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
+        web_search: WebSearchTool | None = None,
     ) -> None:
         super().__init__(
             name="research_personal",
@@ -99,7 +105,7 @@ class ResearchPersonalAgent(AgentBase):
             memory=memory,
             ws_broadcaster=ws_broadcaster,
         )
-        self._search = WebSearchTool()
+        self._search = web_search or WebSearchTool()
         self._extractor = TextExtractor(max_chars=_MAX_CHARS_PER_URL)
 
     # ------------------------------------------------------------------
@@ -109,15 +115,16 @@ class ResearchPersonalAgent(AgentBase):
     async def run(self, task: AgentTask) -> AgentResult:
         inp = task.input_data or {}
         query: str = inp.get("query", "").strip()
-        mode: str = inp.get("mode", "deep")   # "quick" | "deep"
+        # "depth" è il nome spec; accetta anche "mode" per compatibilità bot
+        depth: str = inp.get("depth", inp.get("mode", "quick"))
 
         if not query:
             return self._fail("Parametro 'query' mancante")
 
-        if mode == "quick":
-            return await self._quick_search(query, task.task_id)
-        else:
+        if depth == "deep":
             return await self._deep_search(query, task.task_id)
+        else:
+            return await self._quick_search(query, task.task_id)
 
     # ------------------------------------------------------------------
     # Quick mode
@@ -135,15 +142,21 @@ class ResearchPersonalAgent(AgentBase):
         context = self._format_snippets(results)
         synthesis = await self._synthesize_quick(query, context, results)
 
+        # Step 6 — salvataggio pepe_memory
+        await self._save_to_memory(query, synthesis, "quick", results[:5])
+
+        # Step 7 — personal_learning
+        await self._update_learning(query)
+
         return AgentResult(
             task_id=task_id,
             agent_name=self.name,
             status=TaskStatus.COMPLETED,
             output_data={
                 "response": synthesis,
-                "sources": [{"title": r["title"], "url": r["url"]} for r in results[:5]],
+                "sources": [{"title": r.get("title", ""), "url": r.get("url", "")} for r in results[:5]],
                 "query": query,
-                "mode": "quick",
+                "depth": "quick",
                 "confidence": 0.75,
             },
         )
@@ -191,6 +204,20 @@ class ResearchPersonalAgent(AgentBase):
         if not relevant:
             relevant = enriched   # fallback: usa tutto se grading elimina tutto
 
+        # ── Step 4b: stop condition ──────────────────────────────────
+        await self._log_step("stop_check", "Verifica se le info sono sufficienti")
+        missing_aspect = await self._check_stop_condition(query, relevant)
+        if missing_aspect:
+            await self._log_step("followup", f"Follow-up: {missing_aspect[:60]}")
+            followup_results = await self._search.search(
+                missing_aspect, max_results=5, provider="duckduckgo"
+            )
+            for r in followup_results:
+                if r.get("url") not in seen_urls:
+                    r["full_text"] = r.get("snippet", "")
+                    relevant.append(r)
+                    seen_urls.add(r["url"])
+
         # ── Step 5: sintesi Perplexity-style ─────────────────────────
         await self._log_step("synthesize", f"Sintesi strutturata su {len(relevant)} fonti")
         synthesis = await self._synthesize_perplexity(query, relevant)
@@ -199,6 +226,12 @@ class ResearchPersonalAgent(AgentBase):
             {"title": r.get("title", ""), "url": r.get("url", "")}
             for r in relevant[:8]
         ]
+
+        # Step 6 — salvataggio pepe_memory
+        await self._save_to_memory(query, synthesis, "deep", relevant[:8])
+
+        # Step 7 — personal_learning
+        await self._update_learning(query)
 
         confidence = min(0.92, 0.6 + len(relevant) * 0.04)
 
@@ -211,7 +244,7 @@ class ResearchPersonalAgent(AgentBase):
                 "sources": sources,
                 "query": query,
                 "sub_queries": sub_queries,
-                "mode": "deep",
+                "depth": "deep",
                 "confidence": round(confidence, 2),
             },
         )
@@ -232,9 +265,10 @@ class ResearchPersonalAgent(AgentBase):
             sub_queries = []
             for line in raw.strip().splitlines():
                 line = line.strip()
-                # Rimuovi prefisso numerico "1. " o "- "
-                for prefix in ("1.", "2.", "3.", "-", "•"):
-                    if line.startswith(prefix):
+                # Formato spec: "Q1: ...", "Q2: ...", "Q3: ..."
+                # Fallback: "1. ...", "- ...", "• ..."
+                for prefix in ("Q1:", "Q2:", "Q3:", "1.", "2.", "3.", "-", "•"):
+                    if line.upper().startswith(prefix.upper()):
                         line = line[len(prefix):].strip()
                         break
                 if line and len(line) > 5:
@@ -286,7 +320,7 @@ class ResearchPersonalAgent(AgentBase):
                     max_tokens=5,
                     temperature=0.0,
                 )
-                if verdict.strip().upper().startswith("RELEVANT"):
+                if verdict.strip().upper().startswith("YES"):
                     relevant.append(src)
             except Exception:
                 relevant.append(src)   # fail-open
@@ -361,15 +395,63 @@ class ResearchPersonalAgent(AgentBase):
             parts.append(f"[{i}] {r.get('title', '')}\n{r.get('snippet', '')}\n{r.get('url', '')}")
         return "\n\n".join(parts)
 
-    async def _log_step(self, step_type: str, description: str) -> None:
-        self._step_counter += 1
-        await self._broadcast({
-            "type": "agent_step",
-            "agent": self.name,
-            "step": self._step_counter,
-            "step_type": step_type,
-            "description": description,
-        })
+    async def _check_stop_condition(self, query: str, relevant: list[dict]) -> str | None:
+        """Step 4 stop condition — ritorna l'aspetto mancante (stringa) o None se info sufficienti."""
+        if not relevant:
+            return None
+        sample = " ".join(
+            (r.get("full_text") or r.get("snippet", ""))[:100] for r in relevant[:3]
+        )
+        try:
+            raw = await self._call_llm_ollama(
+                system=_STOP_SYSTEM,
+                user=f"Question: {query}\nSnippets available: {len(relevant)}\nSample: {sample[:400]}",
+                max_tokens=60,
+                temperature=0.0,
+            )
+            raw = (raw or "").strip()
+            if raw.upper().startswith("NO"):
+                # Cerca "MISSING: ..." nella risposta
+                for line in raw.splitlines():
+                    if line.upper().startswith("MISSING:"):
+                        return line[len("MISSING:"):].strip()
+                return f"dettagli aggiuntivi su: {query}"
+        except Exception as exc:
+            logger.debug("_check_stop_condition fallito (fail-open): %s", exc)
+        return None  # YES o errore → procede
+
+    async def _save_to_memory(
+        self, query: str, synthesis: str, depth: str, sources: list[dict]
+    ) -> None:
+        """Step 6 — salva la sintesi in pepe_memory ChromaDB."""
+        from datetime import datetime as _dt
+        try:
+            await self.memory.store_insight(
+                synthesis,
+                metadata={
+                    "query": query,
+                    "tag": "research_personal",
+                    "depth": depth,
+                    "sources": [r.get("url", "") for r in sources if r.get("url")],
+                    "created_at": _dt.utcnow().isoformat(),
+                },
+            )
+        except Exception as exc:
+            logger.debug("_save_to_memory fallito (fail-safe): %s", exc)
+
+    async def _update_learning(self, query: str) -> None:
+        """Step 7 — aggiorna personal_learning con il topic della query."""
+        topic = query.split()[0].lower() if query.split() else "research"
+        try:
+            await self.memory.upsert_learning(
+                agent="research_personal",
+                pattern_type="topic",
+                pattern_value=topic,
+                signal_type="implicit_repeated",
+                weight_delta=0.05,
+            )
+        except Exception as exc:
+            logger.debug("_update_learning fallito (fail-safe): %s", exc)
 
     def _fail(self, reason: str) -> AgentResult:
         return AgentResult(

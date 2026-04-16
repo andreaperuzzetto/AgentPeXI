@@ -114,36 +114,42 @@ class Scheduler:
             )
             logger.info("Job screen_cleanup registrato (03:00 nightly)")
 
-        # Personal Learning Loop (Blocco 3)
-        # 1. Decay pesi ogni 7 giorni (domenica 04:00)
+        # Personal Learning Loop nightly 03:30 (dopo screen_cleanup alle 03:00)
         self._scheduler.add_job(
-            self._run_learning_decay,
-            trigger=CronTrigger(day_of_week="sun", hour=4, minute=0),
-            id="learning_decay",
-            name="Personal learning decay",
+            self._run_personal_learning_loop,
+            trigger=CronTrigger(hour=3, minute=30),
+            id="personal_learning_loop",
+            name="Personal learning loop",
             replace_existing=True,
         )
-        # 2. Reminder checker ogni 5 minuti — invia reminder scaduti
-        remind_interval = getattr(settings, "REMIND_CHECKER_INTERVAL", 5)
+        # 2. Reminder checker ogni 2 minuti — invia reminder scaduti
         self._scheduler.add_job(
             self._run_reminder_checker,
-            trigger=IntervalTrigger(minutes=remind_interval),
+            trigger=IntervalTrigger(minutes=settings.REMIND_CHECKER_INTERVAL),
             id="reminder_checker",
             name="Reminder checker",
             replace_existing=True,
         )
         # 3. Unacknowledged reminder ping ogni ora
-        ping_hours = getattr(settings, "REMIND_UNACK_PING_HOURS", 1)
         self._scheduler.add_job(
             self._run_unack_ping,
-            trigger=IntervalTrigger(hours=ping_hours),
+            trigger=IntervalTrigger(hours=settings.REMIND_UNACK_PING_HOURS),
             id="reminder_unack_ping",
             name="Reminder unacknowledged ping",
             replace_existing=True,
         )
+        # 4. Urgency MEDIUM digest giornaliero
+        self._scheduler.add_job(
+            self._run_medium_digest,
+            trigger=CronTrigger(hour=settings.URGENCY_MEDIUM_DIGEST_HOUR, minute=0),
+            id="urgency_medium_digest",
+            name="Urgency medium digest",
+            replace_existing=True,
+        )
         logger.info(
-            "Job Personal registrati: learning_decay, reminder_checker (%dm), reminder_unack_ping (%dh)",
-            remind_interval, ping_hours,
+            "Job Personal registrati: personal_learning_loop (03:30), reminder_checker (%dm), "
+            "reminder_unack_ping (%dh), urgency_medium_digest (%d:00)",
+            remind_interval, ping_hours, digest_hour,
         )
 
         logger.info("Job predefiniti registrati (ssd_health_check, agent_status_sync)")
@@ -331,17 +337,93 @@ class Scheduler:
     # Personal Learning Loop — job implementations
     # ------------------------------------------------------------------
 
-    async def _run_learning_decay(self) -> None:
-        """Domenica 04:00 — applica decay ai pesi personal_learning (fattore 0.98/7gg)."""
+    async def _run_personal_learning_loop(self) -> None:
+        """Nightly 03:30 — learning loop completo in 6 step.
+
+        1. Stop condition: skip se nessuna attività nelle ultime 24h
+        2. Decay pattern vecchi
+        3. Promuovi topic frequenti (Recall queries ripetute)
+        4. Rileva abitudini Watcher (stessa app stesso slot 5+ giorni)
+        5. Penalizza reminder ignorati (inviati ma non acked dopo 4h)
+        6. Notifica Telegram se > 5 pattern aggiornati
+        """
         try:
-            decay_days = getattr(settings, "LEARNING_DECAY_DAYS", 7)
-            decay_factor = getattr(settings, "LEARNING_DECAY_FACTOR", 0.98)
+            # Step 1 — stop condition
+            recent_steps = await self.memory.get_agent_steps_count(agent="*", hours=24)
+            if recent_steps == 0:
+                logger.info("Learning loop: nessuna attività nelle ultime 24h, skip")
+                return
+
+            decay_days = settings.LEARNING_DECAY_DAYS
+            decay_factor = settings.LEARNING_DECAY_FACTOR
+
+            # Step 2 — decay pattern vecchi
             decayed = await self.memory.decay_old_patterns(
-                older_than_days=decay_days, factor=decay_factor
+                days=decay_days, factor=decay_factor
             )
-            logger.info("Learning decay: %d pattern aggiornati", decayed)
+            logger.info("Learning loop step 2 — decay: %d pattern aggiornati", decayed)
+
+            # Step 3 — promuovi topic frequenti (Recall)
+            try:
+                frequent = await self.memory.get_frequent_queries(days=7, min_occurrences=3)
+                for topic in frequent:
+                    await self.memory.upsert_learning(
+                        agent="recall",
+                        pattern_type="topic",
+                        pattern_value=topic,
+                        signal_type="implicit_repeated",
+                        weight_delta=0.1,
+                    )
+                logger.info("Learning loop step 3 — topic promossi: %d", len(frequent))
+            except Exception as exc:
+                logger.warning("Learning loop step 3 fallito: %s", exc)
+
+            # Step 4 — rileva abitudini Watcher
+            try:
+                habits = await self.memory.detect_watcher_habits(days=7, min_days=5)
+                for habit in habits:
+                    await self.memory.upsert_learning(
+                        agent="urgency",
+                        pattern_type="app_habit",
+                        pattern_value=habit.get("pattern", ""),
+                        signal_type="watcher_habit",
+                        weight_delta=0.05,
+                    )
+                logger.info("Learning loop step 4 — abitudini watcher: %d", len(habits))
+            except Exception as exc:
+                logger.warning("Learning loop step 4 fallito: %s", exc)
+
+            # Step 5 — penalizza reminder ignorati (inviati, non acked dopo 4h)
+            try:
+                ignored = await self.memory.get_sent_unacknowledged(hours=4)
+                for r in ignored:
+                    # Estrai pattern semplice: prima parola del testo reminder
+                    text = r.get("text", "")
+                    pattern = text.split()[0].lower() if text.split() else "reminder"
+                    await self.memory.upsert_learning(
+                        agent="remind",
+                        pattern_type="reminder_pattern",
+                        pattern_value=pattern,
+                        signal_type="implicit_ignored",
+                        weight_delta=-0.05,
+                    )
+                logger.info("Learning loop step 5 — reminder ignorati penalizzati: %d", len(ignored))
+            except Exception as exc:
+                logger.warning("Learning loop step 5 fallito: %s", exc)
+
+            # Step 6 — notifica Telegram se cambiamenti significativi
+            if decayed > 5 and self.pepe and hasattr(self.pepe, "notify_telegram"):
+                try:
+                    await self.pepe.notify_telegram(
+                        f"🧠 Learning loop completato: {decayed} pattern aggiornati."
+                    )
+                except Exception:
+                    pass
+
+            logger.info("Learning loop completato — decayed=%d", decayed)
+
         except Exception as exc:
-            logger.error("learning_decay fallito: %s", exc)
+            logger.error("personal_learning_loop fallito: %s", exc)
 
     async def _run_reminder_checker(self) -> None:
         """Ogni N minuti — invia reminder scaduti via Telegram."""
@@ -396,6 +478,15 @@ class Scheduler:
 
         except Exception as exc:
             logger.error("reminder_unack_ping fallito: %s", exc)
+
+    async def _run_medium_digest(self) -> None:
+        """Ogni giorno all'ora URGENCY_MEDIUM_DIGEST_HOUR — invia digest MEDIUM e svuota buffer."""
+        if not self.pepe or not hasattr(self.pepe, "flush_medium_digest"):
+            return
+        try:
+            await self.pepe.flush_medium_digest()
+        except Exception as exc:
+            logger.error("urgency_medium_digest fallito: %s", exc)
 
     # ------------------------------------------------------------------
     # Info

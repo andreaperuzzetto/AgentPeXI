@@ -125,11 +125,24 @@ async def lifespan(app: FastAPI):
     from apps.backend.agents.summarize import SummarizeAgent
     from apps.backend.agents.research_personal import ResearchPersonalAgent
     from apps.backend.screen.watcher import ScreenWatcher
+    from apps.backend.tools.notion_calendar import NotionCalendar
+    from apps.backend.tools.web_search import WebSearchTool
+    from apps.backend.tools.text_extract import TextExtractor
 
     # 1. MemoryManager
     memory = MemoryManager()
     await memory.init()
     logger.info("MemoryManager inizializzato")
+
+    # 1c. Tools condivisi — istanziati una volta sola (DI negli agenti Personal)
+    notion_calendar = NotionCalendar(token=getattr(settings, "NOTION_API_TOKEN", ""))
+    try:
+        await notion_calendar.ensure_database()
+        logger.info("Notion Calendar database pronto")
+    except Exception as exc:
+        logger.warning("notion_calendar.ensure_database fallito (fail-safe): %s", exc)
+    web_search = WebSearchTool()
+    text_extractor = TextExtractor(max_chars=getattr(settings, "SUMMARIZE_MAX_CHARS", 20_000))
 
     # 1b. StorageManager (singleton)
     storage = StorageManager()
@@ -207,11 +220,12 @@ async def lifespan(app: FastAPI):
     )
     pepe.register_agent("recall", recall_agent)
 
-    # 2h2. RemindAgent — gestione reminder + Notion Calendar
+    # 2h2. RemindAgent — gestione reminder + Notion Calendar (iniettato da lifespan)
     remind_agent = RemindAgent(
         anthropic_client=pepe.client,
         memory=memory,
         ws_broadcaster=ws_manager.broadcast,
+        notion_calendar=notion_calendar,
     )
     pepe.register_agent("remind", remind_agent)
 
@@ -220,6 +234,7 @@ async def lifespan(app: FastAPI):
         anthropic_client=pepe.client,
         memory=memory,
         ws_broadcaster=ws_manager.broadcast,
+        text_extractor=text_extractor,
     )
     pepe.register_agent("summarize", summarize_agent)
 
@@ -228,6 +243,7 @@ async def lifespan(app: FastAPI):
         anthropic_client=pepe.client,
         memory=memory,
         ws_broadcaster=ws_manager.broadcast,
+        web_search=web_search,
     )
     pepe.register_agent("research_personal", research_personal_agent)
 

@@ -118,6 +118,7 @@ class TelegramBot:
         add(CommandHandler("summarize", self._cmd_summarize, filters=self._chat_filter))
         add(CommandHandler("research", self._cmd_research, filters=self._chat_filter))
         add(CommandHandler("feedback", self._cmd_feedback, filters=self._chat_filter))
+        add(CommandHandler("urgency", self._cmd_urgency, filters=self._chat_filter))
 
         # Messaggi vocali
         add(MessageHandler(self._chat_filter & filters.VOICE, self._handle_voice))
@@ -188,7 +189,7 @@ class TelegramBot:
     async def _cmd_listings(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/listings — lista listing Etsy recenti."""
         cursor = await self.pepe.memory._db.execute(
-            "SELECT title, status, sales, revenue FROM etsy_listings ORDER BY created_at DESC LIMIT 10"
+            "SELECT title, status, sales, revenue_eur FROM etsy_listings ORDER BY created_at DESC LIMIT 10"
         )
         rows = await cursor.fetchall()
         if not rows:
@@ -199,7 +200,7 @@ class TelegramBot:
         for r in rows:
             row = dict(r)
             lines.append(
-                f"• {row['title'][:40]} — {row['status']} | 🛒 {row['sales']} | €{row['revenue']:.2f}"
+                f"• {row['title'][:40]} — {row['status']} | 🛒 {row['sales']} | €{row['revenue_eur']:.2f}"
             )
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -312,6 +313,7 @@ class TelegramBot:
             "/summarize <url|testo> [short] — riassumi contenuto",
             "/research <domanda> [quick] — ricerca web strutturata",
             "/feedback positivo|negativo <keyword> — insegna al sistema",
+            "/urgency add <keyword> — aggiungi keyword ad alta urgenza",
             "",
             "*— Interazione —*",
             "/ask <domanda> — chiede qualcosa a Pepe",
@@ -384,7 +386,7 @@ class TelegramBot:
         await update.message.reply_text(
             "🧠 *Dominio Personal attivo*\n\n"
             "Sono passato in modalità assistente personale.\n"
-            "LLM: Ollama locale (qwen3:4b) — privacy totale, costo zero.\n"
+            f"LLM: Ollama locale ({settings.OLLAMA_MODEL}) — privacy totale, costo zero.\n"
             "Usa /etsy per tornare alla gestione store.",
             parse_mode="Markdown",
         )
@@ -612,14 +614,77 @@ class TelegramBot:
 
         await update.message.reply_text(reply)
 
+    async def _cmd_urgency(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/urgency add <keyword>
+        Aggiunge una keyword prioritaria al sistema urgenza.
+        Quando Pepe vede questa keyword la tratterà sempre come HIGH.
+        Es: /urgency add scadenza
+            /urgency add fattura
+        """
+        args = context.args or []
+
+        if not args or args[0].lower() != "add" or len(args) < 2:
+            await update.message.reply_text(
+                "Uso: `/urgency add <keyword>`\n"
+                "Esempio: `/urgency add scadenza`\n\n"
+                "Insegna a Pepe quali parole indicano sempre urgenza alta.",
+                parse_mode="Markdown",
+            )
+            return
+
+        keyword = " ".join(args[1:]).lower().strip()
+        if not keyword:
+            await update.message.reply_text("Specifica la keyword dopo `add`.", parse_mode="Markdown")
+            return
+
+        try:
+            # weight_delta=0.3 → initial weight=0.8 su nuovo record (0.5+0.3)
+            # Su record esistente spinge verso 0.9 (clampato)
+            await self.pepe.memory.upsert_learning(
+                agent="urgency",
+                pattern_type="urgency_keyword",
+                pattern_value=keyword,
+                signal_type="explicit_positive",
+                weight_delta=0.3,
+            )
+            await update.message.reply_text(
+                f"🔴 «{keyword}» aggiunta come keyword ad alta urgenza.\n"
+                f"D'ora in poi i messaggi che la contengono saranno trattati come HIGH."
+            )
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Errore salvataggio: {exc}")
+
     # ------------------------------------------------------------------
     # Handler messaggi testo
     # ------------------------------------------------------------------
 
     async def _handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Messaggio testo → Pepe con session_id da chat_id."""
+        """Messaggio testo → Pepe con session_id da chat_id.
+
+        Se il messaggio è una reply a un messaggio del bot, prova prima
+        l'acknowledgment del reminder corrispondente (via telegram_msg_id).
+        """
         text = update.message.text
         session_id = str(update.effective_chat.id)
+
+        # --- Reply handler: tentativo ACK reminder ---
+        if update.message.reply_to_message is not None:
+            replied_msg_id = update.message.reply_to_message.message_id
+            acked = await self.pepe.memory.acknowledge_reminder(replied_msg_id)
+            if acked:
+                # Aggiorna Notion se disponibile
+                notion_page_id = await self.pepe.memory.get_reminder_notion_id(replied_msg_id)
+                if notion_page_id and getattr(settings, "NOTION_API_TOKEN", ""):
+                    try:
+                        from apps.backend.tools.notion_calendar import NotionCalendar
+                        nc = NotionCalendar(token=settings.NOTION_API_TOKEN)
+                        await nc.update_status(notion_page_id, "Done")
+                    except Exception as exc:
+                        logger.debug("ACK Notion update fallito (fail-safe): %s", exc)
+                await update.message.reply_text("✅ Reminder confermato.")
+                return
+            # Nessun reminder trovato per questo msg — procede normalmente
+
         reply = await self.pepe.handle_user_message(text, source="telegram", session_id=session_id)
         await self._reply_chunked(update.message, reply)
 
