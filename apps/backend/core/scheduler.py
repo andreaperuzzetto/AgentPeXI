@@ -149,7 +149,9 @@ class Scheduler:
         logger.info(
             "Job Personal registrati: personal_learning_loop (03:30), reminder_checker (%dm), "
             "reminder_unack_ping (%dh), urgency_medium_digest (%d:00)",
-            remind_interval, ping_hours, digest_hour,
+            settings.REMIND_CHECKER_INTERVAL,
+            settings.REMIND_UNACK_PING_HOURS,
+            settings.URGENCY_MEDIUM_DIGEST_HOUR,
         )
 
         logger.info("Job predefiniti registrati (ssd_health_check, agent_status_sync)")
@@ -365,7 +367,7 @@ class Scheduler:
 
             # Step 3 — promuovi topic frequenti (Recall)
             try:
-                frequent = await self.memory.get_frequent_queries(days=7, min_occurrences=3)
+                frequent = await self.memory.get_frequent_queries(days=settings.LEARNING_DECAY_DAYS, min_occurrences=3)
                 for topic in frequent:
                     await self.memory.upsert_learning(
                         agent="recall",
@@ -439,14 +441,14 @@ class Scheduler:
                 text = reminder.get("text", "")
                 recurring = reminder.get("recurring_rule")
 
-                # Invia notifica
+                # Invia notifica — usa send_reminder_notification per ottenere message_id (necessario per ACK via reply)
                 msg = f"⏰ Reminder: {text}"
                 if recurring:
                     msg += f"\n🔄 Ricorrente: {recurring}"
-                await self.pepe.notify_telegram(msg, priority=True)
+                telegram_msg_id = await self.pepe.send_reminder_notification(msg)
 
-                # Aggiorna stato → sent
-                await self.memory.mark_reminder_sent(rid)
+                # Aggiorna stato → sent (telegram_msg_id=0 se bot non configurato)
+                await self.memory.mark_reminder_sent(rid, telegram_msg_id)
 
                 # Se ricorrente: ri-schedula prossima occorrenza
                 if recurring:
@@ -462,7 +464,7 @@ class Scheduler:
         if not self.pepe or not hasattr(self.pepe, "notify_telegram"):
             return
         try:
-            unacked = await self.memory.get_sent_unacknowledged()
+            unacked = await self.memory.get_sent_unacknowledged(hours=settings.REMIND_UNACK_PING_HOURS)
             if not unacked:
                 return
 

@@ -187,6 +187,7 @@ class Pepe:
 
         # Callback notifiche Telegram (impostato dal bot module)
         self._telegram_notifier: Callable[[str, bool], Coroutine] | None = None
+        self._reminder_notifier: Callable[[str], Coroutine] | None = None
 
         # Mock mode — attivabile via /mock Telegram
         self.mock_mode: bool = False
@@ -569,6 +570,20 @@ class Pepe:
         """Registra il callback per notifiche Telegram (chiamato dal bot module)."""
         self._telegram_notifier = fn
 
+    def set_reminder_notifier(self, fn: Callable[[str], Coroutine]) -> None:
+        """Registra il callback per reminder — ritorna il message_id Telegram."""
+        self._reminder_notifier = fn
+
+    async def send_reminder_notification(self, message: str) -> int:
+        """Invia reminder via Telegram e restituisce message_id (per ACK via reply).
+        Ritorna 0 se il notifier non è configurato o fallisce."""
+        if self._reminder_notifier:
+            try:
+                return await self._reminder_notifier(message)
+            except Exception as exc:
+                logger.error("send_reminder_notification fallito: %s", exc)
+        return 0
+
     # ------------------------------------------------------------------
     # Mock mode
     # ------------------------------------------------------------------
@@ -646,7 +661,7 @@ class Pepe:
             _parsed = _urlparse(settings.OLLAMA_BASE_URL)
             _ollama_chat_url = f"{_parsed.scheme}://{_parsed.netloc}/api/chat"
 
-            timeout = aiohttp.ClientTimeout(total=getattr(settings, "URGENCY_OLLAMA_TIMEOUT", 8))
+            timeout = aiohttp.ClientTimeout(total=settings.URGENCY_OLLAMA_TIMEOUT)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     _ollama_chat_url,

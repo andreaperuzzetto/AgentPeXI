@@ -433,6 +433,7 @@ class ResearchPersonalAgent(AgentBase):
                     "tag": "research_personal",
                     "depth": depth,
                     "sources": [r.get("url", "") for r in sources if r.get("url")],
+                    "date": _dt.utcnow().strftime("%Y-%m-%d"),
                     "created_at": _dt.utcnow().isoformat(),
                 },
             )
@@ -456,7 +457,7 @@ class ResearchPersonalAgent(AgentBase):
     def _fail(self, reason: str) -> AgentResult:
         return AgentResult(
             agent_name=self.name,
-            task_id="",
+            task_id=self._task_id,
             status=TaskStatus.FAILED,
             output_data={"error": reason},
         )

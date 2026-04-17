@@ -22,6 +22,7 @@ Fallback Ollama se Anthropic non raggiungibile.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Callable, Coroutine
 
@@ -91,7 +92,7 @@ class SummarizeAgent(AgentBase):
             ws_broadcaster=ws_broadcaster,
         )
         self._extractor = text_extractor or TextExtractor(
-            max_chars=settings.SUMMARIZE_MAX_CHARS * 3
+            max_chars=settings.SUMMARIZE_MAX_CHARS
         )
 
     # ------------------------------------------------------------------
@@ -189,6 +190,7 @@ class SummarizeAgent(AgentBase):
                         "url": content if source_type == "url" else None,
                         "tag": "summary",
                         "length": length,
+                        "date": _dt.utcnow().strftime("%Y-%m-%d"),
                         "created_at": _dt.utcnow().isoformat(),
                     },
                 )
@@ -249,7 +251,6 @@ class SummarizeAgent(AgentBase):
         chunk_summaries: list[str] = []
         for i in range(0, len(chunks), 4):
             batch = chunks[i : i + 4]
-            import asyncio
             results = await asyncio.gather(
                 *[self._summarize_chunk(c, idx=i + j) for j, c in enumerate(batch)],
                 return_exceptions=True,
@@ -331,7 +332,7 @@ class SummarizeAgent(AgentBase):
     def _fail(self, reason: str) -> AgentResult:
         return AgentResult(
             agent_name=self.name,
-            task_id="",
+            task_id=self._task_id,
             status=TaskStatus.FAILED,
             output_data={"error": reason},
         )

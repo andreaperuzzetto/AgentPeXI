@@ -23,6 +23,7 @@ from telegram.ext import (
 
 from apps.backend.core.config import settings
 from apps.backend.core.domains import DOMAIN_ETSY, DOMAIN_PERSONAL
+from apps.backend.core.models import AgentTask
 
 if TYPE_CHECKING:
     from apps.backend.core.pepe import Pepe
@@ -70,6 +71,7 @@ class TelegramBot:
 
         # Registra notifier in Pepe
         self.pepe.set_telegram_notifier(self._send_notification)
+        self.pepe.set_reminder_notifier(self._send_reminder_notification)
 
         # Avvio asincrono (nello stesso event loop di FastAPI)
         await self._app.initialize()
@@ -487,22 +489,28 @@ class TelegramBot:
         if not when:
             when = text   # fallback: tutto è when
 
-        session_id = str(update.effective_chat.id)
-        reply = await self.pepe.handle_user_message(
-            f"remind create: {text} | quando: {when} | ricorrenza: {recurring or 'nessuna'}",
+        import uuid as _uuid
+        task = AgentTask(
+            task_id=str(_uuid.uuid4()),
+            agent_name="remind",
+            input_data={"action": "create", "text": f"{text} {when}".strip(), "recurring": recurring},
             source="telegram",
-            session_id=session_id,
         )
+        result = await self.pepe.dispatch_task(task)
+        reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore remind.")
         await self._reply_chunked(update.message, reply)
 
     async def _cmd_remind_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/reminders — lista reminder attivi."""
-        session_id = str(update.effective_chat.id)
-        reply = await self.pepe.handle_user_message(
-            "remind list",
+        import uuid as _uuid
+        task = AgentTask(
+            task_id=str(_uuid.uuid4()),
+            agent_name="remind",
+            input_data={"action": "list"},
             source="telegram",
-            session_id=session_id,
         )
+        result = await self.pepe.dispatch_task(task)
+        reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore remind.")
         await self._reply_chunked(update.message, reply)
 
     async def _cmd_summarize(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -537,8 +545,23 @@ class TelegramBot:
         else:
             msg = f"summarize text: {content} mode: {mode}"
 
+        import uuid as _uuid
+        if file_id:
+            source_type, content = "file", file_id
+        elif content.startswith("http"):
+            source_type = "url"
+        else:
+            source_type = "text"
+        length = "brief" if mode == "short" else "normal"
         await update.message.reply_text("📄 Sto leggendo e riassumendo…")
-        reply = await self.pepe.handle_user_message(msg, source="telegram", session_id=session_id)
+        task = AgentTask(
+            task_id=str(_uuid.uuid4()),
+            agent_name="summarize",
+            input_data={"source_type": source_type, "content": content, "length": length, "save": True},
+            source="telegram",
+        )
+        result = await self.pepe.dispatch_task(task)
+        reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore summarize.")
         await self._reply_chunked(update.message, reply)
 
     async def _cmd_research(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -561,12 +584,16 @@ class TelegramBot:
         query = " ".join(args).strip()
 
         session_id = str(update.effective_chat.id)
+        import uuid as _uuid
         await update.message.reply_text(f"🔍 Ricerco: «{query}»…")
-        reply = await self.pepe.handle_user_message(
-            f"research_personal query: {query} mode: {mode}",
+        task = AgentTask(
+            task_id=str(_uuid.uuid4()),
+            agent_name="research_personal",
+            input_data={"query": query, "depth": mode},
             source="telegram",
-            session_id=session_id,
         )
+        result = await self.pepe.dispatch_task(task)
+        reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore research.")
         await self._reply_chunked(update.message, reply)
 
     async def _cmd_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -786,6 +813,19 @@ class TelegramBot:
                 chunk += line
         if chunk.strip():
             await message.reply_text(chunk.rstrip())
+
+    async def _send_reminder_notification(self, message: str) -> int:
+        """Invia reminder e restituisce il telegram message_id (per ACK via reply)."""
+        if not self._app or not settings.TELEGRAM_CHAT_ID:
+            return 0
+        try:
+            sent = await self._app.bot.send_message(
+                chat_id=int(settings.TELEGRAM_CHAT_ID), text=message
+            )
+            return sent.message_id
+        except Exception as exc:
+            logger.error("_send_reminder_notification fallito: %s", exc)
+            return 0
 
     async def _send_notification(self, message: str, priority: bool = False) -> None:
         """Invia notifica a Andrea via Telegram, spezzando se necessario."""

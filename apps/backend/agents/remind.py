@@ -251,7 +251,7 @@ class RemindAgent(AgentBase):
 
         return AgentResult(
             agent_name=self.name,
-            task_id="",
+            task_id=self._task_id,
             status=TaskStatus.COMPLETED,
             output_data={
                 "reminder_id": reminder_id,
@@ -296,7 +296,7 @@ class RemindAgent(AgentBase):
 
         return AgentResult(
             agent_name=self.name,
-            task_id="",
+            task_id=self._task_id,
             status=TaskStatus.COMPLETED,
             output_data={
                 "reminders": all_items,
@@ -325,7 +325,7 @@ class RemindAgent(AgentBase):
 
         return AgentResult(
             agent_name=self.name,
-            task_id="",
+            task_id=self._task_id,
             status=TaskStatus.COMPLETED,
             output_data={
                 "reminder_id": reminder_id,
@@ -357,7 +357,7 @@ class RemindAgent(AgentBase):
 
         return AgentResult(
             agent_name=self.name,
-            task_id="",
+            task_id=self._task_id,
             status=TaskStatus.COMPLETED,
             output_data={
                 "telegram_msg_id": telegram_msg_id,
@@ -433,7 +433,7 @@ class RemindAgent(AgentBase):
     def _fail(self, reason: str) -> AgentResult:
         return AgentResult(
             agent_name=self.name,
-            task_id="",
+            task_id=self._task_id,
             status=TaskStatus.FAILED,
             output_data={"error": reason},
         )

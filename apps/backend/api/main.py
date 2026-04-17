@@ -142,7 +142,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("notion_calendar.ensure_database fallito (fail-safe): %s", exc)
     web_search = WebSearchTool()
-    text_extractor = TextExtractor(max_chars=getattr(settings, "SUMMARIZE_MAX_CHARS", 20_000))
+    text_extractor = TextExtractor(max_chars=settings.SUMMARIZE_MAX_CHARS)
 
     # 1b. StorageManager (singleton)
     storage = StorageManager()
