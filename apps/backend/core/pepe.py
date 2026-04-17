@@ -270,6 +270,7 @@ class Pepe:
         production_queue_summary: str = "",
         recent_analytics: str = "",
         current_month: int | None = None,
+        wiki_context: str = "",
     ) -> str:
         import calendar
         month_name = calendar.month_name[current_month] if current_month else ""
@@ -324,8 +325,13 @@ class Pepe:
         if recent_analytics:
             runtime += f"\nPerformance recente: {recent_analytics}"
 
+        # Wiki knowledge base — iniettato solo se presente (Step 5.2.3)
+        wiki_section = ""
+        if wiki_context:
+            wiki_section = f"## Conoscenza accumulata (Wiki)\n{wiki_context}"
+
         return "\n\n".join(filter(bool, [
-            identity, objective, rules, agents_section, pipeline_section, extras, runtime
+            identity, objective, rules, agents_section, pipeline_section, extras, runtime, wiki_section
         ]))
 
     # ------------------------------------------------------------------
@@ -496,11 +502,22 @@ class Pepe:
             user_content += context_text
         history.append({"role": "user", "content": user_content})
 
+        # Wiki-first context injection — Step 5.2.3
+        # Solo dominio Etsy e solo se wiki è inizializzato.
+        # Non blocca: se query fallisce, wiki_context rimane "".
+        wiki_context = ""
+        if self.domain is not DOMAIN_PERSONAL and hasattr(self, "wiki") and self.wiki is not None:
+            try:
+                wiki_context = await self.wiki.query("etsy", message, self.client)
+            except Exception as exc:
+                logger.warning("wiki.query fallita in handle_user_message: %s", exc)
+
         # System prompt dinamico con contesto iniettato
         system = self._build_system_prompt(
             agent_statuses={n: s.value for n, s in self._agent_status.items()},
             production_queue_summary=pipeline_summary,
             recent_analytics=analytics_summary,
+            wiki_context=wiki_context,
         )
 
         # Prima chiamata LLM — decide se delegare o rispondere in testo.
@@ -1509,6 +1526,12 @@ class Pepe:
         if confidence is None or confidence >= self.domain.confidence_threshold:
             final_reply = await self._synthesize_reply(user_message, agent_name, result, autonomous=True)
 
+            # Wiki hook — Branch 2 (prima di _advance_pipeline, vedi Step 5.2.2a)
+            if hasattr(self, "wiki") and self.wiki is not None:
+                asyncio.create_task(
+                    self._compile_wiki_entry(agent_name, result, session_id)
+                )
+
             await self.memory.save_message(session_id, "assistant", final_reply, source)
             await self._broadcast_context_update(
                 confidence=confidence,
@@ -1524,6 +1547,13 @@ class Pepe:
         # confidence >= disclaimer threshold: procedi con disclaimer e proposta
         if confidence >= self.domain.confidence_disclaimer:
             final_reply = await self._synthesize_reply(user_message, agent_name, result)
+
+            # Wiki hook — Branch 3
+            if hasattr(self, "wiki") and self.wiki is not None:
+                asyncio.create_task(
+                    self._compile_wiki_entry(agent_name, result, session_id)
+                )
+
             disclaimer = (
                 f"\n\n⚠️ **Nota**: analisi basata su dati parziali "
                 f"(confidence {confidence:.0%}). "
@@ -1562,6 +1592,60 @@ class Pepe:
 
     # ------------------------------------------------------------------
     # Error synthesis
+    # ------------------------------------------------------------------
+
+    async def _compile_wiki_entry(
+        self, agent_name: str, result: AgentResult, session_id: str  # noqa: ARG002
+    ) -> None:
+        """Alimenta la wiki in background dopo ogni agent completion (Branch 2 e 3).
+
+        Chiamata sempre tramite asyncio.create_task — non bloccante.
+        Guard hasattr(self, "wiki") già applicato nel chiamante.
+        """
+        # Early return per agenti che non producono dati wiki
+        if agent_name in {"recall", "remind"}:
+            return
+
+        # Copia difensiva — result.output_data potrebbe essere None o oggetto condiviso
+        output = dict(result.output_data or {})
+
+        # LLM client per dominio — Personal usa Ollama locale, Etsy usa Anthropic
+        llm = self._local_client if self.domain is DOMAIN_PERSONAL else self.client
+
+        try:
+            if agent_name == "research":
+                niches = output.get("niches") or []
+                niche  = output.get("niche") or (niches[0] if niches else "")
+                if niche:
+                    await self.wiki.compile_niche(niche, "research", output, llm)
+                await self.wiki.store_raw("etsy", "research", output)
+
+            elif agent_name == "analytics":
+                niche = output.get("niche", "")
+                if niche:
+                    await self.wiki.compile_niche(niche, "analytics", output, llm)
+
+            elif agent_name == "publisher":
+                niche = output.get("niche", "")
+                if niche:
+                    await self.wiki.compile_niche(niche, "publisher", output, llm)
+
+            elif agent_name == "finance":
+                content = json.dumps(output, ensure_ascii=False)
+                await self.wiki.compile_wiki_file("etsy", "patterns/pricing", content, llm)
+
+            elif agent_name == "research_personal":
+                await self.wiki.store_raw("personal", "research", output)
+
+            elif agent_name == "summarize":
+                content = output.get("summary") or output.get("text") or str(output)
+                await self.wiki.store_raw("personal", "summarize", output)
+                if content:
+                    await self.wiki.compile_wiki_file("personal", "preferences", content, llm)
+
+        except Exception as exc:
+            logger.warning("_compile_wiki_entry (%s): %s", agent_name, exc)
+
     # ------------------------------------------------------------------
 
     async def _synthesize_error(

@@ -1,7 +1,5 @@
 import { useStore } from '../../store'
 
-const FALLBACK_SPARKLINE = [35, 60, 45, 75, 38, 22, 18]
-
 export function CostPanel() {
   const dailyCost  = useStore((s) => s.systemStatus.dailyCost)
   const llmStats   = useStore((s) => s.llmStats)
@@ -13,7 +11,7 @@ export function CostPanel() {
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-7)
       .map(([, v]) => v)
-    if (days.length === 0) return FALLBACK_SPARKLINE
+    if (days.length === 0) return []
     const max = Math.max(...days, 0.001)
     return days.map((v) => Math.round((v / max) * 100))
   })()
@@ -96,53 +94,57 @@ export function CostPanel() {
         </div>
       </div>
 
-      {/* Sparkline */}
-      <div
-        style={{
-          fontFamily: 'var(--fd)',
-          fontSize: 11,
-          color: 'var(--tf)',
-          marginTop: 8,
-          marginBottom: 4,
-        }}
-      >
-        Ultimi 7 giorni
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-end',
-          gap: 2,
-          height: 22,
-        }}
-      >
-        {sparkline.map((h, i) => {
-          const isToday = i === sparkline.length - 1
-          return (
-            <div
-              key={i}
-              style={{
-                flex: 1,
-                borderRadius: '1px 1px 0 0',
-                minWidth: 5,
-                height: `${h}%`,
-                background: isToday
-                  ? 'rgba(45,232,106,.55)'
-                  : 'rgba(45,232,106,.25)',
-                transition: 'height .4s var(--e-out), background .2s',
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.background = 'var(--accent)'
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.background = isToday
-                  ? 'rgba(45,232,106,.55)'
-                  : 'rgba(45,232,106,.25)'
-              }}
-            />
-          )
-        })}
-      </div>
+      {/* Sparkline — mostrata solo quando ci sono dati reali */}
+      {sparkline.length > 0 && (
+        <>
+          <div
+            style={{
+              fontFamily: 'var(--fd)',
+              fontSize: 11,
+              color: 'var(--tf)',
+              marginTop: 8,
+              marginBottom: 4,
+            }}
+          >
+            Ultimi 7 giorni
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-end',
+              gap: 2,
+              height: 22,
+            }}
+          >
+            {sparkline.map((h, i) => {
+              const isToday = i === sparkline.length - 1
+              return (
+                <div
+                  key={i}
+                  style={{
+                    flex: 1,
+                    borderRadius: '1px 1px 0 0',
+                    minWidth: 5,
+                    height: `${h}%`,
+                    background: isToday
+                      ? 'rgba(45,232,106,.55)'
+                      : 'rgba(45,232,106,.25)',
+                    transition: 'height .4s var(--e-out), background .2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = 'var(--accent)'
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = isToday
+                      ? 'rgba(45,232,106,.55)'
+                      : 'rgba(45,232,106,.25)'
+                  }}
+                />
+              )
+            })}
+          </div>
+        </>
+      )}
     </div>
   )
 }

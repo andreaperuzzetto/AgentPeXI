@@ -113,6 +113,7 @@ class TelegramBot:
         add(CommandHandler("etsy", self._cmd_etsy, filters=self._chat_filter))
         add(CommandHandler("list", self._cmd_list, filters=self._chat_filter))
         add(CommandHandler("screen", self._cmd_screen, filters=self._chat_filter))
+        add(CommandHandler("wiki", self._cmd_wiki, filters=self._chat_filter))
 
         # Comandi Personal (Blocco 3)
         add(CommandHandler("remind", self._cmd_remind, filters=self._chat_filter))
@@ -308,6 +309,7 @@ class TelegramBot:
             "/finance — genera report economico",
             "/listings — lista ultimi 10 listing",
             "/mock [on|off] — attiva/disattiva mock mode",
+            "/wiki [stats|query|lint|health] — knowledge base wiki",
             "",
             "*— Personal —*",
             "/remind <testo> alle <quando> — crea reminder",
@@ -696,6 +698,102 @@ class TelegramBot:
             )
         except Exception as exc:
             await update.message.reply_text(f"❌ Errore salvataggio: {exc}")
+
+    # ------------------------------------------------------------------
+    # Wiki commands — Step 5.2.6
+    # ------------------------------------------------------------------
+
+    async def _cmd_wiki(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/wiki [stats|query <testo>|lint [etsy|personal]|health]
+
+        Subcomandi:
+          /wiki stats              — statistiche aggregate wiki
+          /wiki query <testo>      — query wiki dominio Etsy
+          /wiki lint [etsy|personal] — lint: wikilinks rotti + raw pending
+          /wiki health             — esegue health check manuale (compact+lint+update_index)
+        """
+        wiki = getattr(self.pepe, "wiki", None)
+        if wiki is None:
+            await update.message.reply_text("❌ WikiManager non inizializzato. Controlla i log.")
+            return
+
+        args = context.args or []
+        sub = args[0].lower() if args else "stats"
+
+        # ── /wiki stats ──────────────────────────────────────────────────
+        if sub == "stats":
+            try:
+                stats = await wiki.get_stats()
+                lines = [
+                    "📚 *Wiki — Statistiche*\n",
+                    f"🏪 Etsy nicchie: {stats.get('etsy_niches', 0)}",
+                    f"📊 Etsy pattern: {stats.get('etsy_patterns', 0)}",
+                    f"🧠 Personal file: {stats.get('personal_files', 0)}",
+                    f"📥 Raw totale: {stats.get('total_raw', 0)}",
+                    f"⏳ Raw pending: {stats.get('pending_raw', 0)}",
+                ]
+                await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            except Exception as exc:
+                await update.message.reply_text(f"❌ Errore stats: {exc}")
+
+        # ── /wiki query <testo> ──────────────────────────────────────────
+        elif sub == "query":
+            q = " ".join(args[1:]).strip()
+            if not q:
+                await update.message.reply_text(
+                    "Uso: `/wiki query <testo>`\nEsempio: `/wiki query weekly planner trends`",
+                    parse_mode="Markdown",
+                )
+                return
+            await update.message.reply_text(f"🔍 Query wiki Etsy: «{q}»…")
+            try:
+                result = await wiki.query("etsy", q, self.pepe.client)
+                if result:
+                    await self._reply_chunked(update.message, f"📚 *Wiki result*\n\n{result}")
+                else:
+                    await update.message.reply_text("Nessun risultato nella wiki per questa query.")
+            except Exception as exc:
+                await update.message.reply_text(f"❌ Errore query: {exc}")
+
+        # ── /wiki lint [etsy|personal] ───────────────────────────────────
+        elif sub == "lint":
+            domain = args[1].lower() if len(args) > 1 and args[1].lower() in ("etsy", "personal") else "etsy"
+            llm = self.pepe._local_client if domain == "personal" else self.pepe.client
+            await update.message.reply_text(f"🔍 Lint wiki *{domain}*…", parse_mode="Markdown")
+            try:
+                report = await wiki.lint(domain, llm)
+                header = f"📋 *Wiki lint — {domain}*\n\n"
+                await self._reply_chunked(update.message, header + (report or "Nessun problema trovato."))
+            except Exception as exc:
+                await update.message.reply_text(f"❌ Errore lint: {exc}")
+
+        # ── /wiki health ─────────────────────────────────────────────────
+        elif sub == "health":
+            await update.message.reply_text("⏳ Wiki health check in avvio (compact + lint + update_index)…")
+            try:
+                if self.scheduler:
+                    asyncio.create_task(self.scheduler._run_wiki_health_check())
+                else:
+                    # Fallback diretto senza scheduler
+                    llm_etsy     = self.pepe.client
+                    llm_personal = self.pepe._local_client
+                    for domain, llm in (("etsy", llm_etsy), ("personal", llm_personal)):
+                        await wiki.compact_wiki(domain, llm)
+                        await wiki.update_index(domain, llm)
+                    await update.message.reply_text("✅ Health check completato (senza scheduler).")
+            except Exception as exc:
+                await update.message.reply_text(f"❌ Health check fallito: {exc}")
+
+        # ── subcomando sconosciuto ───────────────────────────────────────
+        else:
+            await update.message.reply_text(
+                "📚 *Wiki — Comandi disponibili*\n\n"
+                "`/wiki stats` — statistiche aggregate\n"
+                "`/wiki query <testo>` — query knowledge base Etsy\n"
+                "`/wiki lint [etsy|personal]` — lint wikilinks e raw pending\n"
+                "`/wiki health` — esegui health check manuale",
+                parse_mode="Markdown",
+            )
 
     # ------------------------------------------------------------------
     # Handler messaggi testo

@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
 
+    # Wiki knowledge base (Blocco 5.2)
+    WIKI_BASE_PATH: str = "knowledge_base"  # relativo alla root di AgentPeXI
+    # Opzionale: path assoluto verso vault Obsidian esistente:
+    # WIKI_BASE_PATH: str = "/Users/andrea/Library/Mobile Documents/iCloud~md~obsidian/Documents/AgentPeXI"
+
     # Storage & Security
     STORAGE_PATH: str = "/Volumes/Progetti/agentpexi-storage"
     SECRET_KEY: str = ""

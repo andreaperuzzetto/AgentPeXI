@@ -174,6 +174,25 @@ async def lifespan(app: FastAPI):
     await pepe.start()
     logger.info("Pepe avviato")
 
+    # 2c-wiki. WikiManager — Step 5.2.5
+    # WIKI_BASE_PATH può essere relativo (es. "knowledge_base") o assoluto
+    # (es. vault Obsidian). Path resolution: relativo → radice progetto.
+    from apps.backend.core.wiki import WikiManager
+    _wiki_base_raw = settings.WIKI_BASE_PATH
+    _wiki_base = (
+        Path(_wiki_base_raw)
+        if Path(_wiki_base_raw).is_absolute()
+        else Path(__file__).resolve().parents[3] / _wiki_base_raw
+    )
+    try:
+        wiki_manager = WikiManager(_wiki_base)
+        await wiki_manager.init()
+        pepe.wiki = wiki_manager
+        logger.info("WikiManager inizializzato — base: %s", _wiki_base)
+    except Exception as exc:
+        logger.warning("WikiManager non avviato (fail-safe): %s", exc)
+        pepe.wiki = None
+
     # 2d. EtsyAPI
     etsy_api = EtsyAPI(memory=memory, pepe=pepe)
     logger.info("EtsyAPI inizializzato")
@@ -666,6 +685,85 @@ async def personal_ask(body: dict) -> dict:
         session_id="dashboard",
     )
     return {"response": response}
+
+
+# ------------------------------------------------------------------
+# Wiki endpoints — Step 5.2.6 (read-only, no auth)
+# ------------------------------------------------------------------
+
+
+def _get_wiki_llms():
+    """Ritorna (llm_etsy, llm_personal) da pepe, oppure (None, None) se non disponibile."""
+    if not pepe:
+        return None, None
+    return getattr(pepe, "client", None), getattr(pepe, "_local_client", None)
+
+
+@app.get("/api/wiki/stats")
+async def get_wiki_stats() -> dict:
+    """Statistiche wiki: file per dominio, raw pending, nicchie Etsy."""
+    if not pepe or not getattr(pepe, "wiki", None):
+        return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
+    try:
+        stats = await pepe.wiki.get_stats()
+        return stats
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.get("/api/wiki/query")
+async def wiki_query(domain: str = "etsy", q: str = "") -> dict:
+    """Query tiered sulla wiki (Pass 1 frontmatter, Pass 2 body se necessario).
+
+    Params: domain=etsy|personal, q=testo della query.
+    """
+    if not pepe or not getattr(pepe, "wiki", None):
+        return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
+    if not q:
+        return JSONResponse(status_code=400, content={"error": "Parametro 'q' obbligatorio"})
+    llm_etsy, llm_personal = _get_wiki_llms()
+    llm = llm_personal if domain == "personal" else llm_etsy
+    if not llm:
+        return JSONResponse(status_code=503, content={"error": "LLM non disponibile"})
+    try:
+        result = await pepe.wiki.query(domain, q, llm)
+        return {"domain": domain, "query": q, "result": result}
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.get("/api/wiki/niche/{niche}")
+async def get_wiki_niche(niche: str) -> dict:
+    """Contesto wiki per una nicchia Etsy specifica (lettura diretta, no LLM)."""
+    if not pepe or not getattr(pepe, "wiki", None):
+        return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
+    try:
+        content = await pepe.wiki.get_niche_context(niche)
+        if content is None:
+            return JSONResponse(status_code=404, content={"error": f"Niche '{niche}' non trovata"})
+        return {"niche": niche, "content": content}
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/wiki/lint")
+async def wiki_lint(body: dict | None = None) -> dict:
+    """Lint wiki: wikilinks rotti + raw pending + suggerimenti.
+
+    Body: {domain: 'etsy'|'personal'} (default: etsy).
+    """
+    if not pepe or not getattr(pepe, "wiki", None):
+        return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
+    domain = (body or {}).get("domain", "etsy")
+    llm_etsy, llm_personal = _get_wiki_llms()
+    llm = llm_personal if domain == "personal" else llm_etsy
+    if not llm:
+        return JSONResponse(status_code=503, content={"error": "LLM non disponibile"})
+    try:
+        report = await pepe.wiki.lint(domain, llm)
+        return {"domain": domain, "report": report}
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 # ------------------------------------------------------------------
