@@ -51,6 +51,14 @@ class AgentBase(ABC):
         """Esegue il task e restituisce il risultato."""
         ...
 
+    def _extra_init_kwargs(self) -> dict:
+        """Kwargs aggiuntivi passati al costruttore in spawn_subagent.
+
+        Sovrascrivi nelle sottoclassi con parametri obbligatori extra
+        (es. storage, etsy_api) per evitare TypeError alla creazione.
+        """
+        return {}
+
     # ------------------------------------------------------------------
     # Lifecycle helpers
     # ------------------------------------------------------------------
@@ -537,6 +545,7 @@ class AgentBase(ABC):
             anthropic_client=self.client,
             memory=self.memory,
             ws_broadcaster=self._ws_broadcast,
+            **self._extra_init_kwargs(),
         )
         result = await sub_agent.execute(task)
 

@@ -26,7 +26,10 @@ logger = logging.getLogger("agentpexi.publisher")
 TAXONOMY_IDS = {
     "printable_pdf": 2078,      # Prints > Digital Prints
     "digital_art_png": 2078,
-    "svg_bundle": 1,            # placeholder
+    # svg_bundle: il taxonomy ID reale deve essere configurato.
+    # Usa l'endpoint GET /v3/application/seller-taxonomy/nodes per trovarlo.
+    # Lasciare a 0 blocca intenzionalmente la pubblicazione fino alla configurazione.
+    "svg_bundle": 0,
 }
 
 AB_PRICES = {
@@ -60,6 +63,13 @@ class PublisherAgent(AgentBase):
         self.etsy_api = etsy_api
         self._telegram_broadcast = telegram_broadcaster
         self.db_path = memory._db_path
+
+    def _extra_init_kwargs(self) -> dict:
+        return {
+            "storage": self.storage,
+            "etsy_api": self.etsy_api,
+            "telegram_broadcaster": self._telegram_broadcast,
+        }
 
     # ------------------------------------------------------------------
     # run()
@@ -245,6 +255,13 @@ class PublisherAgent(AgentBase):
         )
 
         # 3e. Crea draft su Etsy
+        taxonomy_id = TAXONOMY_IDS.get(product_type, 2078)
+        if taxonomy_id == 0:
+            raise RuntimeError(
+                f"TAXONOMY_IDS['{product_type}'] non è ancora configurato. "
+                "Usa GET /v3/application/seller-taxonomy/nodes per trovare il taxonomy ID "
+                "Etsy corretto e aggiornalo in publisher.py prima di pubblicare."
+            )
         response = await self._call_tool(
             "etsy_api",
             "create_listing",
@@ -254,7 +271,7 @@ class PublisherAgent(AgentBase):
             description=description,
             price=price,
             tags=tags,
-            taxonomy_id=TAXONOMY_IDS.get(product_type, 2078),
+            taxonomy_id=taxonomy_id,
             state="draft",
             type="download",
             who_made="i_did",

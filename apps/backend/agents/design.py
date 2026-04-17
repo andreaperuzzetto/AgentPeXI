@@ -569,232 +569,6 @@ def _calculate_design_confidence(
 
 
 # =====================================================================
-# Async module-level helpers
-# =====================================================================
-
-async def _select_preset(
-    niche: str,
-    template: str,
-    research_context: dict | None,
-    anthropic_client: anthropic.AsyncAnthropic,
-) -> str:
-    """
-    Stage 1: Keyword scoring veloce (70-80% dei casi).
-    Stage 2: LLM con contesto completo per i casi ambigui.
-    Stage 3: Validazione output finale.
-    (Intervento 3)
-    """
-    text = f"{niche} {template}".lower()
-
-    # Stage 1: Keyword scoring
-    scores = {preset: 0 for preset in PRESET_KEYWORDS}
-    for preset, keywords in PRESET_KEYWORDS.items():
-        for kw in keywords:
-            if kw in text:
-                scores[preset] += 1
-
-    max_score = max(scores.values())
-    if max_score >= 2:
-        winner = max(scores, key=scores.get)  # type: ignore[arg-type]
-        return winner
-
-    # Stage 2: LLM per casi ambigui
-    research_summary = ""
-    if research_context:
-        research_summary = f"""
-Research context:
-- Target audience: {research_context.get('target_audience', 'unknown')}
-- Price range: {research_context.get('avg_price', 'unknown')}
-- Top keywords: {', '.join(research_context.get('top_keywords', [])[:5])}
-- Competition level: {research_context.get('competition_level', 'unknown')}
-"""
-
-    prompt = f"""Select the best visual style preset for this Etsy digital product.
-
-Product niche: {niche}
-Template type: {template}
-{research_summary}
-
-Available presets:
-- minimal: Clean, professional, whitespace-focused. For planners, budgets, productivity tools.
-- decorative: Elegant, ornamental, serif fonts. For weddings, botanical, vintage, luxury products.
-- corporate: Structured, business-ready. For professional templates, business tools, reports.
-- playful: Fun, colorful, casual. For kids, educational, party, creative products.
-
-Respond with ONLY one word: minimal, decorative, corporate, or playful"""
-
-    try:
-        response = await anthropic_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=10,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        result = response.content[0].text.strip().lower()
-    except Exception:
-        result = "minimal"
-
-    # Stage 3: Validazione
-    if result not in STYLE_PRESETS:
-        result = "minimal"
-
-    return result
-
-
-async def _resolve_color_scheme_niche_aware(
-    color_scheme_name: str,
-    niche: str,
-    preset: str,
-    anthropic_client: anthropic.AsyncAnthropic,
-) -> dict[str, str]:
-    """
-    Genera palette colori coerente con nicchia e preset (Intervento 4).
-    Ritorna: {"primary": "#hex", "secondary": "#hex", "accent": "#hex", "bg": "#hex", "text": "#hex"}
-    """
-    preset_data = STYLE_PRESETS[preset]
-
-    prompt = f"""Generate a color palette for an Etsy digital product.
-Return ONLY a JSON object, no explanation.
-
-Product niche: {niche}
-Style preset: {preset} ({preset_data['description']})
-Requested color scheme: {color_scheme_name}
-
-Requirements:
-- Colors must feel cohesive and professional
-- Background should be light (for printability)
-- Text must have minimum 4.5:1 contrast ratio with background
-- Accent should complement, not clash
-- Inspired by {color_scheme_name} palette but adapted for {niche}
-
-Return exactly:
-{{"primary": "#hex", "secondary": "#hex", "accent": "#hex", "bg": "#hex", "text": "#hex"}}"""
-
-    try:
-        response = await anthropic_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=100,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = response.content[0].text.strip()
-        match = re.search(r"\{[^}]+\}", raw)
-        if match:
-            data = json.loads(match.group())
-            required_keys = {"primary", "secondary", "accent", "bg", "text"}
-            if required_keys.issubset(data.keys()):
-                for val in data.values():
-                    if not re.match(r"^#[0-9A-Fa-f]{6}$", val):
-                        raise ValueError(f"Invalid hex: {val}")
-                return data
-    except Exception:
-        pass
-
-    # Fallback: usa colori del preset
-    return {
-        "primary": preset_data["accent_color"],
-        "secondary": preset_data["bg_color"],
-        "accent": preset_data["accent_color"],
-        "bg": preset_data["bg_color"],
-        "text": preset_data["text_color"],
-    }
-
-
-async def _select_template_llm(
-    niche: str,
-    product_type: str,
-    research_context: dict | None,
-    anthropic_client: anthropic.AsyncAnthropic,
-) -> str:
-    """Seleziona il template più adatto alla nicchia tramite LLM (Intervento 5)."""
-    templates = AVAILABLE_TEMPLATES.get(product_type, ["weekly_planner"])
-
-    research_info = ""
-    if research_context:
-        top_keywords = research_context.get("top_keywords", [])
-        gaps = research_context.get("gaps", [])
-        research_info = f"""
-Research insights:
-- Top buyer keywords: {', '.join(top_keywords[:5])}
-- Market gaps to fill: {', '.join(gaps[:3])}
-- Avg price: {research_context.get('avg_price', 'unknown')}
-"""
-
-    prompt = f"""Select the best template for this Etsy digital product.
-
-Niche: {niche}
-Product type: {product_type}
-{research_info}
-
-Available templates:
-{chr(10).join(f'- {t}' for t in templates)}
-
-Choose the template that:
-1. Best matches what buyers in this niche actually search for
-2. Has the highest commercial potential
-3. Is coherent with the niche identity
-
-Respond with ONLY the template name, exactly as listed."""
-
-    try:
-        response = await anthropic_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=30,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        result = response.content[0].text.strip().lower().replace(" ", "_")
-        if result in templates:
-            return result
-    except Exception:
-        pass
-
-    return templates[0]
-
-
-async def _should_include_dates(
-    template: str,
-    niche: str,
-    anthropic_client: anthropic.AsyncAnthropic,
-) -> bool:
-    """Decide se il planner/tracker deve avere date specifiche o essere undated (Intervento 7)."""
-    NO_DATE_TEMPLATES = {
-        "wall_art_quote", "botanical_print", "abstract_art",
-        "watercolor_print", "minimalist_poster", "vintage_poster",
-        "icon_set", "pattern_bundle", "monogram_set",
-        "clipart_bundle", "frame_bundle",
-    }
-
-    if template in NO_DATE_TEMPLATES:
-        return False
-
-    current_month = date.today().month
-
-    prompt = f"""Should this Etsy planner be dated (specific year: 2026) or undated (no specific dates)?
-
-Template: {template}
-Niche: {niche}
-Current month: {current_month} (1=January, 12=December)
-
-Rules:
-- Undated planners sell year-round (safer for evergreen sales)
-- Dated planners are more relevant but expire after the year
-- If current month is October-December: dated for next year can work
-- If current month is January-February: dated for current year works
-- Otherwise: undated is usually safer
-
-Respond with ONLY: dated or undated"""
-
-    try:
-        response = await anthropic_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=5,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        result = response.content[0].text.strip().lower()
-        return result == "dated"
-    except Exception:
-        return False
-
-
-# =====================================================================
 # DesignAgent
 # =====================================================================
 
@@ -822,6 +596,220 @@ class DesignAgent(AgentBase):
         self._image_gen = create_image_generator()
         self._svg_gen = SVGGenerator()
         self._get_mock_mode = get_mock_mode or (lambda: False)
+
+    def _extra_init_kwargs(self) -> dict:
+        return {"storage": self.storage, "get_mock_mode": self._get_mock_mode}
+
+    # ------------------------------------------------------------------
+    # LLM helper methods (tracciati via _call_llm)
+    # ------------------------------------------------------------------
+
+    async def _select_preset(
+        self,
+        niche: str,
+        template: str,
+        research_context: dict | None,
+    ) -> str:
+        """Stage 1: Keyword scoring veloce. Stage 2: LLM per casi ambigui."""
+        text = f"{niche} {template}".lower()
+
+        scores = {preset: 0 for preset in PRESET_KEYWORDS}
+        for preset, keywords in PRESET_KEYWORDS.items():
+            for kw in keywords:
+                if kw in text:
+                    scores[preset] += 1
+
+        max_score = max(scores.values())
+        if max_score >= 2:
+            winner = max(scores, key=scores.get)  # type: ignore[arg-type]
+            return winner
+
+        research_summary = ""
+        if research_context:
+            research_summary = f"""
+Research context:
+- Target audience: {research_context.get('target_audience', 'unknown')}
+- Price range: {research_context.get('avg_price', 'unknown')}
+- Top keywords: {', '.join(research_context.get('top_keywords', [])[:5])}
+- Competition level: {research_context.get('competition_level', 'unknown')}
+"""
+
+        prompt = f"""Select the best visual style preset for this Etsy digital product.
+
+Product niche: {niche}
+Template type: {template}
+{research_summary}
+
+Available presets:
+- minimal: Clean, professional, whitespace-focused. For planners, budgets, productivity tools.
+- decorative: Elegant, ornamental, serif fonts. For weddings, botanical, vintage, luxury products.
+- corporate: Structured, business-ready. For professional templates, business tools, reports.
+- playful: Fun, colorful, casual. For kids, educational, party, creative products.
+
+Respond with ONLY one word: minimal, decorative, corporate, or playful"""
+
+        try:
+            result = (
+                await self._call_llm(
+                    messages=[{"role": "user", "content": prompt}],
+                    model_override=MODEL_HAIKU,
+                    max_tokens=10,
+                )
+            ).strip().lower()
+        except Exception:
+            result = "minimal"
+
+        if result not in STYLE_PRESETS:
+            result = "minimal"
+        return result
+
+    async def _resolve_color_scheme_niche_aware(
+        self,
+        color_scheme_name: str,
+        niche: str,
+        preset: str,
+    ) -> dict[str, str]:
+        """Genera palette colori coerente con nicchia e preset."""
+        preset_data = STYLE_PRESETS[preset]
+
+        prompt = f"""Generate a color palette for an Etsy digital product.
+Return ONLY a JSON object, no explanation.
+
+Product niche: {niche}
+Style preset: {preset} ({preset_data['description']})
+Requested color scheme: {color_scheme_name}
+
+Requirements:
+- Colors must feel cohesive and professional
+- Background should be light (for printability)
+- Text must have minimum 4.5:1 contrast ratio with background
+- Accent should complement, not clash
+- Inspired by {color_scheme_name} palette but adapted for {niche}
+
+Return exactly:
+{{"primary": "#hex", "secondary": "#hex", "accent": "#hex", "bg": "#hex", "text": "#hex"}}"""
+
+        try:
+            raw = await self._call_llm(
+                messages=[{"role": "user", "content": prompt}],
+                model_override=MODEL_HAIKU,
+                max_tokens=100,
+            )
+            match = re.search(r"\{[^}]+\}", raw)
+            if match:
+                data = json.loads(match.group())
+                required_keys = {"primary", "secondary", "accent", "bg", "text"}
+                if required_keys.issubset(data.keys()):
+                    for val in data.values():
+                        if not re.match(r"^#[0-9A-Fa-f]{6}$", val):
+                            raise ValueError(f"Invalid hex: {val}")
+                    return data
+        except Exception:
+            pass
+
+        return {
+            "primary": preset_data["accent_color"],
+            "secondary": preset_data["bg_color"],
+            "accent": preset_data["accent_color"],
+            "bg": preset_data["bg_color"],
+            "text": preset_data["text_color"],
+        }
+
+    async def _select_template_llm(
+        self,
+        niche: str,
+        product_type: str,
+        research_context: dict | None,
+    ) -> str:
+        """Seleziona il template più adatto alla nicchia tramite LLM."""
+        templates = AVAILABLE_TEMPLATES.get(product_type, ["weekly_planner"])
+
+        research_info = ""
+        if research_context:
+            top_keywords = research_context.get("top_keywords", [])
+            gaps = research_context.get("gaps", [])
+            research_info = f"""
+Research insights:
+- Top buyer keywords: {', '.join(top_keywords[:5])}
+- Market gaps to fill: {', '.join(gaps[:3])}
+- Avg price: {research_context.get('avg_price', 'unknown')}
+"""
+
+        prompt = f"""Select the best template for this Etsy digital product.
+
+Niche: {niche}
+Product type: {product_type}
+{research_info}
+
+Available templates:
+{chr(10).join(f'- {t}' for t in templates)}
+
+Choose the template that:
+1. Best matches what buyers in this niche actually search for
+2. Has the highest commercial potential
+3. Is coherent with the niche identity
+
+Respond with ONLY the template name, exactly as listed."""
+
+        try:
+            result = (
+                await self._call_llm(
+                    messages=[{"role": "user", "content": prompt}],
+                    model_override=MODEL_HAIKU,
+                    max_tokens=30,
+                )
+            ).strip().lower().replace(" ", "_")
+            if result in templates:
+                return result
+        except Exception:
+            pass
+
+        return templates[0]
+
+    async def _should_include_dates(
+        self,
+        template: str,
+        niche: str,
+    ) -> bool:
+        """Decide se il planner deve avere date specifiche o essere undated."""
+        NO_DATE_TEMPLATES = {
+            "wall_art_quote", "botanical_print", "abstract_art",
+            "watercolor_print", "minimalist_poster", "vintage_poster",
+            "icon_set", "pattern_bundle", "monogram_set",
+            "clipart_bundle", "frame_bundle",
+        }
+
+        if template in NO_DATE_TEMPLATES:
+            return False
+
+        current_month = date.today().month
+
+        prompt = f"""Should this Etsy planner be dated (specific year: 2026) or undated (no specific dates)?
+
+Template: {template}
+Niche: {niche}
+Current month: {current_month} (1=January, 12=December)
+
+Rules:
+- Undated planners sell year-round (safer for evergreen sales)
+- Dated planners are more relevant but expire after the year
+- If current month is October-December: dated for next year can work
+- If current month is January-February: dated for current year works
+- Otherwise: undated is usually safer
+
+Respond with ONLY: dated or undated"""
+
+        try:
+            result = (
+                await self._call_llm(
+                    messages=[{"role": "user", "content": prompt}],
+                    model_override=MODEL_HAIKU,
+                    max_tokens=5,
+                )
+            ).strip().lower()
+            return result == "dated"
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # Input validation (Intervento 19)
@@ -978,15 +966,15 @@ class DesignAgent(AgentBase):
         failure_patterns = await self._lookup_failure_patterns(niche, product_type)
 
         # --- 5. Seleziona template via LLM (Intervento 5) ---
-        template = normalized_input.get("template") or await _select_template_llm(
-            niche, product_type, research_context, self.client,
+        template = normalized_input.get("template") or await self._select_template_llm(
+            niche, product_type, research_context,
         )
 
         # --- 6. Seleziona preset 2-stage (Intervento 3) ---
-        preset = await _select_preset(niche, template, research_context, self.client)
+        preset = await self._select_preset(niche, template, research_context)
 
         # --- 7. Decide dated/undated (Intervento 7) ---
-        include_dates = await _should_include_dates(template, niche, self.client)
+        include_dates = await self._should_include_dates(template, niche)
 
         # --- 8. Cover title con keyword primaria (Intervento 6) ---
         cover_title = _get_cover_title(niche, template, research_context)
@@ -1022,8 +1010,8 @@ class DesignAgent(AgentBase):
         async def generate_single_variant(idx: int, color_scheme: str) -> dict | None:
             async with semaphore:
                 # Colori niche-aware (Intervento 4)
-                colors = await _resolve_color_scheme_niche_aware(
-                    color_scheme, niche, preset, self.client,
+                colors = await self._resolve_color_scheme_niche_aware(
+                    color_scheme, niche, preset,
                 )
 
                 variant_dir = output_dir / f"variant_{idx}"

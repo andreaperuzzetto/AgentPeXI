@@ -40,6 +40,12 @@ class AnalyticsAgent(AgentBase):
         self.etsy_api = etsy_api
         self._telegram_broadcast = telegram_broadcaster
 
+    def _extra_init_kwargs(self) -> dict:
+        return {
+            "etsy_api": self.etsy_api,
+            "telegram_broadcaster": self._telegram_broadcast,
+        }
+
     # ------------------------------------------------------------------
     # run()
     # ------------------------------------------------------------------
