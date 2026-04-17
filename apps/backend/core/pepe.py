@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Callable, Coroutine
 
 import anthropic
+import openai
 
 from apps.backend.core.config import MODEL_SONNET, MODEL_HAIKU, settings
 from apps.backend.core.domains import DomainContext, DOMAIN_ETSY, DOMAIN_PERSONAL
@@ -62,6 +63,24 @@ DELEGATION_TOOL = {
             },
         },
         "required": ["delegate", "input"],
+    },
+}
+
+# OpenAI-compatible version of the same tool (Ollama /v1 endpoint)
+DELEGATION_TOOL_OAI = {
+    "type": "function",
+    "function": {
+        "name": "delegate_to_agent",
+        "description": DELEGATION_TOOL["description"],
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "delegate": DELEGATION_TOOL["input_schema"]["properties"]["delegate"],
+                "input":    DELEGATION_TOOL["input_schema"]["properties"]["input"],
+                "task_type": DELEGATION_TOOL["input_schema"]["properties"]["task_type"],
+            },
+            "required": ["delegate", "input"],
+        },
     },
 }
 
@@ -162,14 +181,20 @@ class Pepe:
         self,
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
-        active_domain: DomainContext = DOMAIN_ETSY,
+        active_domain: DomainContext = DOMAIN_PERSONAL,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
         self.domain = active_domain
 
-        # Anthropic client
+        # Anthropic client (Etsy domain — Sonnet)
         self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+        # Ollama client (Personal domain — local, zero cost)
+        self._local_client = openai.AsyncOpenAI(
+            base_url=settings.OLLAMA_BASE_URL,
+            api_key="ollama",  # placeholder — Ollama non richiede auth
+        )
 
         # Agent registry: {name: AgentBase instance}
         self._agents: dict[str, AgentBase] = {}
@@ -307,6 +332,107 @@ class Pepe:
     # Entry point — messaggio utente
     # ------------------------------------------------------------------
 
+    async def _llm_simple_call(
+        self,
+        system: str,
+        user_content: str,
+        max_tokens: int = 512,
+        use_haiku: bool = False,
+    ) -> str:
+        """Chiamata LLM single-turn senza tools, routed per dominio.
+
+        Personal → Ollama locale.
+        Etsy     → Anthropic (Haiku se use_haiku=True, Sonnet altrimenti).
+        """
+        if self.domain is DOMAIN_PERSONAL:
+            try:
+                resp = await self._local_client.chat.completions.create(
+                    model=settings.OLLAMA_MODEL,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": user_content},
+                    ],
+                    max_tokens=max_tokens,
+                )
+                return resp.choices[0].message.content or ""
+            except Exception as exc:
+                logger.error("Ollama _llm_simple_call fallito: %s", exc)
+                return ""
+        else:
+            model = MODEL_HAIKU if use_haiku else MODEL_SONNET
+            try:
+                resp = await self.client.messages.create(
+                    model=model,
+                    system=system,
+                    messages=[{"role": "user", "content": user_content}],
+                    max_tokens=max_tokens,
+                )
+                return resp.content[0].text if resp.content else ""
+            except Exception:
+                return ""
+
+    async def _llm_decide(
+        self,
+        history: list[dict],
+        system: str,
+    ) -> tuple[dict | None, str]:
+        """Chiama il LLM corretto in base al dominio attivo.
+
+        Returns:
+            (delegation, reply_text) — delegation è None se risposta diretta.
+        """
+        if self.domain is DOMAIN_PERSONAL:
+            # ── Ollama locale — zero costo, privacy totale ──
+            oai_messages = [{"role": "system", "content": system}] + history
+            try:
+                oai_resp = await self._local_client.chat.completions.create(
+                    model=settings.OLLAMA_MODEL,
+                    messages=oai_messages,
+                    tools=[DELEGATION_TOOL_OAI],
+                    tool_choice="auto",
+                )
+            except Exception as exc:
+                logger.error("Ollama _llm_decide fallito: %s — fallback Sonnet", exc)
+                # Fallback su Sonnet se Ollama non è raggiungibile
+                return await self._llm_decide_anthropic(history, system)
+
+            msg = oai_resp.choices[0].message
+            delegation: dict | None = None
+            if msg.tool_calls:
+                tc = msg.tool_calls[0]
+                try:
+                    delegation = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    pass
+            reply_text = msg.content or ""
+            return delegation, reply_text
+
+        else:
+            # ── Anthropic Sonnet — Etsy domain ──
+            return await self._llm_decide_anthropic(history, system)
+
+    async def _llm_decide_anthropic(
+        self,
+        history: list[dict],
+        system: str,
+    ) -> tuple[dict | None, str]:
+        """Chiamata Anthropic Sonnet con DELEGATION_TOOL."""
+        response = await self.client.messages.create(
+            model=MODEL_SONNET,
+            system=system,
+            messages=history,
+            max_tokens=2048,
+            tools=[DELEGATION_TOOL],
+        )
+        delegation: dict | None = None
+        reply_text = ""
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "delegate_to_agent":
+                delegation = block.input
+            elif hasattr(block, "text"):
+                reply_text += block.text
+        return delegation, reply_text
+
     async def handle_user_message(
         self, message: str, source: str = "web", session_id: str = "default"
     ) -> str:
@@ -377,38 +503,30 @@ class Pepe:
             recent_analytics=analytics_summary,
         )
 
-        # Prima chiamata LLM — decide se delegare (tool_use) o rispondere in testo
-        response = await self.client.messages.create(
-            model=MODEL_SONNET,
-            system=system,
-            messages=history,
-            max_tokens=2048,
-            tools=[DELEGATION_TOOL],
-        )
-
-        # Estrai delega (tool_use) e/o testo dalla risposta
-        delegation = None
-        reply_text = ""
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "delegate_to_agent":
-                delegation = block.input  # già dict strutturato
-            elif hasattr(block, "text"):
-                reply_text += block.text
+        # Prima chiamata LLM — decide se delegare o rispondere in testo.
+        # Dominio Personal → Ollama locale (zero costo).
+        # Dominio Etsy → Anthropic Sonnet.
+        delegation, reply_text = await self._llm_decide(history, system)
 
         if delegation:
             agent_name = delegation["delegate"]
 
-            # AGGIUNTA 2 — Clarification loop
-            # Se l'agente è research, verifica contesto sufficiente prima di procedere
-            if agent_name == "research":
+            # Clarification loop — agenti che richiedono contesto minimo prima di procedere
+            # Etsy:    solo "research" (niche + product_type)
+            # Personal: "remind" (when) + "summarize" (content)
+            _needs_clarify = (
+                (self.domain is DOMAIN_PERSONAL and agent_name in {"remind", "summarize"})
+                or (self.domain is not DOMAIN_PERSONAL and agent_name == "research")
+            )
+            if _needs_clarify:
                 clarification = await self._clarify_if_needed(
                     message, delegation, history, system, session_id, source
                 )
                 if clarification is not None:
-                    # Pepe ha fatto una domanda — aspetta il prossimo turno
                     return clarification
 
-                # Verifica duplicati in pipeline
+            # Verifica duplicati in pipeline (solo Etsy)
+            if self.domain is not DOMAIN_PERSONAL and agent_name == "research":
                 duplicate_warning = await self._check_pipeline_duplicate(delegation)
                 if duplicate_warning:
                     await self.memory.save_message(session_id, "assistant", duplicate_warning, source)
@@ -603,8 +721,7 @@ class Pepe:
     def set_active_domain(self, domain: DomainContext) -> None:
         """Cambia dominio attivo a runtime. Sticky fino al riavvio o al prossimo switch.
 
-        Al riavvio server il default torna sempre DOMAIN_ETSY (by design — nessuna
-        persistenza del dominio per sicurezza).
+        Al riavvio server il default torna sempre DOMAIN_PERSONAL (by design).
         """
         prev = self.domain.name
         self.domain = domain
@@ -870,32 +987,22 @@ class Pepe:
             " Il sistema procede automaticamente — non chiedere conferma, non fare domande."
         ) if autonomous else ""
 
-        try:
-            response = await self.client.messages.create(
-                model=MODEL_SONNET,
-                max_tokens=500,
-                system=(
-                    "Sei Pepe, sistema di automazione Etsy. "
-                    "Rispondi SEMPRE nel formato compatto indicato. "
-                    "Max 10 righe. Niente prose. Niente elenchi numerati. "
-                    "Niente emoji decorative. Niente titoli in grassetto. "
-                    "Solo dati e fatti.\n"
-                    f"{synthesis_instruction}{auto_note}"
-                ),
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Agente '{agent_name}' completato — status: {result.status.value}\n"
-                            f"Confidence: {result.output_data.get('confidence', 'N/A') if isinstance(result.output_data, dict) else 'N/A'}\n\n"
-                            f"Output:\n{output_str}"
-                        ),
-                    }
-                ],
-            )
-            return response.content[0].text if response.content else "Task completato."
-        except Exception:
-            return f"Agente {agent_name} completato. Controlla la dashboard per i dettagli."
+        domain_label = "assistente personale di Andrea" if self.domain is DOMAIN_PERSONAL else "sistema di automazione Etsy"
+        synth_system = (
+            f"Sei Pepe, {domain_label}. "
+            "Rispondi SEMPRE nel formato compatto indicato. "
+            "Max 10 righe. Niente prose. Niente elenchi numerati. "
+            "Niente emoji decorative. Niente titoli in grassetto. "
+            "Solo dati e fatti.\n"
+            f"{synthesis_instruction}{auto_note}"
+        )
+        user_content = (
+            f"Agente '{agent_name}' completato — status: {result.status.value}\n"
+            f"Confidence: {result.output_data.get('confidence', 'N/A') if isinstance(result.output_data, dict) else 'N/A'}\n\n"
+            f"Output:\n{output_str}"
+        )
+        text = await self._llm_simple_call(synth_system, user_content, max_tokens=500)
+        return text or f"Agente {agent_name} completato. Controlla la dashboard per i dettagli."
 
     async def _broadcast(self, event: dict) -> None:
         """Invia evento WebSocket se broadcaster disponibile."""
@@ -990,61 +1097,82 @@ class Pepe:
         session_id: str,
         source: str,
     ) -> str | None:
-        """Verifica se il contesto è sufficiente per una ricerca accurata.
+        """Verifica se il contesto è sufficiente prima di eseguire l'agente.
 
-        Se manca qualcosa, genera UNA domanda specifica e la ritorna.
-        Ritorna None se il contesto è sufficiente → si può procedere.
+        Ritorna una domanda di chiarimento (str) se manca qualcosa,
+        None se il contesto è sufficiente e si può procedere.
+
+        Routing LLM: Ollama in Personal, Haiku in Etsy.
         """
-        agent_input = delegation.get("input", {})
+        agent_input  = delegation.get("input", {})
+        agent_name   = delegation.get("delegate", "")
+        missing: list[str] = []
 
-        # Criteri di sufficienza per Research Agent
-        has_niche = bool(
-            agent_input.get("niches")
-            or agent_input.get("query")
-            or any(
-                word in user_message.lower()
-                for word in ["nicchia", "niche", "planner", "tracker", "art", "bundle"]
+        if self.domain is DOMAIN_PERSONAL:
+            # ── Personal: check per remind e summarize ──
+            if agent_name == "remind":
+                # "when" obbligatorio — senza non si può schedulare
+                has_when = bool(
+                    agent_input.get("when")
+                    or any(
+                        w in user_message.lower()
+                        for w in ["domani", "stasera", "stanotte", "tra", "alle", "lunedì",
+                                  "martedì", "mercoledì", "giovedì", "venerdì", "sabato",
+                                  "domenica", "oggi", "settimana", "mese", "ora", "minuti"]
+                    )
+                )
+                if not has_when:
+                    missing.append("quando vuoi essere ricordato")
+
+            elif agent_name == "summarize":
+                # "content" obbligatorio — URL o testo da sintetizzare
+                has_content = bool(
+                    agent_input.get("content")
+                    or agent_input.get("url")
+                    or "http" in user_message.lower()
+                )
+                if not has_content:
+                    missing.append("cosa vuoi che sintetizzi (URL o testo)")
+
+        else:
+            # ── Etsy: check per research (niche + product_type) ──
+            has_niche = bool(
+                agent_input.get("niches")
+                or agent_input.get("query")
+                or any(
+                    w in user_message.lower()
+                    for w in ["nicchia", "niche", "planner", "tracker", "art", "bundle"]
+                )
             )
-        )
-        has_product_type = bool(agent_input.get("product_type"))
-
-        missing = []
-        if not has_niche:
-            missing.append("nicchia")
-        if not has_product_type:
-            missing.append("product_type")
+            has_product_type = bool(agent_input.get("product_type"))
+            if not has_niche:
+                missing.append("nicchia")
+            if not has_product_type:
+                missing.append("product_type")
 
         if not missing:
             return None  # Contesto sufficiente, procedi
 
-        # Genera domanda specifica tramite LLM, usando pool domande dal dominio
+        # ── Genera UNA domanda tramite LLM (domain-routed) ──
         questions_pool = self.domain.clarification_questions
         questions_hint = "\n".join(f"- {q}" for q in questions_pool) if questions_pool else ""
 
-        clarification_prompt = await self.client.messages.create(
-            model=MODEL_HAIKU,
-            system=(
-                f"Sei Pepe, assistente di Andrea per il dominio {self.domain.name}. "
-                "Devi fare UNA domanda specifica per ottenere le informazioni mancanti. "
-                "La domanda deve essere diretta, concisa, e aiutare a capire esattamente "
-                "cosa vuole. Rispondi solo con la domanda, niente altro."
-            ),
-            messages=[
-                *history,
-                {
-                    "role": "user",
-                    "content": (
-                        f"L'utente ha scritto: '{user_message}'\n"
-                        f"Per fare una ricerca accurata mancano: {', '.join(missing)}.\n"
-                        f"Genera UNA domanda specifica per ottenere queste informazioni.\n"
-                        f"Domande di riferimento:\n{questions_hint}"
-                    ),
-                },
-            ],
-            max_tokens=150,
+        clarify_system = (
+            f"Sei Pepe, assistente di Andrea per il dominio {self.domain.name}. "
+            "Devi fare UNA domanda specifica per ottenere le informazioni mancanti. "
+            "La domanda deve essere diretta, concisa, in italiano. "
+            "Rispondi solo con la domanda, niente altro."
+        )
+        clarify_user = (
+            f"L'utente ha detto: '{user_message}'\n"
+            f"Manca: {', '.join(missing)}.\n"
+            f"Genera UNA domanda breve per ottenerlo.\n"
+            f"Esempi utili:\n{questions_hint}"
         )
 
-        question = clarification_prompt.content[0].text if clarification_prompt.content else ""
+        question = await self._llm_simple_call(
+            clarify_system, clarify_user, max_tokens=150, use_haiku=True
+        )
         if not question:
             return None  # Fallback: procedi senza chiarimento
 
@@ -1457,24 +1585,16 @@ class Pepe:
         )
         context_str = json.dumps(context_data, ensure_ascii=False, default=str) if context_data else "{}"
         missing_str = ", ".join(missing_data) if missing_data else "nessuno"
-        try:
-            response = await self.client.messages.create(
-                model=MODEL_HAIKU,
-                system=error_system,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"Agente: {agent_name}\n"
-                        f"Errore: {error_message}\n"
-                        f"Contesto: {context_str}\n"
-                        f"Missing data: {missing_str}"
-                    ),
-                }],
-                max_tokens=512,
-            )
-            return response.content[0].text if response.content else f"L'agente {agent_name} ha fallito: {error_message}"
-        except Exception:
-            return f"L'agente {agent_name} ha fallito: {error_message}"
+        user_content = (
+            f"Agente: {agent_name}\n"
+            f"Errore: {error_message}\n"
+            f"Contesto: {context_str}\n"
+            f"Missing data: {missing_str}"
+        )
+        text = await self._llm_simple_call(
+            error_system, user_content, max_tokens=512, use_haiku=True
+        )
+        return text or f"L'agente {agent_name} ha fallito: {error_message}"
 
     # ------------------------------------------------------------------
     # Pipeline automation (Intervento 8)

@@ -93,6 +93,12 @@ function handleMessage(raw: MessageEvent) {
       })
       break
 
+    case 'domain_switched':
+      if (data.domain === 'etsy' || data.domain === 'personal') {
+        store.setActiveDomain(data.domain)
+      }
+      break
+
     default:
       break
   }

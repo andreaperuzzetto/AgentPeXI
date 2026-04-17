@@ -31,15 +31,18 @@ const TOOL_FEED_MAX = 200
 
 const AGENTS_INIT: Record<string, AgentState> = {
   // --- Etsy Store ---
-  research:         { status: 'idle', lastTask: '' },
-  design:           { status: 'idle', lastTask: '' },
-  publisher:        { status: 'idle', lastTask: '' },
-  analytics:        { status: 'idle', lastTask: '' },
-  customer_service: { status: 'idle', lastTask: '' },
-  finance:          { status: 'idle', lastTask: '' },
+  research:          { status: 'idle', lastTask: '' },
+  design:            { status: 'idle', lastTask: '' },
+  publisher:         { status: 'idle', lastTask: '' },
+  analytics:         { status: 'idle', lastTask: '' },
+  customer_service:  { status: 'idle', lastTask: '' },
+  finance:           { status: 'idle', lastTask: '' },
   // --- Personal ---
-  recall:           { status: 'idle', lastTask: '' },
-  watcher:          { status: 'idle', lastTask: '' },
+  recall:            { status: 'idle', lastTask: '' },
+  watcher:           { status: 'idle', lastTask: '' },
+  remind:            { status: 'idle', lastTask: '' },
+  summarize:         { status: 'idle', lastTask: '' },
+  research_personal: { status: 'idle', lastTask: '' },
 }
 
 interface AgentPeXIStore {
@@ -99,6 +102,10 @@ interface AgentPeXIStore {
   /* Selected Task for detail overlay */
   selectedTaskId: string | null
   setSelectedTaskId: (id: string | null) => void
+
+  /* Active domain */
+  activeDomain: 'etsy' | 'personal'
+  setActiveDomain: (domain: 'etsy' | 'personal') => void
 }
 
 export const useStore = create<AgentPeXIStore>((set) => ({
@@ -184,4 +191,7 @@ export const useStore = create<AgentPeXIStore>((set) => ({
 
   selectedTaskId: null,
   setSelectedTaskId: (id) => set({ selectedTaskId: id }),
+
+  activeDomain: 'personal',
+  setActiveDomain: (domain) => set({ activeDomain: domain }),
 }))

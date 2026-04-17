@@ -4,6 +4,18 @@ export function Header() {
   const wsConnected = useStore((s) => s.wsConnected)
   const { queueSize, activeTasks, uptime, dailyCost } = useStore((s) => s.systemStatus)
   const mockMode = useStore((s) => s.systemStatus?.mock_mode)
+  const activeDomain = useStore((s) => s.activeDomain)
+  const setActiveDomain = useStore((s) => s.setActiveDomain)
+
+  function handleDomainSwitch(domain: 'etsy' | 'personal') {
+    if (domain === activeDomain) return
+    setActiveDomain(domain)
+    fetch('/api/domain', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain }),
+    }).catch(() => {})
+  }
 
   return (
     <header
@@ -70,6 +82,42 @@ export function Header() {
       <MetricChip label="Attivi"     value={String(activeTasks)} accent={activeTasks > 0} />
       <MetricChip label="Uptime"     value={uptime} />
       <MetricChip label="Costo oggi" value={`$${dailyCost.toFixed(3)}`} />
+
+      {/* Domain toggle */}
+      <span style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        background: 'var(--s3)',
+        border: '1px solid var(--b0)',
+        borderRadius: 99,
+        padding: 2,
+        gap: 2,
+        marginLeft: 8,
+      }}>
+        {(['personal', 'etsy'] as const).map((d) => (
+          <button
+            key={d}
+            onClick={() => handleDomainSwitch(d)}
+            style={{
+              height: 24,
+              padding: '0 12px',
+              borderRadius: 99,
+              border: 'none',
+              cursor: activeDomain === d ? 'default' : 'pointer',
+              fontFamily: 'var(--fd)',
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase' as const,
+              transition: 'background .25s var(--e-io), color .25s var(--e-io)',
+              background: activeDomain === d ? 'var(--accent)' : 'transparent',
+              color: activeDomain === d ? 'var(--base)' : 'var(--tf)',
+            }}
+          >
+            {d === 'personal' ? 'PSN' : 'ETY'}
+          </button>
+        ))}
+      </span>
     </header>
   )
 }

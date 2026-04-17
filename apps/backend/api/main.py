@@ -13,8 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRouter
 from fastapi.staticfiles import StaticFiles
 
 from apps.backend.core.config import settings
@@ -323,6 +324,30 @@ app = FastAPI(title="AgentPeXI", version="0.1.0", lifespan=lifespan)
 
 
 # ------------------------------------------------------------------
+# Sicurezza — endpoint /api/personal/* e /api/screen/*
+# ------------------------------------------------------------------
+
+
+async def verify_personal_key(request: Request) -> None:
+    """Verifica header X-Personal-Key per endpoint personal e screen.
+
+    Se PERSONAL_API_KEY non è configurata in .env la chiave non viene
+    controllata (fail-open intenzionale — la feature è opt-in).
+    Il bot Telegram non fa chiamate HTTP → nessun impatto sul dominio personal.
+    """
+    api_key = settings.PERSONAL_API_KEY
+    if not api_key:
+        return  # non configurata → accesso libero
+    key = request.headers.get("X-Personal-Key", "")
+    if key != api_key:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+
+# Router per tutti gli endpoint che richiedono X-Personal-Key
+personal_router = APIRouter(dependencies=[Depends(verify_personal_key)])
+
+
+# ------------------------------------------------------------------
 # REST endpoints
 # ------------------------------------------------------------------
 
@@ -456,7 +481,7 @@ async def get_analytics_summary_endpoint(days: int = 14) -> dict:
     return {"summary": summary}
 
 
-@app.get("/api/screen/status")
+@personal_router.get("/api/screen/status")
 async def get_screen_status() -> dict:
     """Stato corrente del ScreenWatcher — usato per idratazione al WS connect."""
     if screen_watcher is None:
@@ -473,6 +498,196 @@ async def get_screen_status() -> dict:
         "available": True,
         **st,
     }
+
+
+# ------------------------------------------------------------------
+# Personal endpoints (protetti da personal_router)
+# ------------------------------------------------------------------
+
+
+@personal_router.get("/api/personal/reminders")
+async def get_personal_reminders(limit: int = 10) -> dict:
+    """Prossimi reminder pending ordinati per trigger_at."""
+    if not memory:
+        return {"reminders": []}
+    reminders = await memory.get_pending_reminders()
+    return {"reminders": reminders[:limit]}
+
+
+@personal_router.get("/api/personal/recalls")
+async def get_personal_recalls(limit: int = 10) -> dict:
+    """Ultimi N recall completati: query + risposta troncata + timestamp."""
+    if not memory:
+        return {"recalls": []}
+    cursor = await memory._db.execute(
+        """SELECT task_id, input_data, output_data, created_at, status
+           FROM agent_logs
+           WHERE agent_name = 'recall' AND domain = 'personal'
+           ORDER BY created_at DESC LIMIT ?""",
+        (limit,),
+    )
+    rows = await cursor.fetchall()
+    recalls = []
+    for r in rows:
+        try:
+            inp = json.loads(r["input_data"] or "{}")
+            out = json.loads(r["output_data"] or "{}")
+        except Exception:
+            inp, out = {}, {}
+        response_raw = out.get("response") or out.get("answer") or ""
+        recalls.append({
+            "task_id": r["task_id"],
+            "query": inp.get("query", ""),
+            "response": response_raw[:200] + ("…" if len(response_raw) > 200 else ""),
+            "status": r["status"],
+            "timestamp": r["created_at"],
+        })
+    return {"recalls": recalls}
+
+
+@personal_router.get("/api/personal/mcp/status")
+async def get_mcp_status() -> dict:
+    """Stato connessioni MCP: Notion, Gmail, Calendar.
+    Notion: ping leggero all'API se token configurato.
+    Gmail/Calendar: verifica presenza token OAuth (agenti non ancora implementati).
+    """
+    import aiohttp
+
+    result: dict[str, str] = {}
+
+    # Notion
+    notion_token = getattr(settings, "NOTION_API_TOKEN", "")
+    if not notion_token:
+        result["notion"] = "not_configured"
+    else:
+        try:
+            timeout = aiohttp.ClientTimeout(total=4)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    "https://api.notion.com/v1/users/me",
+                    headers={
+                        "Authorization": f"Bearer {notion_token}",
+                        "Notion-Version": "2022-06-28",
+                    },
+                ) as resp:
+                    result["notion"] = "ok" if resp.status == 200 else f"error_{resp.status}"
+        except Exception:
+            result["notion"] = "error"
+
+    # Gmail / Calendar — stesso OAuth; verifica presenza token
+    google_token = getattr(settings, "GOOGLE_REFRESH_TOKEN", "")
+    if not google_token:
+        result["gmail"] = "not_configured"
+        result["calendar"] = "not_configured"
+    else:
+        # Token presente — agenti non ancora implementati, stato "configured"
+        result["gmail"] = "configured"
+        result["calendar"] = "configured"
+
+    return result
+
+
+@personal_router.get("/api/personal/stats")
+async def get_personal_stats(days: int = 14) -> dict:
+    """Aggregati agenti Personal: task completati/falliti per agente, ultimi N giorni."""
+    if not memory:
+        return {"stats": {}}
+    since = f"-{days} days"
+    cursor = await memory._db.execute(
+        """SELECT agent_name, status, COUNT(*) as cnt
+           FROM agent_logs
+           WHERE domain = 'personal' AND created_at >= datetime('now', ?)
+           GROUP BY agent_name, status
+           ORDER BY agent_name, status""",
+        (since,),
+    )
+    rows = await cursor.fetchall()
+    stats: dict[str, dict] = {}
+    for r in rows:
+        name = r["agent_name"]
+        if name not in stats:
+            stats[name] = {"completed": 0, "failed": 0, "running": 0}
+        key = r["status"] if r["status"] in stats[name] else "running"
+        stats[name][key] = r["cnt"]
+    return {"stats": stats, "days": days}
+
+
+@personal_router.get("/api/ollama/status")
+async def get_ollama_status() -> dict:
+    """Stato Ollama: modello caricato, latenza ultima chiamata, keep_alive."""
+    import time
+    import aiohttp
+    from urllib.parse import urlparse
+
+    parsed = urlparse(settings.OLLAMA_BASE_URL)
+    ollama_base = f"{parsed.scheme}://{parsed.netloc}"  # es. http://localhost:11434
+
+    result = {
+        "model": settings.OLLAMA_MODEL,
+        "loaded": False,
+        "latency_ms": None,
+        "keep_alive": getattr(settings, "OLLAMA_KEEP_ALIVE", "-1"),
+    }
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=4)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            t0 = time.monotonic()
+            async with session.get(f"{ollama_base}/api/ps") as resp:
+                latency = int((time.monotonic() - t0) * 1000)
+                result["latency_ms"] = latency
+                if resp.status == 200:
+                    data = await resp.json()
+                    running = [m.get("name", "") for m in data.get("models", [])]
+                    result["loaded"] = any(
+                        settings.OLLAMA_MODEL in m for m in running
+                    )
+    except Exception:
+        pass
+
+    return result
+
+
+@personal_router.post("/api/personal/ask")
+async def personal_ask(body: dict) -> dict:
+    """Endpoint voce: riceve testo trascritto, risponde via Pepe in dominio Personal.
+    Usato dal PepeOrb nel frontend — nessuna pipeline, risposta diretta.
+    """
+    if not pepe:
+        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
+    text = (body or {}).get("text", "").strip()
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "Campo 'text' mancante o vuoto"})
+    from apps.backend.core.domains import DOMAIN_PERSONAL
+    pepe.set_active_domain(DOMAIN_PERSONAL)
+    response = await pepe.handle_user_message(
+        text,
+        source="dashboard_voice",
+        session_id="dashboard",
+    )
+    return {"response": response}
+
+
+# ------------------------------------------------------------------
+# Domain switch endpoint (non protetto — controllo UI locale)
+# ------------------------------------------------------------------
+
+
+@app.post("/api/domain")
+async def switch_domain(body: dict) -> dict:
+    """Cambia dominio attivo. Body: {domain: 'etsy'|'personal'}."""
+    if not pepe:
+        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
+    from apps.backend.core.domains import DOMAIN_ETSY, DOMAIN_PERSONAL
+    domain_name = (body or {}).get("domain", "")
+    if domain_name == "personal":
+        pepe.set_active_domain(DOMAIN_PERSONAL)
+    elif domain_name == "etsy":
+        pepe.set_active_domain(DOMAIN_ETSY)
+    else:
+        return JSONResponse(status_code=400, content={"error": f"Dominio sconosciuto: {domain_name}"})
+    await ws_manager.broadcast({"type": "domain_switched", "domain": domain_name})
+    return {"domain": domain_name}
 
 
 @app.get("/api/memory/stats")
@@ -601,6 +816,8 @@ async def ws_chat(ws: WebSocket) -> None:
     except Exception:
         ws_manager.disconnect(ws)
 
+
+app.include_router(personal_router)
 
 # ------------------------------------------------------------------
 # Static files (frontend build) — montati per ultimi

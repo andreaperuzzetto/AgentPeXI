@@ -1,7 +1,7 @@
 import { useStore } from '../../store'
 
 const ETSY_AGENTS    = ['research', 'design', 'publisher', 'analytics']
-const PERSONAL_AGENTS = ['recall', 'watcher']
+const PERSONAL_AGENTS = ['recall', 'remind', 'summarize', 'research_personal', 'watcher']
 
 // Componente interno riusabile per una singola service card
 function ServiceCard({
@@ -134,7 +134,7 @@ export function DomainCard() {
         label="Agenti e servizi personal"
         abbr="PSN"
         title="Personale"
-        subtitle="1 agente · 1 servizio · Ollama locale"
+        subtitle={`${PERSONAL_AGENTS.length} agenti · Ollama locale · €0`}
         badge="LOCALE"
         agentList={PERSONAL_AGENTS}
       />

@@ -17,7 +17,7 @@ const SECTION_CONFIG: Record<string, {
   personal: {
     title:  'Personale',
     badge:  'LOCALE · OLLAMA',
-    agents: ['recall', 'watcher'],
+    agents: ['recall', 'remind', 'summarize', 'research_personal', 'watcher'],
   },
 }
 

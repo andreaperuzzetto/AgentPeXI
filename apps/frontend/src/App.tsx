@@ -10,8 +10,14 @@ import { AnalyticsOverlay } from './components/AnalyticsOverlay/AnalyticsOverlay
 import { SystemOverlay } from './components/SystemOverlay/SystemOverlay'
 import { TaskDetailOverlay } from './components/TaskDetail/TaskDetailOverlay'
 import { ToolFeed } from './components/ToolFeed/ToolFeed'
+import { PepeOrb } from './components/PepeOrb/PepeOrb'
+import { PersonalPanel } from './components/PersonalPanel/PersonalPanel'
 import { useWebSocket } from './hooks/useWebSocket'
+import { useResizableColumn } from './hooks/useResizableColumn'
 import { useStore } from './store'
+
+const RIGHT_WIDTH_ETSY     = 340
+const RIGHT_WIDTH_PERSONAL = 480
 
 export default function App() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
@@ -20,7 +26,16 @@ export default function App() {
   const addAgentStep = useStore((s) => s.addAgentStep)
   const setAnalyticsSummary = useStore((s) => s.setAnalyticsSummary)
   const setChromaStats = useStore((s) => s.setChromaStats)
+  const activeDomain = useStore((s) => s.activeDomain)
   useWebSocket()
+
+  const { width: rightWidth, transitioning, onHandleMouseDown, snapTo } =
+    useResizableColumn(RIGHT_WIDTH_PERSONAL)
+
+  // Snap animato alla larghezza suggerita ad ogni cambio dominio
+  useEffect(() => {
+    snapTo(activeDomain === 'personal' ? RIGHT_WIDTH_PERSONAL : RIGHT_WIDTH_ETSY)
+  }, [activeDomain, snapTo])
 
   /* ── Hydrate agent steps on mount (eager, before WS connects — fixes ReasoningPanel after refresh) ── */
   useEffect(() => {
@@ -95,7 +110,7 @@ export default function App() {
         {/* ── Center column ── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
-          {/* Pepe — top 50% */}
+          {/* Pepe — top 50%: Orb in Personal, ReasoningPanel in Etsy */}
           <div style={{
             flex: '0 0 50%',
             display: 'flex',
@@ -103,7 +118,7 @@ export default function App() {
             overflow: 'hidden',
             borderBottom: '2px solid var(--b1)',
           }}>
-            <ReasoningPanel />
+            {activeDomain === 'personal' ? <PepeOrb /> : <ReasoningPanel />}
           </div>
 
           {/* Sistemi — bottom 50% */}
@@ -149,43 +164,66 @@ export default function App() {
           </div>
         </div>
 
+        {/* ── Resize handle ── */}
+        <div
+          onMouseDown={onHandleMouseDown}
+          style={{
+            width: 4,
+            flexShrink: 0,
+            cursor: 'col-resize',
+            background: 'var(--b0)',
+            transition: 'background .2s var(--e-io)',
+            zIndex: 10,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(45,232,106,0.35)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--b0)')}
+        />
+
         {/* ── Right column ── */}
         <div
           style={{
-            width: 340,
+            width: rightWidth,
             flexShrink: 0,
-            borderLeft: '1px solid var(--b0)',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
+            transition: transitioning ? 'width 0.4s var(--e-out)' : 'none',
           }}
         >
-          {/* Listing — flex:3 */}
-          <div style={{ flex: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <ListingsPanel />
-          </div>
+          {activeDomain === 'personal' ? (
+            /* ── Personal right column ── */
+            <PersonalPanel />
+          ) : (
+            /* ── Etsy right column ── */
+            <>
+              {/* Listing — flex:3 */}
+              <div style={{ flex: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <ListingsPanel />
+              </div>
 
-          {/* Bottom-right — altezza naturale, listing si adatta */}
-          <div style={{
-            flexShrink: 0,
-            borderTop: '1px solid var(--b0)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}>
-            {/* Scheduler */}
-            <div style={{ flexShrink: 0, borderBottom: '1px solid var(--b0)' }}>
-              <SchedulerPanel />
-            </div>
-            {/* Costo */}
-            <div style={{ flexShrink: 0, borderBottom: '1px solid var(--b0)' }}>
-              <CostPanel />
-            </div>
-            {/* Analytics mini */}
-            <div style={{ flexShrink: 0 }}>
-              <AnalyticsMiniPanel onOpen={() => setAnalyticsOpen(true)} />
-            </div>
-          </div>
+              {/* Bottom-right — altezza naturale, listing si adatta */}
+              <div style={{
+                flexShrink: 0,
+                borderTop: '1px solid var(--b0)',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}>
+                {/* Scheduler */}
+                <div style={{ flexShrink: 0, borderBottom: '1px solid var(--b0)' }}>
+                  <SchedulerPanel />
+                </div>
+                {/* Costo */}
+                <div style={{ flexShrink: 0, borderBottom: '1px solid var(--b0)' }}>
+                  <CostPanel />
+                </div>
+                {/* Analytics mini */}
+                <div style={{ flexShrink: 0 }}>
+                  <AnalyticsMiniPanel onOpen={() => setAnalyticsOpen(true)} />
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
