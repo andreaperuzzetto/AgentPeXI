@@ -275,12 +275,13 @@ async def lifespan(app: FastAPI):
         telegram_broadcaster=telegram_broadcast,
         screen_watcher=screen_watcher,
     )
-    await scheduler.start()
-    logger.info("Scheduler avviato")
-
-    # 4. Bot Telegram (stesso event loop di FastAPI)
+    # 4. Bot Telegram (stesso event loop di FastAPI) — prima dello scheduler
+    # così set_reminder_notifier è già collegato quando il checker spara il primo fire
     telegram_bot = TelegramBot(pepe=pepe, scheduler=scheduler, screen_watcher=screen_watcher)
     await telegram_bot.start()
+
+    await scheduler.start()
+    logger.info("Scheduler avviato")
 
     # Collega notifier Telegram al ScreenWatcher (ora che il bot è attivo)
     if screen_watcher is not None:

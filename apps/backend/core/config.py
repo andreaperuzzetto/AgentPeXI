@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # Personal Agents — Summarize
     SUMMARIZE_MAX_CHARS: int = 20_000        # soglia per passare a map-reduce
     SUMMARIZE_MAX_CHUNKS: int = 5            # massimo chunk da processare (≈15.000 chars)
+    SUMMARIZE_CHUNK_THRESHOLD: int = 3_000   # dimensione singolo chunk in caratteri
 
     # Personal Agents — Research Personal
     DDGS_MAX_RESULTS: int = 8                # risultati DuckDuckGo per quick mode

@@ -37,8 +37,8 @@ from apps.backend.tools.text_extract import TextExtractor
 logger = logging.getLogger("agentpexi.summarize")
 
 # Chunking: soglia e limite chunk
-_CHUNK_THRESHOLD: int = 3_000
-_MAX_CHUNKS: int = getattr(settings, "SUMMARIZE_MAX_CHUNKS", 5)
+_CHUNK_THRESHOLD: int = settings.SUMMARIZE_CHUNK_THRESHOLD
+_MAX_CHUNKS: int = settings.SUMMARIZE_MAX_CHUNKS
 
 # Controllo qualità sorgente — parole chiave che indicano estrazione fallita
 _QUALITY_FAIL_KEYWORDS = ("enable javascript", "access denied", "cookie", "403", "404")

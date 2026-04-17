@@ -1309,9 +1309,6 @@ class Pepe:
         if not pending:
             return None
 
-        yes_words = {"sì", "si", "yes", "s"}
-        no_words = {"no", "n", "nope"}
-
         if normalized in yes_words:
             from uuid import uuid4
 

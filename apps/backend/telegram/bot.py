@@ -496,8 +496,12 @@ class TelegramBot:
             input_data={"action": "create", "text": f"{text} {when}".strip(), "recurring": recurring},
             source="telegram",
         )
-        result = await self.pepe.dispatch_task(task)
-        reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore remind.")
+        try:
+            result = await self.pepe.dispatch_task(task)
+            reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore remind.")
+        except Exception as exc:
+            logger.error("dispatch_task remind create fallito: %s", exc)
+            reply = f"⚠️ Errore agente remind: {exc}"
         await self._reply_chunked(update.message, reply)
 
     async def _cmd_remind_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -509,8 +513,12 @@ class TelegramBot:
             input_data={"action": "list"},
             source="telegram",
         )
-        result = await self.pepe.dispatch_task(task)
-        reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore remind.")
+        try:
+            result = await self.pepe.dispatch_task(task)
+            reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore remind.")
+        except Exception as exc:
+            logger.error("dispatch_task remind list fallito: %s", exc)
+            reply = f"⚠️ Errore agente remind: {exc}"
         await self._reply_chunked(update.message, reply)
 
     async def _cmd_summarize(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -560,8 +568,12 @@ class TelegramBot:
             input_data={"source_type": source_type, "content": content, "length": length, "save": True},
             source="telegram",
         )
-        result = await self.pepe.dispatch_task(task)
-        reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore summarize.")
+        try:
+            result = await self.pepe.dispatch_task(task)
+            reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore summarize.")
+        except Exception as exc:
+            logger.error("dispatch_task summarize fallito: %s", exc)
+            reply = f"⚠️ Errore agente summarize: {exc}"
         await self._reply_chunked(update.message, reply)
 
     async def _cmd_research(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -592,8 +604,12 @@ class TelegramBot:
             input_data={"query": query, "depth": mode},
             source="telegram",
         )
-        result = await self.pepe.dispatch_task(task)
-        reply = (result.output_data or {}).get("reply") or (result.output_data or {}).get("error", "Errore research.")
+        try:
+            result = await self.pepe.dispatch_task(task)
+            reply = (result.output_data or {}).get("response") or (result.output_data or {}).get("error", "Errore research.")
+        except Exception as exc:
+            logger.error("dispatch_task research_personal fallito: %s", exc)
+            reply = f"⚠️ Errore agente research: {exc}"
         await self._reply_chunked(update.message, reply)
 
     async def _cmd_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -669,7 +685,7 @@ class TelegramBot:
             # Su record esistente spinge verso 0.9 (clampato)
             await self.pepe.memory.upsert_learning(
                 agent="urgency",
-                pattern_type="urgency_keyword",
+                pattern_type="keyword",
                 pattern_value=keyword,
                 signal_type="explicit_positive",
                 weight_delta=0.3,
