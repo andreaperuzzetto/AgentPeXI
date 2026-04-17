@@ -7,10 +7,11 @@ ChromaDB collection `pepe_memory` con Voyage AI voyage-3-lite embeddings.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiosqlite
@@ -531,7 +532,7 @@ class MemoryManager:
         await self._db.commit()
 
     async def get_agent_error_count(self, agent_name: str, hours: int = 1) -> int:
-        since = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
         cursor = await self._db.execute(
             "SELECT COUNT(*) FROM error_log WHERE agent_name = ? AND timestamp >= ?",
             (agent_name, since),
@@ -698,7 +699,7 @@ class MemoryManager:
 
     async def get_cost_breakdown(self, period_days: int = 30) -> dict:
         """Cost breakdown per agente, per tool, per giorno, e totale."""
-        since = (datetime.utcnow() - timedelta(days=period_days)).strftime("%Y-%m-%d %H:%M:%S")
+        since = (datetime.now(timezone.utc) - timedelta(days=period_days)).strftime("%Y-%m-%d %H:%M:%S")
 
         # Per agente (da agent_logs)
         cursor = await self._db.execute(
@@ -746,7 +747,7 @@ class MemoryManager:
           per_agent (agent_name → {total, completed, failed, cost}),
           production_queue stats.
         """
-        since = (datetime.utcnow() - timedelta(days=period_days)).strftime("%Y-%m-%d %H:%M:%S")
+        since = (datetime.now(timezone.utc) - timedelta(days=period_days)).strftime("%Y-%m-%d %H:%M:%S")
 
         # Conteggi per status
         cursor = await self._db.execute(
@@ -830,7 +831,7 @@ class MemoryManager:
         avg_price_eur, avg_revenue_per_listing.
         Nessuna chiamata Etsy — dati locali last_synced_at o created_at.
         """
-        since = (datetime.utcnow() - timedelta(days=period_days)).strftime(
+        since = (datetime.now(timezone.utc) - timedelta(days=period_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
 
@@ -866,7 +867,7 @@ class MemoryManager:
 
     async def get_revenue_by_niche(self, period_days: int = 30) -> list[dict]:
         """Revenue, vendite, listing count per nicchia nel periodo."""
-        since = (datetime.utcnow() - timedelta(days=period_days)).strftime(
+        since = (datetime.now(timezone.utc) - timedelta(days=period_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
         cursor = await self._db.execute(
@@ -887,7 +888,7 @@ class MemoryManager:
 
     async def get_revenue_by_product_type(self, period_days: int = 30) -> list[dict]:
         """Revenue, vendite per product_type nel periodo."""
-        since = (datetime.utcnow() - timedelta(days=period_days)).strftime(
+        since = (datetime.now(timezone.utc) - timedelta(days=period_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
         cursor = await self._db.execute(
@@ -908,7 +909,7 @@ class MemoryManager:
 
     async def get_model_cost_breakdown(self, period_days: int = 30) -> list[dict]:
         """Costo, token totali, chiamate per modello LLM nel periodo."""
-        since = (datetime.utcnow() - timedelta(days=period_days)).strftime(
+        since = (datetime.now(timezone.utc) - timedelta(days=period_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
         cursor = await self._db.execute(
@@ -928,7 +929,7 @@ class MemoryManager:
 
     async def get_daily_revenue_trend(self, period_days: int = 30) -> list[dict]:
         """Revenue giornaliera cumulativa da etsy_listings (per trend chart)."""
-        since = (datetime.utcnow() - timedelta(days=period_days)).strftime(
+        since = (datetime.now(timezone.utc) - timedelta(days=period_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
         cursor = await self._db.execute(
@@ -1183,7 +1184,7 @@ class MemoryManager:
 
     async def get_listings_no_views(self, days: int = 7) -> list[dict]:
         """views == 0, active, created_at < now - days, no_views_flagged_at IS NULL."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         cursor = await self._db.execute(
             """SELECT * FROM etsy_listings
                WHERE views = 0 AND status = 'active'
@@ -1195,7 +1196,7 @@ class MemoryManager:
 
     async def get_listings_no_conversion(self, days: int = 45) -> list[dict]:
         """views > 0, sales == 0, active, created_at < now - days, no_conversion_flagged_at IS NULL."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         cursor = await self._db.execute(
             """SELECT * FROM etsy_listings
                WHERE views > 0 AND sales = 0 AND status = 'active'
@@ -1207,7 +1208,7 @@ class MemoryManager:
 
     async def get_listings_no_views_no_sales(self, days: int = 45) -> list[dict]:
         """views == 0, sales == 0, active, created_at < now - days, no_views_no_sales_flagged_at IS NULL."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         cursor = await self._db.execute(
             """SELECT * FROM etsy_listings
                WHERE views = 0 AND sales = 0 AND status = 'active'
@@ -1315,7 +1316,7 @@ class MemoryManager:
         expires_hours: int = 24,
     ) -> None:
         """INSERT OR REPLACE — sovrascrive pending_action precedente dello stesso tipo."""
-        expires_at = (datetime.utcnow() + timedelta(hours=expires_hours)).strftime(
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=expires_hours)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
         await self._db.execute(
@@ -1328,7 +1329,7 @@ class MemoryManager:
 
     async def get_pending_action(self, action_type: str) -> dict | None:
         """Ritorna None se assente o scaduto."""
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         cursor = await self._db.execute(
             """SELECT * FROM pending_actions
                WHERE action_type = ? AND expires_at > ?""",
@@ -1408,7 +1409,8 @@ class MemoryManager:
         import uuid
 
         doc_id = str(uuid.uuid4())
-        self._chroma_collection.add(
+        await asyncio.to_thread(
+            self._chroma_collection.add,
             documents=[text],
             metadatas=[metadata or {}],
             ids=[doc_id],
@@ -1418,7 +1420,8 @@ class MemoryManager:
     async def query_insights(self, query: str, n_results: int = 5) -> list[dict]:
         if self._chroma_collection is None:
             return []
-        results = self._chroma_collection.query(
+        results = await asyncio.to_thread(
+            self._chroma_collection.query,
             query_texts=[query],
             n_results=n_results,
         )
@@ -1440,7 +1443,7 @@ class MemoryManager:
         kwargs: dict = {"query_texts": [query], "n_results": n_results}
         if where:
             kwargs["where"] = where
-        results = self._chroma_collection.query(**kwargs)
+        results = await asyncio.to_thread(lambda: self._chroma_collection.query(**kwargs))
         out = []
         for i, doc in enumerate(results.get("documents", [[]])[0]):
             meta = (results.get("metadatas", [[]])[0][i]) if results.get("metadatas") else {}
@@ -1473,7 +1476,7 @@ class MemoryManager:
 
         # Tentativo 1 — finestra primaria
         cutoff_primary = (
-            datetime.utcnow() - timedelta(days=primary_days)
+            datetime.now(timezone.utc) - timedelta(days=primary_days)
         ).strftime("%Y-%m-%d")
 
         try:
@@ -1489,7 +1492,7 @@ class MemoryManager:
 
         # Tentativo 2 — finestra allargata
         cutoff_fallback = (
-            datetime.utcnow() - timedelta(days=fallback_days)
+            datetime.now(timezone.utc) - timedelta(days=fallback_days)
         ).strftime("%Y-%m-%d")
 
         try:
@@ -1533,7 +1536,8 @@ class MemoryManager:
         if self._screen_memory_collection is None:
             return False
         try:
-            self._screen_memory_collection.add(
+            await asyncio.to_thread(
+                self._screen_memory_collection.add,
                 documents=chunks,
                 metadatas=metadatas,
                 ids=ids,
@@ -1562,14 +1566,14 @@ class MemoryManager:
             return []
         try:
             # ChromaDB richiede n_results <= count collection
-            count = self._screen_memory_collection.count()
+            count = await asyncio.to_thread(self._screen_memory_collection.count)
             if count == 0:
                 return []
             n = min(n_results, count)
             kwargs: dict = {"query_texts": [query], "n_results": n}
             if where:
                 kwargs["where"] = where
-            results = self._screen_memory_collection.query(**kwargs)
+            results = await asyncio.to_thread(lambda: self._screen_memory_collection.query(**kwargs))
             out = []
             docs = results.get("documents", [[]])[0]
             metas = results.get("metadatas", [[]])[0] if results.get("metadatas") else []

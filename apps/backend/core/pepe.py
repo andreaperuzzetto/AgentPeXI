@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
 
 import anthropic
@@ -220,6 +220,7 @@ class Pepe:
         # Urgency system — stato runtime
         self._last_watcher_app: str = ""
         self._urgency_medium_buffer: list[dict] = []
+        self._medium_buffer_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Startup / shutdown
@@ -901,9 +902,10 @@ class Pepe:
 
         elif level == "MEDIUM":
             # Accumula nel buffer — il flush avviene via CronTrigger alle 18:00
-            self._urgency_medium_buffer.append(
-                {"text": text, "app": app_name, "reason": reason}
-            )
+            async with self._medium_buffer_lock:
+                self._urgency_medium_buffer.append(
+                    {"text": text, "app": app_name, "reason": reason}
+                )
         # LOW: silenzio — nessuna azione
 
     async def flush_medium_digest(self) -> None:
@@ -912,18 +914,20 @@ class Pepe:
         Chiamato dal job CronTrigger alle URGENCY_MEDIUM_DIGEST_HOUR.
         Se il buffer è vuoto non invia nulla.
         """
-        if not self._urgency_medium_buffer:
-            return
+        async with self._medium_buffer_lock:
+            if not self._urgency_medium_buffer:
+                return
+            snapshot = list(self._urgency_medium_buffer)
+            self._urgency_medium_buffer.clear()
         lines = [
             f"• [{e['app']}] {e['text'][:80]} — {e['reason']}"
-            for e in self._urgency_medium_buffer
+            for e in snapshot
         ]
         summary = "\n".join(lines)
-        count = len(self._urgency_medium_buffer)
+        count = len(snapshot)
         await self.notify_telegram(
             f"📋 Riepilogo giornaliero ({count} eventi):\n{summary}"
         )
-        self._urgency_medium_buffer.clear()
 
     # ------------------------------------------------------------------
     # Helpers privati
@@ -1026,7 +1030,7 @@ class Pepe:
         if self._ws_broadcast is not None:
             try:
                 if "timestamp" not in event:
-                    event["timestamp"] = datetime.utcnow().isoformat()
+                    event["timestamp"] = datetime.now(timezone.utc).isoformat()
                 await self._ws_broadcast(event)
             except Exception:
                 pass
@@ -1078,7 +1082,7 @@ class Pepe:
             "retry_policy": "max_3 · backoff_2s",
             "failure_count": failure_count,
             "trigger": trigger,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
     def get_context_state(self) -> dict:
@@ -1098,7 +1102,7 @@ class Pepe:
             "retry_policy": "max_3 · backoff_2s",
             "failure_count": 0,
             "trigger": "sync",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     # ------------------------------------------------------------------
@@ -1217,8 +1221,8 @@ class Pepe:
 
         # Contesto stagionale sempre presente
         enriched["seasonal_context"] = {
-            "current_month": datetime.utcnow().month,
-            "current_year": datetime.utcnow().year,
+            "current_month": datetime.now(timezone.utc).month,
+            "current_year": datetime.now(timezone.utc).year,
         }
 
         # Niche-specific context

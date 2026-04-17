@@ -37,7 +37,10 @@ class StorageManager:
     # ------------------------------------------------------------------
 
     def get_pending_path(self, filename: str) -> Path:
-        return self._pending / filename
+        resolved = (self._pending / filename).resolve()
+        if not resolved.is_relative_to(self._pending.resolve()):
+            raise ValueError(f"Filename non valido (path traversal rilevato): {filename!r}")
+        return resolved
 
     def move_to_uploaded(self, file_path: Path) -> Path:
         dest = self._uploaded / file_path.name

@@ -252,9 +252,8 @@ class WikiManager:
             logger.error("compile_niche LLM error (%s/%s): %s", niche, agent, exc)
             return
 
-        wiki_file.write_text(updated, encoding="utf-8")
-
         async with self._manifest_lock:
+            wiki_file.write_text(updated, encoding="utf-8")
             manifest  = self._read_manifest()
             rel_wiki  = str(wiki_file.relative_to(self.base_path))
             niche_slug = _slugify(niche)
@@ -299,9 +298,8 @@ class WikiManager:
             logger.error("compile_wiki_file LLM error (%s/%s): %s", domain, rel_path, exc)
             return
 
-        wiki_file.write_text(updated, encoding="utf-8")
-
         async with self._manifest_lock:
+            wiki_file.write_text(updated, encoding="utf-8")
             manifest = self._read_manifest()
             rel_wiki = str(wiki_file.relative_to(self.base_path))
             now_iso  = datetime.now(timezone.utc).isoformat()

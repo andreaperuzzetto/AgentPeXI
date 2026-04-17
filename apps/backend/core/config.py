@@ -1,5 +1,6 @@
 """Configurazione centralizzata AgentPeXI — legge .env via Pydantic BaseSettings."""
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 # Costanti modelli Anthropic
@@ -84,6 +85,16 @@ class Settings(BaseSettings):
     # System
     MAX_PARALLEL_TASKS: int = 5
     COST_ALERT_THRESHOLD_EUR: float = 70.0
+
+    @field_validator("SECRET_KEY")
+    @classmethod
+    def secret_key_must_be_set(cls, v: str) -> str:
+        if not v:
+            raise ValueError(
+                "SECRET_KEY non configurata — impostare SECRET_KEY nel .env "
+                "con una chiave Fernet valida (es: `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`)"
+            )
+        return v
     PORT: int = 8000
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

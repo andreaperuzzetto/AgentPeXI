@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Callable, Coroutine
@@ -52,6 +53,7 @@ class Scheduler:
         self._scheduler = AsyncIOScheduler()
         # Track job execution state: job_id → {status, last_run}
         self._job_status: dict[str, dict[str, Any]] = {}
+        self._job_status_lock = threading.Lock()
         # Internal jobs we hide from the user-facing scheduler panel
         self._internal_jobs = {"ssd_health_check", "agent_status_sync"}
 
@@ -596,17 +598,20 @@ class Scheduler:
     def _on_job_submitted(self, event: Any) -> None:
         jid = event.job_id
         if jid not in self._internal_jobs:
-            self._job_status[jid] = {"status": "running", "last_run": datetime.now().isoformat()}
+            with self._job_status_lock:
+                self._job_status[jid] = {"status": "running", "last_run": datetime.now().isoformat()}
 
     def _on_job_executed(self, event: Any) -> None:
         jid = event.job_id
         if jid not in self._internal_jobs:
-            self._job_status[jid] = {"status": "completed", "last_run": datetime.now().isoformat()}
+            with self._job_status_lock:
+                self._job_status[jid] = {"status": "completed", "last_run": datetime.now().isoformat()}
 
     def _on_job_error(self, event: Any) -> None:
         jid = event.job_id
         if jid not in self._internal_jobs:
-            self._job_status[jid] = {"status": "failed", "last_run": datetime.now().isoformat()}
+            with self._job_status_lock:
+                self._job_status[jid] = {"status": "failed", "last_run": datetime.now().isoformat()}
 
     # ------------------------------------------------------------------
     # API
@@ -619,7 +624,8 @@ class Scheduler:
             jid = job.id
             if jid in self._internal_jobs:
                 continue
-            info = self._job_status.get(jid, {})
+            with self._job_status_lock:
+                info = self._job_status.get(jid, {})
             jobs.append({
                 "id": jid,
                 "name": job.name,
