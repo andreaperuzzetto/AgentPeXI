@@ -105,14 +105,9 @@ class WebSearchTool:
     async def _search_tavily(self, query: str, max_results: int) -> list[dict]:
         """Ricerca Tavily. Richiede TAVILY_API_KEY in settings."""
         try:
-            from apps.backend.core.config import settings
-            from apps.backend.tools.tavily import TavilySearch
+            from apps.backend.tools.tavily import search as tavily_search
 
-            tavily = TavilySearch(api_key=settings.TAVILY_API_KEY)
-            raw = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: tavily.search(query, max_results=max_results),
-            )
+            raw = await tavily_search(query, max_results=max_results, include_answer=False)
             return [
                 {
                     "title":   r.get("title", ""),

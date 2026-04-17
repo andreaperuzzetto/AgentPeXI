@@ -36,10 +36,6 @@ class EtsyAPI:
         self.memory = memory
         self.pepe = pepe
 
-    @property
-    def mock_mode(self) -> bool:
-        return bool(getattr(self.pepe, 'mock_mode', False))
-
         # Rate limiting: max 10 req/sec
         self._semaphore = asyncio.Semaphore(10)
         self._last_request_time: float = 0.0
@@ -51,6 +47,10 @@ class EtsyAPI:
 
         # HTTP client (lazy init)
         self._client: httpx.AsyncClient | None = None
+
+    @property
+    def mock_mode(self) -> bool:
+        return bool(getattr(self.pepe, 'mock_mode', False))
 
     # ------------------------------------------------------------------
     # Mock implementations — usati quando self.mock_mode is True

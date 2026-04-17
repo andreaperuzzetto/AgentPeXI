@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html
 from pathlib import Path
 from typing import Any
 
@@ -116,9 +117,10 @@ def _build_cover_html(
     font_name = preset_data.get("font_heading", "Lato")
     google_font = GOOGLE_FONT_MAP.get(font_name, "Lato")
 
-    bg = colors.get("bg", preset_data.get("bg_color", "#FFFFFF"))
-    text = colors.get("text", preset_data.get("text_color", "#1A1A1A"))
-    accent = colors.get("accent", preset_data.get("accent_color", "#4A4A4A"))
+    bg = html.escape(colors.get("bg", preset_data.get("bg_color", "#FFFFFF")))
+    text = html.escape(colors.get("text", preset_data.get("text_color", "#1A1A1A")))
+    accent = html.escape(colors.get("accent", preset_data.get("accent_color", "#4A4A4A")))
+    niche = html.escape(niche)
 
     decorative_elements = ""
     if preset == "decorative":
@@ -222,9 +224,10 @@ def _build_interior_html(
     font_name = preset_data.get("font_primary", "Lato")
     google_font = GOOGLE_FONT_MAP.get(font_name, "Lato")
 
-    bg = colors.get("bg", "#FFFFFF")
-    text = colors.get("text", "#1A1A1A")
-    accent = colors.get("accent", "#4A4A4A")
+    bg = html.escape(colors.get("bg", "#FFFFFF"))
+    text = html.escape(colors.get("text", "#1A1A1A"))
+    accent = html.escape(colors.get("accent", "#4A4A4A"))
+    niche = html.escape(niche)
 
     rows = ""
     day_names = ["Mon", "Tue", "Wed", "Thu", "Fri"]
@@ -297,7 +300,7 @@ def _build_mockup_html(
     colors: dict[str, str],
     cover_path: Path,
 ) -> str:
-    accent = colors.get("accent", "#4A4A4A")
+    accent = html.escape(colors.get("accent", "#4A4A4A"))
 
     img_data = ""
     if cover_path and cover_path.exists():

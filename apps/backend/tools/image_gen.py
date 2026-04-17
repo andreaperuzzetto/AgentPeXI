@@ -348,9 +348,6 @@ class NanaBananaGenerator:
         self._api_key = api_key or os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY")
         self._available = bool(self._api_key)
         if self._available:
-            # Imposta la chiave nell'environment se passata esplicitamente
-            if api_key:
-                os.environ["FAL_KEY"] = api_key
             logger.info("NanaBananaGenerator: fal.ai disponibile — Nano Banana Pro attivo")
         else:
             logger.info(
@@ -419,7 +416,8 @@ class NanaBananaGenerator:
 
         def _run_sync() -> Any:
             import fal_client as _fal
-            return _fal.run(
+            client = _fal.SyncClient(key=self._api_key)
+            return client.run(
                 NANO_BANANA_MODEL,
                 arguments={
                     "prompt": prompt,

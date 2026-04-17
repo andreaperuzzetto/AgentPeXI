@@ -92,6 +92,9 @@ async def run_auth() -> None:
     code_verifier = _generate_code_verifier()
     code_challenge = _generate_code_challenge(code_verifier)
 
+    # State CSRF: generato una volta, verificato nel callback
+    oauth_state = secrets.token_urlsafe(16)
+
     # Future per ricevere il code dal callback
     loop = asyncio.get_running_loop()
     code_future: asyncio.Future[str] = loop.create_future()
@@ -107,7 +110,7 @@ async def run_auth() -> None:
             "client_id": api_key,
             "redirect_uri": CALLBACK_URL,
             "scope": SCOPES,
-            "state": secrets.token_urlsafe(16),
+            "state": oauth_state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
         }
@@ -129,6 +132,15 @@ async def run_auth() -> None:
             code_future.set_exception(RuntimeError("Nessun authorization code ricevuto"))
             return web.Response(
                 text="❌ Nessun code ricevuto. Puoi chiudere questa finestra.",
+                content_type="text/plain",
+            )
+
+        # Verifica CSRF state
+        returned_state = request.query.get("state", "")
+        if not secrets.compare_digest(returned_state, oauth_state):
+            code_future.set_exception(RuntimeError("OAuth state mismatch — possibile attacco CSRF"))
+            return web.Response(
+                text="❌ State non valido. Puoi chiudere questa finestra.",
                 content_type="text/plain",
             )
 

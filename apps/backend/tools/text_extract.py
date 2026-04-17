@@ -6,9 +6,13 @@ Fail-safe: ogni metodo ritorna (None, motivo) su errore — mai eccezioni non ge
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import os
+import socket
 import tempfile
+from pathlib import Path
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,6 +42,56 @@ SUPPORTED_MIME_TYPES = {
 }
 SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}
 
+# Directory consentite per from_file (temp di sistema + storage progetto)
+_ALLOWED_ROOTS: tuple[Path, ...] = (
+    Path(tempfile.gettempdir()).resolve(),
+    Path("/Volumes/Progetti/agentpexi-storage").resolve(),
+)
+
+# Reti private/riservate bloccate per SSRF
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def _is_safe_url(url: str) -> bool:
+    """Rifiuta URL con schema non-http/https o hostname che risolve a IP privati."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    hostname = parsed.hostname or ""
+    if not hostname:
+        return False
+    # Blocca pattern ovvi senza DNS
+    if hostname in ("localhost", "0.0.0.0", "[::]", "[::]1"):
+        return False
+    try:
+        resolved_ip = socket.gethostbyname(hostname)
+        addr = ipaddress.ip_address(resolved_ip)
+        return not any(addr in net for net in _BLOCKED_NETWORKS)
+    except (socket.gaierror, ValueError):
+        return False
+
+
+def _is_safe_path(file_path: str) -> bool:
+    """Rifiuta percorsi che escono dalle directory consentite."""
+    try:
+        resolved = Path(file_path).resolve()
+    except Exception:
+        return False
+    return any(resolved.is_relative_to(root) for root in _ALLOWED_ROOTS)
+
 
 class TextExtractor:
     """Estrazione testo da URL, file e allegati Telegram."""
@@ -53,10 +107,14 @@ class TextExtractor:
         """Estrae testo da una URL via trafilatura.
 
         Restituisce None se:
+        - URL con schema non-http/https o hostname privato/loopback (SSRF)
         - pagina inaccessibile / timeout
         - contenuto vuoto o < 100 caratteri dopo estrazione
         - quality check fallisce (JS-heavy, paywall, errore HTTP)
         """
+        if not _is_safe_url(url):
+            logger.warning("TextExtract URL '%s' rifiutata: SSRF o schema non consentito", url[:80])
+            return None
         try:
             text = await asyncio.get_event_loop().run_in_executor(
                 None,
@@ -106,8 +164,16 @@ class TextExtractor:
     async def from_file(self, file_path: str, mime_type: str | None = None) -> str | None:
         """Estrae testo da un file locale.
 
-        Restituisce None se formato non supportato, PDF criptato, o errore di lettura.
+        Restituisce None se formato non supportato, PDF criptato, percorso
+        esterno alle directory consentite, o errore di lettura.
         """
+        if not _is_safe_path(file_path):
+            logger.warning(
+                "TextExtract: percorso '%s' rifiutato (fuori dalle directory consentite)",
+                file_path,
+            )
+            return None
+
         ext = os.path.splitext(file_path)[1].lower()
         if ext not in SUPPORTED_EXTENSIONS:
             logger.warning(
