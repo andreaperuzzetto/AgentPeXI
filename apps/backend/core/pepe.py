@@ -882,12 +882,31 @@ class Pepe:
             payload={"text": text, "source": source, "reason": reason},
         )
 
+    @staticmethod
+    def _sanitize_ocr_input(text: str, max_len: int = 500) -> str:
+        """Sanifica testo OCR prima dell'inserimento in un prompt LLM.
+
+        Tronca alla lunghezza massima e rimuove sequenze tipiche di prompt injection.
+        """
+        text = text.strip()[:max_len]
+        text = re.sub(
+            r"(?i)(ignore\s+(previous|all|above|prior)\s+instructions?"
+            r"|system\s*:|<\s*/?system\s*>|\[\s*system\s*\]"
+            r"|assistant\s*:|<\s*/?assistant\s*>"
+            r"|\\n---\\n|---END---|<\|im_end\|>|<\|im_start\|>)",
+            "",
+            text,
+        )
+        return text.strip()
+
     async def process_watcher_capture(self, text: str, app_name: str) -> None:
         """Punto di ingresso per ogni cattura dello ScreenWatcher.
 
         Aggiorna _last_watcher_app, valuta urgenza, propone azione se HIGH.
         Buffering MEDIUM: accumula fino a 5 catture poi invia riepilogo.
         """
+        # Sanitizza il testo OCR prima di qualsiasi uso nei prompt LLM
+        text = self._sanitize_ocr_input(text)
         self._last_watcher_app = app_name
 
         # source="watcher" → _is_obvious_noise userà _last_watcher_app per il check NOISE_APPS
@@ -1925,8 +1944,7 @@ class Pepe:
             )
             analytics_cost = result.cost_usd
             total_run_cost = task.input_data.get("_run_cost_usd", 0.0) + analytics_cost
-            EUR_RATE = 0.92
-            total_run_eur = total_run_cost * EUR_RATE
+            total_run_eur = total_run_cost * settings.USD_EUR_RATE
             done_msg = (
                 f"Analytics completato — {listings_analyzed} listing analizzati.\n"
                 f"Costo run: ${total_run_cost:.4f} (≈ €{total_run_eur:.4f})"

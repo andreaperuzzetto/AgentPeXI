@@ -407,7 +407,10 @@ class RemindAgent(AgentBase):
             pending = await self.memory.get_pending_reminders()
             if not pending:
                 return None
-            keyword = text.split()[0].lower() if text.split() else ""
+            # Usa le prime 3 parole significative (>3 chars) invece della sola prima parola
+            _STOPWORDS = {"di", "da", "il", "la", "lo", "le", "gli", "un", "una", "the", "a", "an"}
+            words = [w.lower() for w in text.split() if len(w) > 3 and w.lower() not in _STOPWORDS]
+            keywords = words[:3]
             window_start = trigger_at - timedelta(hours=1)
             window_end = trigger_at + timedelta(hours=1)
             for r in pending:
@@ -416,7 +419,8 @@ class RemindAgent(AgentBase):
                 except (ValueError, TypeError):
                     continue
                 if window_start <= r_dt <= window_end:
-                    if keyword and keyword in r.get("text", "").lower():
+                    r_text = r.get("text", "").lower()
+                    if keywords and any(kw in r_text for kw in keywords):
                         return r
         except Exception as exc:
             logger.debug("_check_duplicate fallito (ignorato): %s", exc)

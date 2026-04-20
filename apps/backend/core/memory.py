@@ -8,6 +8,8 @@ ChromaDB collection `pepe_memory` con Voyage AI voyage-3-lite embeddings.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -15,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiosqlite
+from cryptography.fernet import Fernet
 
 from apps.backend.core.config import settings
 
@@ -259,6 +262,19 @@ class MemoryManager:
         self._db: aiosqlite.Connection | None = None
         self._chroma_collection = None          # pepe_memory — Etsy/knowledge base
         self._screen_memory_collection = None   # screen_memory — Personal domain
+        self.__fernet: Fernet | None = None     # lazy-init in _fernet()
+
+    # ------------------------------------------------------------------
+    # Crypto helpers (OAuth token encryption)
+    # ------------------------------------------------------------------
+
+    def _fernet(self) -> Fernet:
+        """Ritorna un'istanza Fernet derivata da SECRET_KEY (lazy, cached)."""
+        if self.__fernet is None:
+            digest = hashlib.sha256(settings.SECRET_KEY.encode()).digest()
+            key = base64.urlsafe_b64encode(digest)
+            self.__fernet = Fernet(key)
+        return self.__fernet
 
     # ------------------------------------------------------------------
     # Init / shutdown
@@ -283,8 +299,12 @@ class MemoryManager:
             try:
                 await self._db.execute(migration_sql)
                 await self._db.commit()
-            except Exception:
-                pass  # Colonna già esistente — ignorato
+            except Exception as exc:
+                if "duplicate column name" in str(exc).lower():
+                    pass  # Colonna già esistente — ignorato
+                else:
+                    logger.error("Migrazione DB fallita: %s — %s", migration_sql, exc)
+                    raise
 
         # Indici per nuove colonne (idempotenti)
         _new_indexes = [
@@ -295,8 +315,9 @@ class MemoryManager:
             try:
                 await self._db.execute(idx_sql)
                 await self._db.commit()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.error("Creazione indice DB fallita: %s — %s", idx_sql, exc)
+                raise
 
         # ChromaDB + Voyage AI (lazy: fallisce silenziosamente se non disponibile)
         try:
@@ -1360,7 +1381,14 @@ class MemoryManager:
         refresh_token_enc: str,
         expires_at: str,
     ) -> None:
-        """Salva token cifrati. Usa UPSERT per evitare duplicati."""
+        """Cifra e salva i token OAuth. Usa UPSERT per evitare duplicati.
+
+        `access_token_enc` e `refresh_token_enc` devono essere passati in chiaro:
+        la cifratura Fernet viene applicata internamente prima della scrittura su DB.
+        """
+        fernet = self._fernet()
+        enc_access = fernet.encrypt(access_token_enc.encode()).decode()
+        enc_refresh = fernet.encrypt(refresh_token_enc.encode()).decode()
         await self._db.execute(
             """INSERT INTO oauth_tokens
                (provider, access_token_encrypted, refresh_token_encrypted, expires_at)
@@ -1370,17 +1398,35 @@ class MemoryManager:
                refresh_token_encrypted = excluded.refresh_token_encrypted,
                expires_at = excluded.expires_at,
                updated_at = CURRENT_TIMESTAMP""",
-            (provider, access_token_enc, refresh_token_enc, expires_at),
+            (provider, enc_access, enc_refresh, expires_at),
         )
         await self._db.commit()
 
     async def get_oauth_tokens(self, provider: str) -> dict | None:
-        """Ritorna token cifrati per provider, o None se non esistono."""
+        """Ritorna i token OAuth in chiaro per `provider`, o None se non esistono.
+
+        I valori `access_token_encrypted` / `refresh_token_encrypted` nel dict
+        restituito sono già decifrati — i nomi dei campi restano per compatibilità.
+        """
         cursor = await self._db.execute(
             "SELECT * FROM oauth_tokens WHERE provider = ?", (provider,)
         )
         row = await cursor.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        data = dict(row)
+        fernet = self._fernet()
+        try:
+            data["access_token_encrypted"] = fernet.decrypt(
+                data["access_token_encrypted"].encode()
+            ).decode()
+            data["refresh_token_encrypted"] = fernet.decrypt(
+                data["refresh_token_encrypted"].encode()
+            ).decode()
+        except Exception as exc:
+            logger.error("Decifratura token OAuth fallita per %s: %s", provider, exc)
+            raise
+        return data
 
     async def update_oauth_tokens(
         self,
@@ -1389,13 +1435,19 @@ class MemoryManager:
         refresh_token_enc: str,
         expires_at: str,
     ) -> None:
-        """Aggiorna token cifrati esistenti."""
+        """Cifra e aggiorna i token OAuth esistenti.
+
+        `access_token_enc` e `refresh_token_enc` devono essere passati in chiaro.
+        """
+        fernet = self._fernet()
+        enc_access = fernet.encrypt(access_token_enc.encode()).decode()
+        enc_refresh = fernet.encrypt(refresh_token_enc.encode()).decode()
         await self._db.execute(
             """UPDATE oauth_tokens SET
                access_token_encrypted = ?, refresh_token_encrypted = ?,
                expires_at = ?, updated_at = CURRENT_TIMESTAMP
                WHERE provider = ?""",
-            (access_token_enc, refresh_token_enc, expires_at, provider),
+            (enc_access, enc_refresh, expires_at, provider),
         )
         await self._db.commit()
 
@@ -1922,6 +1974,44 @@ class MemoryManager:
             ) as cur:
                 row = await cur.fetchone()
         return row[0] if row else 0
+
+    # ------------------------------------------------------------------
+    # Scheduled Tasks
+    # ------------------------------------------------------------------
+
+    async def get_enabled_scheduled_tasks(self) -> list[dict]:
+        """Restituisce tutti i task schedulati abilitati."""
+        async with self._db.execute(
+            "SELECT id, name, cron_expression, agent_name, task_data, enabled "
+            "FROM scheduled_tasks WHERE enabled = 1"
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def update_task_last_run(self, task_id: int, last_run_iso: str) -> None:
+        """Aggiorna il campo last_run di un task schedulato."""
+        await self._db.execute(
+            "UPDATE scheduled_tasks SET last_run = ? WHERE id = ?",
+            (last_run_iso, task_id),
+        )
+        await self._db.commit()
+
+    async def get_stale_listings_without_sales(
+        self, min_views: int = 50, days_old: int = 30, limit: int = 20
+    ) -> list[dict]:
+        """Restituisce listing con 0 vendite ma molte views, creati da almeno `days_old` giorni."""
+        async with self._db.execute(
+            """
+            SELECT niche, price_eur, views, sales
+            FROM etsy_listings
+            WHERE sales = 0 AND views > ?
+            AND created_at < datetime('now', ? || ' days')
+            LIMIT ?
+            """,
+            (min_views, f"-{days_old}", limit),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

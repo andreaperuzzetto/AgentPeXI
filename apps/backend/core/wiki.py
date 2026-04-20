@@ -343,7 +343,8 @@ class WikiManager:
             f"> Aggiornato: {now} | {len(entries)} articoli\n\n"
             + "\n".join(entries)
         )
-        (domain_path / "_index.md").write_text(index_str, encoding="utf-8")
+        async with self._manifest_lock:
+            (domain_path / "_index.md").write_text(index_str, encoding="utf-8")
         logger.info("update_index: %s (%d entries)", domain, len(entries))
 
     # ── Lettura ───────────────────────────────────────────────────────────────
@@ -528,11 +529,13 @@ class WikiManager:
         try:
             system    = _DISTILL_SYSTEM.format(target_tokens=target)
             distilled = await self._llm_call(llm, system, original, max_tokens=target + 300)
-            wiki_file.write_text(distilled, encoding="utf-8")
+            async with self._manifest_lock:          # serializza con compile_niche/compile_wiki_file
+                wiki_file.write_text(distilled, encoding="utf-8")
             bak.unlink(missing_ok=True)             # pulizia .bak solo a successo
         except Exception:
             if bak.exists():
-                wiki_file.write_text(bak.read_text(encoding="utf-8"), encoding="utf-8")
+                async with self._manifest_lock:
+                    wiki_file.write_text(bak.read_text(encoding="utf-8"), encoding="utf-8")
                 bak.unlink(missing_ok=True)
             raise
 

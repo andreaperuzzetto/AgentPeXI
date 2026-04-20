@@ -29,7 +29,7 @@ logger = logging.getLogger("agentpexi.finance")
 # Costanti Etsy fee structure (2024)
 # ---------------------------------------------------------------------------
 
-USD_EUR_RATE: float = 0.92          # tasso fisso aggiornabile in .env
+USD_EUR_RATE: float = settings.USD_EUR_RATE  # centralizzato in config.py / .env
 ETSY_TRANSACTION_FEE_PCT: float = 0.065    # 6.5% su prezzo di vendita
 ETSY_PAYMENT_FEE_PCT: float = 0.030        # 3% Etsy Payments
 ETSY_PAYMENT_FEE_FIXED_EUR: float = 0.23  # ~€0.25 per transazione (fisso)

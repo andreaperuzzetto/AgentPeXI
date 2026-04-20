@@ -176,17 +176,12 @@ class Scheduler:
     async def _load_db_jobs(self) -> None:
         """Carica scheduled_tasks dal DB e li registra come job APScheduler."""
         try:
-            cursor = await self.memory._db.execute(
-                "SELECT id, name, cron_expression, agent_name, task_data, enabled "
-                "FROM scheduled_tasks WHERE enabled = 1"
-            )
-            rows = await cursor.fetchall()
+            rows = await self.memory.get_enabled_scheduled_tasks()
         except Exception as exc:
             logger.warning("Errore caricamento scheduled_tasks: %s", exc)
             return
 
-        for row in rows:
-            row_dict = dict(row)
+        for row_dict in rows:
             cron_expr = row_dict.get("cron_expression")
             if not cron_expr:
                 continue
@@ -314,11 +309,7 @@ class Scheduler:
         """Esegue un task schedulato: aggiorna last_run e delega a Pepe."""
         # Aggiorna last_run nel DB
         try:
-            await self.memory._db.execute(
-                "UPDATE scheduled_tasks SET last_run = ? WHERE id = ?",
-                (datetime.utcnow().isoformat(), task_id),
-            )
-            await self.memory._db.commit()
+            await self.memory.update_task_last_run(task_id, datetime.utcnow().isoformat())
         except Exception as exc:
             logger.warning("Errore aggiornamento last_run per task %d: %s", task_id, exc)
 

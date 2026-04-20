@@ -20,6 +20,18 @@ from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 class AgentBase(ABC):
     """Base comune per Research, Design, Publisher, Analytics, CustomerService, Finance."""
 
+    # Client Ollama condiviso a livello di classe — creato al primo utilizzo.
+    # AsyncOpenAI è thread-safe e connection-pool-aware: non va istanziato ad ogni chiamata.
+    _ollama_client: openai.AsyncOpenAI | None = None
+
+    @classmethod
+    def _get_ollama_client(cls) -> openai.AsyncOpenAI:
+        if cls._ollama_client is None:
+            cls._ollama_client = openai.AsyncOpenAI(
+                base_url=settings.OLLAMA_BASE_URL,
+                api_key="ollama",  # Ollama non richiede API key reale
+            )
+        return cls._ollama_client
     def __init__(
         self,
         name: str,
@@ -326,10 +338,7 @@ class AgentBase(ABC):
         system_prompt = effective_system
         messages = effective_messages
 
-        ollama_client = openai.AsyncOpenAI(
-            base_url=settings.OLLAMA_BASE_URL,
-            api_key="ollama",  # Ollama non richiede API key reale
-        )
+        ollama_client = self._get_ollama_client()
 
         create_kwargs: dict = {
             "model": model,
@@ -607,17 +616,29 @@ class AgentBase(ABC):
         cache_read: int = 0,
         cache_write: int = 0,
     ) -> float:
-        """Stima costo USD basata su pricing Anthropic (aprile 2025)."""
+        """Stima costo USD basata su pricing Anthropic (valori configurabili in settings)."""
         if "sonnet" in model:
-            # Sonnet 4: $3/M input, $15/M output
-            cost = (input_tokens * 3.0 + output_tokens * 15.0) / 1_000_000
-            # Cache: read 90% sconto, write 25% sovrapprezzo
-            cost += (cache_read * 0.3 + cache_write * 3.75) / 1_000_000
+            cost = (
+                input_tokens * settings.LLM_SONNET_INPUT_PRICE
+                + output_tokens * settings.LLM_SONNET_OUTPUT_PRICE
+            ) / 1_000_000
+            cost += (
+                cache_read * settings.LLM_SONNET_CACHE_READ_PRICE
+                + cache_write * settings.LLM_SONNET_CACHE_WRITE_PRICE
+            ) / 1_000_000
         elif "haiku" in model:
-            # Haiku: $0.80/M input, $4/M output
-            cost = (input_tokens * 0.80 + output_tokens * 4.0) / 1_000_000
-            cost += (cache_read * 0.08 + cache_write * 1.0) / 1_000_000
+            cost = (
+                input_tokens * settings.LLM_HAIKU_INPUT_PRICE
+                + output_tokens * settings.LLM_HAIKU_OUTPUT_PRICE
+            ) / 1_000_000
+            cost += (
+                cache_read * settings.LLM_HAIKU_CACHE_READ_PRICE
+                + cache_write * settings.LLM_HAIKU_CACHE_WRITE_PRICE
+            ) / 1_000_000
         else:
-            # Fallback generico
-            cost = (input_tokens * 3.0 + output_tokens * 15.0) / 1_000_000
+            # Fallback: usa prezzi Sonnet
+            cost = (
+                input_tokens * settings.LLM_SONNET_INPUT_PRICE
+                + output_tokens * settings.LLM_SONNET_OUTPUT_PRICE
+            ) / 1_000_000
         return round(cost, 6)

@@ -16,6 +16,7 @@ Privacy totale: nessun dato schermo esce dal Mac.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime
@@ -225,16 +226,16 @@ class RecallAgent(AgentBase):
     async def _grade_chunks(self, query: str, chunks: list[dict]) -> list[dict]:
         """Classifica ogni chunk come RELEVANT/IRRELEVANT con Ollama caveman.
 
-        Batch di 5 per limitare latenza. Ritorna solo i RELEVANT.
+        Tutte le chiamate vengono eseguite in parallelo con asyncio.gather.
+        Ritorna solo i RELEVANT.
         """
         if not chunks:
             return []
 
-        relevant: list[dict] = []
-        for chunk in chunks:
+        async def _grade_one(chunk: dict) -> dict | None:
             doc = chunk.get("document", "")[:400]
             if not doc.strip():
-                continue
+                return None
             try:
                 verdict = await self._call_llm_ollama(
                     system=_GRADE_SYSTEM,
@@ -243,12 +244,14 @@ class RecallAgent(AgentBase):
                     temperature=0.0,
                 )
                 if verdict.strip().upper().startswith("RELEVANT"):
-                    relevant.append(chunk)
+                    return chunk
+                return None
             except Exception as exc:
                 logger.debug("Grading chunk fallito: %s — incluso per fallback", exc)
-                relevant.append(chunk)   # include on error (meglio troppo che poco)
+                return chunk  # include on error (meglio troppo che poco)
 
-        return relevant
+        results = await asyncio.gather(*(_grade_one(c) for c in chunks))
+        return [c for c in results if c is not None]
 
     # ------------------------------------------------------------------
     # Query rewrite

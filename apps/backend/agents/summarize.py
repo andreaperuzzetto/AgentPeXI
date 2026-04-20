@@ -105,6 +105,7 @@ class SummarizeAgent(AgentBase):
         content: str = inp.get("content", "").strip()
         length: str = inp.get("length", "normal")   # "brief" | "normal" | "detailed"
         save: bool = inp.get("save", True)
+        domain_name: str = inp.get("domain_name", "personal")
 
         if not content:
             return self._fail("content mancante — fornisci url, file_id o testo")
@@ -163,10 +164,10 @@ class SummarizeAgent(AgentBase):
         # ── Step 3: sintesi ──────────────────────────────────────────
         if len(chunks) == 1:
             await self._log_step("summarize", "Summary diretto")
-            summary = await self._direct_summary(chunks[0], length)
+            summary = await self._direct_summary(chunks[0], length, domain_name)
         else:
             await self._log_step("map_reduce", f"Map-reduce su {len(chunks)} chunk")
-            summary = await self._map_reduce_summary_from_chunks(chunks, length)
+            summary = await self._map_reduce_summary_from_chunks(chunks, length, domain_name)
 
         if not summary:
             return self._fail("Sintesi fallita — risposta LLM vuota")
@@ -221,14 +222,14 @@ class SummarizeAgent(AgentBase):
     # Summary diretto (testo breve)
     # ------------------------------------------------------------------
 
-    async def _direct_summary(self, text: str, length: str) -> str:
+    async def _direct_summary(self, text: str, length: str, domain_name: str = "personal") -> str:
         system = _SUMMARY_PROMPTS.get(length, _SUMMARY_PROMPTS["normal"])
         try:
             return await self._call_llm(
                 messages=[{"role": "user", "content": f"Testo:\n\n{text}"}],
                 system_prompt=system,
                 max_tokens=600,
-                domain_name="etsy_store",   # → Anthropic Haiku
+                domain_name=domain_name,
             )
         except Exception as exc:
             logger.warning("Direct summary fallito, provo Ollama: %s", exc)
@@ -243,7 +244,7 @@ class SummarizeAgent(AgentBase):
     # Map-reduce summary (testo lungo)
     # ------------------------------------------------------------------
 
-    async def _map_reduce_summary_from_chunks(self, chunks: list[str], length: str) -> str:
+    async def _map_reduce_summary_from_chunks(self, chunks: list[str], length: str, domain_name: str = "personal") -> str:
         """Riassume chunk pre-calcolati, poi merge finale."""
         await self._log_step("map", f"Map: {len(chunks)} chunk da riassumere")
 
@@ -278,7 +279,7 @@ class SummarizeAgent(AgentBase):
                 messages=[{"role": "user", "content": f"Riassunti parziali:\n\n{merged_input}"}],
                 system_prompt=_MERGE_SYSTEM,
                 max_tokens=800,
-                domain_name="etsy_store",
+                domain_name=domain_name,
             )
         except Exception as exc:
             logger.warning("Merge summary fallito, provo Ollama: %s", exc)

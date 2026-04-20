@@ -112,6 +112,24 @@ class ResearchAgent(AgentBase):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(name="research", model=MODEL_HAIKU, **kwargs)
 
+    @staticmethod
+    def _sanitize_prompt_input(value: str, max_len: int = 300) -> str:
+        """Sanifica input utente prima dell'inserimento in un prompt LLM.
+
+        Tronca alla lunghezza massima e rimuove sequenze tipiche di prompt injection.
+        """
+        import re
+        value = value.strip()[:max_len]
+        value = re.sub(
+            r"(?i)(ignore\s+(previous|all|above|prior)\s+instructions?"
+            r"|system\s*:|<\s*/?system\s*>|\[\s*system\s*\]"
+            r"|assistant\s*:|<\s*/?assistant\s*>"
+            r"|\\n---\\n|---END---|<\|im_end\|>|<\|im_start\|>)",
+            "",
+            value,
+        )
+        return value.strip()
+
     async def run(self, task: AgentTask) -> AgentResult:
         """Analizza una o più nicchie Etsy e produce un report strutturato."""
         input_data = task.input_data or {}
@@ -124,6 +142,10 @@ class ResearchAgent(AgentBase):
                 if isinstance(v, str) and v not in ("generic", "niche_analysis"):
                     query = v
                     break
+
+        # Sanitizza gli input prima di qualsiasi uso nei prompt LLM
+        niches = [self._sanitize_prompt_input(n) for n in niches if n]
+        query = self._sanitize_prompt_input(query)
 
         if not niches and not query:
             return AgentResult(

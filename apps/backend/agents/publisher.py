@@ -8,11 +8,10 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-import aiosqlite
 import anthropic
 
 from apps.backend.agents.base import AgentBase
-from apps.backend.core.config import MODEL_SONNET
+from apps.backend.core.config import MODEL_SONNET, settings
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.core.storage import StorageManager
@@ -62,7 +61,6 @@ class PublisherAgent(AgentBase):
         self.storage = storage
         self.etsy_api = etsy_api
         self._telegram_broadcast = telegram_broadcaster
-        self.db_path = memory._db_path
 
     def _extra_init_kwargs(self) -> dict:
         return {
@@ -610,10 +608,10 @@ class PublisherAgent(AgentBase):
 
         if variant.lower() == "a" and pricing.get("launch_price_usd"):
             usd = float(pricing["launch_price_usd"])
-            return round(usd * 0.92, 2)
+            return round(usd * settings.USD_EUR_RATE, 2)
         elif variant.lower() == "b" and pricing.get("mature_price_usd"):
             usd = float(pricing["mature_price_usd"])
-            return round(usd * 0.92, 2)
+            return round(usd * settings.USD_EUR_RATE, 2)
 
         # Fallback su AB_PRICES
         ab_key = variant.upper()
@@ -739,38 +737,31 @@ class PublisherAgent(AgentBase):
 
         # 4. Analytics DB — niche simili con 0 vendite dopo views
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                db.row_factory = aiosqlite.Row
-                cursor = await db.execute("""
-                    SELECT niche, price_eur, views, sales
-                    FROM etsy_listings
-                    WHERE sales = 0 AND views > 50
-                    AND created_at < datetime('now', '-30 days')
-                    LIMIT 20
-                """)
-                failed_listings = await cursor.fetchall()
+            failed_listings = await self.memory.get_stale_listings_without_sales(
+                min_views=50, days_old=30, limit=20
+            )
 
-                niche_words = set(niche.lower().split())
-                similar_failures = []
-                for listing in failed_listings:
-                    listing_words = set(listing["niche"].lower().split())
-                    overlap = len(niche_words & listing_words) / max(len(niche_words), 1)
-                    if overlap > 0.4:
-                        similar_failures.append({
-                            "niche": listing["niche"],
-                            "price": listing["price_eur"],
-                            "views": listing["views"],
-                        })
+            niche_words = set(niche.lower().split())
+            similar_failures = []
+            for listing in failed_listings:
+                listing_words = set(listing["niche"].lower().split())
+                overlap = len(niche_words & listing_words) / max(len(niche_words), 1)
+                if overlap > 0.4:
+                    similar_failures.append({
+                        "niche": listing["niche"],
+                        "price": listing["price_eur"],
+                        "views": listing["views"],
+                    })
 
-                if similar_failures:
-                    logger.warning(
-                        "Trovate %d niche simili con 0 vendite dopo views: %s",
-                        len(similar_failures), similar_failures[:3],
-                    )
-                    adjustments["similar_failures"] = similar_failures
-                    adjustments["warning"] = (
-                        "Niche simili non hanno convertito — valutare pricing o SEO diverso"
-                    )
+            if similar_failures:
+                logger.warning(
+                    "Trovate %d niche simili con 0 vendite dopo views: %s",
+                    len(similar_failures), similar_failures[:3],
+                )
+                adjustments["similar_failures"] = similar_failures
+                adjustments["warning"] = (
+                    "Niche simili non hanno convertito — valutare pricing o SEO diverso"
+                )
         except Exception as exc:
             logger.warning("Errore consultazione failure history: %s", exc)
 

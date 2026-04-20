@@ -260,11 +260,11 @@ class EtsyAPI:
                     )
                 raise
 
-        return self._decrypt(tokens["access_token_encrypted"])
+        return tokens["access_token_encrypted"]
 
     async def _refresh_token(self, tokens: dict) -> None:
         """Refresh access_token usando refresh_token."""
-        refresh_token = self._decrypt(tokens["refresh_token_encrypted"])
+        refresh_token = tokens["refresh_token_encrypted"]
 
         client = await self._get_client()
         resp = await client.post(
@@ -286,8 +286,8 @@ class EtsyAPI:
 
         await self.memory.update_oauth_tokens(
             provider="etsy",
-            access_token_enc=self._encrypt(new_access),
-            refresh_token_enc=self._encrypt(new_refresh),
+            access_token_enc=new_access,
+            refresh_token_enc=new_refresh,
             expires_at=expires_at,
         )
         logger.info("Token Etsy refreshed, scadenza: %s", expires_at)

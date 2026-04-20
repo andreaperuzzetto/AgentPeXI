@@ -215,20 +215,17 @@ async def run_auth() -> None:
     expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
 
     # ------------------------------------------------------------------
-    # Cifra e salva in SQLite
+    # Salva in SQLite (la cifratura è gestita da MemoryManager)
     # ------------------------------------------------------------------
 
     print("🔐 Cifratura e salvataggio token...")
-    access_enc = _encrypt(access_token, secret_key)
-    refresh_enc = _encrypt(refresh_token, secret_key)
-
     memory = MemoryManager()
     await memory.init()
 
     await memory.save_oauth_tokens(
         provider="etsy",
-        access_token_enc=access_enc,
-        refresh_token_enc=refresh_enc,
+        access_token_enc=access_token,
+        refresh_token_enc=refresh_token,
         expires_at=expires_at,
     )
 

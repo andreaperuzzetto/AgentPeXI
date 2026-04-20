@@ -307,12 +307,11 @@ class ResearchPersonalAgent(AgentBase):
     # ------------------------------------------------------------------
 
     async def _grade_sources(self, query: str, sources: list[dict]) -> list[dict]:
-        """Filtra le fonti per rilevanza con Ollama caveman."""
-        relevant: list[dict] = []
-        for src in sources:
+        """Filtra le fonti per rilevanza con Ollama caveman (chiamate in parallelo)."""
+        async def _grade_one(src: dict) -> dict | None:
             content = (src.get("full_text") or src.get("snippet", ""))[:400]
             if not content.strip():
-                continue
+                return None
             try:
                 verdict = await self._call_llm_ollama(
                     system=_GRADE_SYSTEM,
@@ -321,10 +320,13 @@ class ResearchPersonalAgent(AgentBase):
                     temperature=0.0,
                 )
                 if verdict.strip().upper().startswith("YES"):
-                    relevant.append(src)
+                    return src
+                return None
             except Exception:
-                relevant.append(src)   # fail-open
-        return relevant
+                return src  # fail-open
+
+        results = await asyncio.gather(*(_grade_one(s) for s in sources))
+        return [s for s in results if s is not None]
 
     # ------------------------------------------------------------------
     # Sintesi
@@ -350,7 +352,7 @@ class ResearchPersonalAgent(AgentBase):
                 messages=messages,
                 system_prompt=_SYNTHESIS_SYSTEM,
                 max_tokens=900,
-                domain_name="etsy_store",   # → Claude Haiku
+                domain_name="personal",
             )
         except Exception as exc:
             logger.warning("Sintesi Haiku fallita, provo Ollama: %s", exc)
@@ -374,7 +376,7 @@ class ResearchPersonalAgent(AgentBase):
                 messages=messages,
                 system_prompt=_QUICK_SYNTHESIS_SYSTEM,
                 max_tokens=400,
-                domain_name="etsy_store",
+                domain_name="personal",
             )
         except Exception as exc:
             logger.warning("Quick synthesis fallita: %s", exc)
@@ -442,7 +444,9 @@ class ResearchPersonalAgent(AgentBase):
 
     async def _update_learning(self, query: str) -> None:
         """Step 7 — aggiorna personal_learning con il topic della query."""
-        topic = query.split()[0].lower() if query.split() else "research"
+        # Usa le prime 4 parole (al max) come topic significativo, non solo la prima
+        words = query.split()
+        topic = "_".join(w.lower() for w in words[:4]) if words else "research"
         try:
             await self.memory.upsert_learning(
                 agent="research_personal",

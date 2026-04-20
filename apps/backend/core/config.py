@@ -1,7 +1,12 @@
 """Configurazione centralizzata AgentPeXI — legge .env via Pydantic BaseSettings."""
 
-from pydantic import field_validator
+import logging
+import os
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger("agentpexi.config")
 
 # Costanti modelli Anthropic
 MODEL_SONNET = "claude-sonnet-4-6"
@@ -79,12 +84,28 @@ class Settings(BaseSettings):
     # WIKI_BASE_PATH: str = "/Users/andrea/Library/Mobile Documents/iCloud~md~obsidian/Documents/AgentPeXI"
 
     # Storage & Security
-    STORAGE_PATH: str = "/Volumes/Progetti/agentpexi-storage"
+    STORAGE_PATH: str = "~/.agentpexi-storage"  # sovrascrivibile via STORAGE_PATH nel .env
     SECRET_KEY: str = ""
 
     # System
     MAX_PARALLEL_TASKS: int = 5
     COST_ALERT_THRESHOLD_EUR: float = 70.0
+    USD_EUR_RATE: float = 0.92         # tasso di cambio USD→EUR, sovrascrivibile via .env
+
+    # Prezzi LLM Anthropic (USD per milione di token) — aggiornare quando Anthropic cambia listino
+    LLM_SONNET_INPUT_PRICE: float = 3.0     # $3/M input token
+    LLM_SONNET_OUTPUT_PRICE: float = 15.0   # $15/M output token
+    LLM_SONNET_CACHE_READ_PRICE: float = 0.3    # $0.30/M cache read
+    LLM_SONNET_CACHE_WRITE_PRICE: float = 3.75  # $3.75/M cache write
+    LLM_HAIKU_INPUT_PRICE: float = 0.80    # $0.80/M input token
+    LLM_HAIKU_OUTPUT_PRICE: float = 4.0    # $4/M output token
+    LLM_HAIKU_CACHE_READ_PRICE: float = 0.08    # $0.08/M cache read
+    LLM_HAIKU_CACHE_WRITE_PRICE: float = 1.0    # $1/M cache write
+
+    @field_validator("STORAGE_PATH")
+    @classmethod
+    def expand_storage_path(cls, v: str) -> str:
+        return os.path.expanduser(v)
 
     @field_validator("SECRET_KEY")
     @classmethod
@@ -95,6 +116,25 @@ class Settings(BaseSettings):
                 "con una chiave Fernet valida (es: `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`)"
             )
         return v
+
+    @model_validator(mode="after")
+    def warn_missing_api_keys(self) -> "Settings":
+        """Logga warning per API key critiche non configurate."""
+        _CRITICAL: list[tuple[str, str]] = [
+            ("ANTHROPIC_API_KEY", "LLM Anthropic (Etsy domain)"),
+            ("TAVILY_API_KEY", "ricerca web Tavily"),
+            ("TELEGRAM_BOT_TOKEN", "bot Telegram"),
+            ("TELEGRAM_CHAT_ID", "notifiche Telegram"),
+            ("ETSY_API_KEY", "API Etsy"),
+        ]
+        for attr, label in _CRITICAL:
+            if not getattr(self, attr, ""):
+                logger.warning(
+                    "[config] %s non configurata (%s) — aggiungere al .env",
+                    attr,
+                    label,
+                )
+        return self
     PORT: int = 8000
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
