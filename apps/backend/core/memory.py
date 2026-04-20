@@ -238,6 +238,20 @@ CREATE TABLE IF NOT EXISTS personal_learning (
 );
 CREATE INDEX IF NOT EXISTS idx_pl_agent ON personal_learning (agent, pattern_type);
 CREATE INDEX IF NOT EXISTS idx_pl_seen  ON personal_learning (last_seen);
+
+CREATE TABLE IF NOT EXISTS learning_evaluations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern_id      TEXT NOT NULL,
+    signal_type     TEXT NOT NULL,
+    metric_type     TEXT NOT NULL,
+    baseline_value  REAL NOT NULL,
+    post_value      REAL NOT NULL,
+    delta           REAL NOT NULL,
+    accepted        INTEGER NOT NULL,
+    evaluated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_le_pattern ON learning_evaluations(pattern_id);
+CREATE INDEX IF NOT EXISTS idx_le_signal  ON learning_evaluations(signal_type);
 """
 
 
@@ -294,6 +308,7 @@ class MemoryManager:
             "ALTER TABLE conversations ADD COLUMN domain TEXT NOT NULL DEFAULT 'etsy'",
             "ALTER TABLE agent_logs ADD COLUMN domain TEXT NOT NULL DEFAULT 'etsy'",
             "ALTER TABLE llm_calls ADD COLUMN provider TEXT NOT NULL DEFAULT 'anthropic'",
+            "ALTER TABLE pending_actions ADD COLUMN task_id TEXT",
         ]
         for migration_sql in _migrations:
             try:
@@ -310,6 +325,7 @@ class MemoryManager:
         _new_indexes = [
             "CREATE INDEX IF NOT EXISTS idx_conv_domain ON conversations(domain)",
             "CREATE INDEX IF NOT EXISTS idx_agent_logs_domain ON agent_logs(domain)",
+            "CREATE INDEX IF NOT EXISTS idx_pa_task ON pending_actions(task_id)",
         ]
         for idx_sql in _new_indexes:
             try:
@@ -520,12 +536,15 @@ class MemoryManager:
             cursor = await self._db.execute(
                 """SELECT * FROM agent_logs
                    WHERE status = 'failed' AND agent_name = ?
+                   AND status != 'input_required'
                    ORDER BY updated_at DESC LIMIT 1""",
                 (agent_name,),
             )
         else:
             cursor = await self._db.execute(
-                "SELECT * FROM agent_logs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 1"
+                """SELECT * FROM agent_logs
+                   WHERE status = 'failed' AND status != 'input_required'
+                   ORDER BY updated_at DESC LIMIT 1"""
             )
         row = await cursor.fetchone()
         if row is None:
@@ -1335,6 +1354,7 @@ class MemoryManager:
         action_type: str,
         payload: dict,
         expires_hours: int = 24,
+        task_id: str | None = None,
     ) -> None:
         """INSERT OR REPLACE — sovrascrive pending_action precedente dello stesso tipo."""
         expires_at = (datetime.now(timezone.utc) + timedelta(hours=expires_hours)).strftime(
@@ -1342,9 +1362,9 @@ class MemoryManager:
         )
         await self._db.execute(
             """INSERT OR REPLACE INTO pending_actions
-               (action_type, payload, expires_at)
-               VALUES (?, ?, ?)""",
-            (action_type, _json_dumps(payload), expires_at),
+               (action_type, payload, expires_at, task_id)
+               VALUES (?, ?, ?, ?)""",
+            (action_type, _json_dumps(payload), expires_at, task_id),
         )
         await self._db.commit()
 
@@ -1367,6 +1387,29 @@ class MemoryManager:
         await self._db.execute(
             "DELETE FROM pending_actions WHERE action_type = ?",
             (action_type,),
+        )
+        await self._db.commit()
+
+    async def get_pending_input_for_task(self, task_id: str) -> dict | None:
+        """Recupera pending_action collegata a un task specifico."""
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await self._db.execute(
+            """SELECT * FROM pending_actions
+               WHERE task_id = ? AND expires_at > ?""",
+            (task_id, now),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["payload"] = _json_loads(d.get("payload"))
+        return d
+
+    async def resolve_pending_input(self, task_id: str) -> None:
+        """Marca come risolta la pending_action di un task (dopo risposta utente)."""
+        await self._db.execute(
+            "DELETE FROM pending_actions WHERE task_id = ?",
+            (task_id,),
         )
         await self._db.commit()
 
@@ -1975,6 +2018,58 @@ class MemoryManager:
             ) as cur:
                 rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+    async def save_learning_evaluation(
+        self,
+        pattern_id: str,
+        signal_type: str,
+        metric_type: str,
+        baseline_value: float,
+        post_value: float,
+        accepted: bool,
+    ) -> None:
+        """Registra la valutazione di un pattern (accettato o rifiutato) nella tabella learning_evaluations."""
+        delta = post_value - baseline_value
+        evaluated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        await self._db.execute(
+            """INSERT INTO learning_evaluations
+               (pattern_id, signal_type, metric_type, baseline_value, post_value, delta, accepted, evaluated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (pattern_id, signal_type, metric_type, baseline_value, post_value, delta, int(accepted), evaluated_at),
+        )
+        await self._db.commit()
+
+    async def get_pattern_acceptance_rate(self, signal_type: str, last_n: int = 20) -> float:
+        """Ritorna il tasso di accettazione degli ultimi N pattern per questo signal_type.
+        Usato per decidere se il sistema sta imparando cose utili o rumore."""
+        async with self._db.execute(
+            """SELECT AVG(accepted) FROM (
+                 SELECT accepted FROM learning_evaluations
+                 WHERE signal_type = ?
+                 ORDER BY id DESC LIMIT ?
+               )""",
+            (signal_type, last_n),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None or row[0] is None:
+            return 0.0
+        return float(row[0])
+
+    async def get_baseline_metric(self, metric_type: str, window: int = 10) -> float | None:
+        """Calcola il valore baseline della metrica nelle ultime `window` occorrenze.
+        Ritorna None se dati insufficienti."""
+        async with self._db.execute(
+            """SELECT AVG(post_value) FROM (
+                 SELECT post_value FROM learning_evaluations
+                 WHERE metric_type = ?
+                 ORDER BY id DESC LIMIT ?
+               )""",
+            (metric_type, window),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return float(row[0])
 
     async def decay_old_patterns(self, days: int = 7, factor: float = 0.98) -> int:
         """Applica decay ai pattern non visti da più di N giorni. Restituisce numero di righe aggiornate."""

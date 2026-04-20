@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     # Personal Agents — Learning loop
     LEARNING_DECAY_DAYS: int = 7             # applicazione decay ogni N giorni
     LEARNING_DECAY_FACTOR: float = 0.98      # fattore moltiplicativo decay peso
+    LEARNING_ACCEPTANCE_THRESHOLD: float = 0.02  # delta minimo per accettare un pattern
+    LEARNING_EVAL_WINDOW: int = 10           # ultimi N task per calcolare baseline
 
     # Etsy
     ETSY_API_KEY: str = ""
