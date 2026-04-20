@@ -1,24 +1,16 @@
-import { useState, useEffect, Component, type ReactNode, type ErrorInfo } from 'react'
+import { useEffect, useState, Component, type ReactNode, type ErrorInfo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Header } from './components/Header'
 import { ReasoningPanel } from './components/ReasoningPanel/ReasoningPanel'
-import { ListingsPanel } from './components/Listings/ListingsPanel'
-import { DomainCard } from './components/DomainCard/DomainCard'
-import { SchedulerPanel } from './components/Scheduler/SchedulerPanel'
-import { CostPanel } from './components/CostBreakdown/CostPanel'
+import { PepeOrb } from './components/PepeOrb/PepeOrb'
+import { PersonalQuickCard } from './components/PersonalQuickCard/PersonalQuickCard'
 import { AnalyticsMiniPanel } from './components/AnalyticsMini/AnalyticsMiniPanel'
+import { DomainCard } from './components/DomainCard/DomainCard'
 import { AnalyticsOverlay } from './components/AnalyticsOverlay/AnalyticsOverlay'
 import { SystemOverlay } from './components/SystemOverlay/SystemOverlay'
-import { TaskDetailOverlay } from './components/TaskDetail/TaskDetailOverlay'
-import { ToolFeed } from './components/ToolFeed/ToolFeed'
-import { PepeOrb } from './components/PepeOrb/PepeOrb'
-import { PersonalPanel } from './components/PersonalPanel/PersonalPanel'
+import { ToolActivityChip } from './components/ToolActivityChip/ToolActivityChip'
 import { useWebSocket } from './hooks/useWebSocket'
-import { useResizableColumn } from './hooks/useResizableColumn'
 import { useStore } from './store'
-
-const RIGHT_WIDTH_ETSY     = 340
-const RIGHT_WIDTH_PERSONAL = 480
 
 interface ErrState { error: Error | null }
 class ErrorBoundary extends Component<{ children: ReactNode }, ErrState> {
@@ -28,7 +20,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrState> {
   render() {
     if (this.state.error) {
       return (
-        <div style={{ color: 'var(--danger, #f87171)', padding: 32, fontFamily: 'monospace' }}>
+        <div style={{ color: 'var(--err, #f87171)', padding: 32, fontFamily: 'monospace' }}>
           <strong>Errore critico</strong>
           <pre style={{ marginTop: 8, fontSize: 12 }}>{this.state.error.message}</pre>
         </div>
@@ -40,32 +32,33 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrState> {
 
 export default function App() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
-  const [sistemiTab, setSistemiTab] = useState<'dominio' | 'tool'>('dominio')
-  const { setCostsData, addAgentStep, setAnalyticsSummary, setChromaStats, activeDomain } = useStore(
+  const { setOverlaySystem, setCostsData, addAgentStep, setAnalyticsSummary, setChromaStats } = useStore(
     useShallow((s) => ({
-      setCostsData:       s.setCostsData,
-      addAgentStep:       s.addAgentStep,
+      setOverlaySystem:    s.setOverlaySystem,
+      setCostsData:        s.setCostsData,
+      addAgentStep:        s.addAgentStep,
       setAnalyticsSummary: s.setAnalyticsSummary,
-      setChromaStats:     s.setChromaStats,
-      activeDomain:       s.activeDomain,
+      setChromaStats:      s.setChromaStats,
     }))
   )
   useWebSocket()
 
-  const { width: rightWidth, transitioning, onHandleMouseDown, snapTo } =
-    useResizableColumn(RIGHT_WIDTH_PERSONAL)
-
-  // Snap animato alla larghezza suggerita ad ogni cambio dominio
+  /* ── Hydrate agent steps on mount ── */
   useEffect(() => {
-    snapTo(activeDomain === 'personal' ? RIGHT_WIDTH_PERSONAL : RIGHT_WIDTH_ETSY)
-  }, [activeDomain, snapTo])
+    const DEV_MOCK_STEPS = import.meta.env.DEV ? [
+      { id: 'mock-1', agent: 'watcher',  taskId: 'task-001', stepNumber: 1, stepType: 'llm',   description: 'Analisi trend prezzi concorrenti Etsy',            durationMs: 1240, timestamp: new Date(Date.now() - 180_000).toISOString() },
+      { id: 'mock-2', agent: 'recall',   taskId: 'task-002', stepNumber: 1, stepType: 'think', description: 'Sintesi risultati query "branding handmade"',        durationMs:  880, timestamp: new Date(Date.now() -  90_000).toISOString() },
+      { id: 'mock-3', agent: 'remind',   taskId: 'task-003', stepNumber: 1, stepType: 'tool',  description: 'Scrittura reminder su database locale',               durationMs:  320, timestamp: new Date(Date.now() -  12_000).toISOString() },
+    ] : []
 
-  /* ── Hydrate agent steps on mount (eager, before WS connects — fixes ReasoningPanel after refresh) ── */
-  useEffect(() => {
     fetch('/api/agents/steps/recent?limit=50')
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
-        if (!Array.isArray(data?.steps) || data.steps.length === 0) return
+        if (!Array.isArray(data?.steps) || data.steps.length === 0) {
+          // backend offline → inject dev mock data so reasoning panel looks populated
+          DEV_MOCK_STEPS.forEach((s) => addAgentStep(s))
+          return
+        }
         data.steps.forEach((s: {
           id: number; task_id: string; agent_name: string;
           step_number: number; step_type: string; description: string;
@@ -83,11 +76,14 @@ export default function App() {
           })
         })
       })
-      .catch(() => {})
+      .catch(() => {
+        // fetch failed entirely → inject dev mock data
+        DEV_MOCK_STEPS.forEach((s) => addAgentStep(s))
+      })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  /* ── Fetch costs / analytics / chroma — on mount + ogni 30 s ── */
+  /* ── Fetch costs / analytics / chroma ogni 30s ── */
   useEffect(() => {
     const fetchCosts = () =>
       fetch('/api/costs?days=30')
@@ -96,8 +92,6 @@ export default function App() {
           if (!data?.breakdown) return
           const b = data.breakdown
           const budgetUsd = b.budget_threshold_eur ? b.budget_threshold_eur / 0.92 : undefined
-          // runCost NON viene settato dal REST — si accumula solo dagli eventi WS llm_call.
-          // In questo modo mostra il costo della sessione corrente, non il totale di oggi.
           setCostsData({
             total:    b.total    ?? 0,
             perAgent: b.per_agent ?? {},
@@ -110,8 +104,14 @@ export default function App() {
     const fetchAnalytics = () =>
       fetch('/api/analytics/summary?days=14')
         .then((r) => r.ok ? r.json() : null)
-        .then((data) => { if (data?.summary) setAnalyticsSummary(data.summary) })
-        .catch(() => {})
+        .then((data) => {
+          if (data?.summary) { setAnalyticsSummary(data.summary); return }
+          // offline dev mock
+          if (import.meta.env.DEV) setAnalyticsSummary({ days: 14, total: 263, completed: 263, failed: 0, running: 0, by_status: {}, per_day: {}, per_agent: {}, production_queue: {} })
+        })
+        .catch(() => {
+          if (import.meta.env.DEV) setAnalyticsSummary({ days: 14, total: 263, completed: 263, failed: 0, running: 0, by_status: {}, per_day: {}, per_agent: {}, production_queue: {} })
+        })
 
     const fetchChroma = () =>
       fetch('/api/memory/stats')
@@ -126,138 +126,43 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--base)' }}>
-      <Header />
+      <div className="shell">
+        <Header />
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* ── Content: main (1fr) + right col (360px) ── */}
+        <div className="content">
 
-        {/* ── Center column ── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-
-          {/* Pepe — top 50%: Orb in Personal, ReasoningPanel in Etsy */}
-          <div style={{
-            flex: '0 0 50%',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            borderBottom: '2px solid var(--b1)',
-          }}>
-            {activeDomain === 'personal' ? <PepeOrb /> : <ReasoningPanel />}
-          </div>
-
-          {/* Sistemi — bottom 50% */}
-          <div style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            minHeight: 0,
-          }}>
-            {/* header */}
-            <div className="panel-header">
-              <span className="section-label">Sistemi</span>
+          {/* ── Main: orb-zone (1fr) + reasoning (200px) ── */}
+          <main className="main">
+            <div className="orb-zone">
+              <PepeOrb />
+              <ToolActivityChip />
             </div>
-            {/* tab bar */}
-            <div style={{ display: 'flex', borderBottom: '1px solid var(--b0)', flexShrink: 0 }}>
-              {(['dominio', 'tool'] as const).map(tab => (
-                <button key={tab}
-                  onClick={() => setSistemiTab(tab)}
-                  style={{
-                    flex: 1, height: 32, background: 'none', border: 'none', cursor: 'pointer',
-                    fontFamily: 'var(--fd)', fontSize: 12, letterSpacing: '0.05em',
-                    color: sistemiTab === tab ? 'var(--accent)' : 'var(--tf)',
-                    borderBottom: sistemiTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
-                    transition: 'color .2s var(--e-io), border-color .2s var(--e-io)',
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  {tab === 'dominio' ? 'Dominio' : 'Tool Activity'}
-                </button>
-              ))}
+            <div className="reasoning">
+              <ReasoningPanel />
             </div>
-            {/* tab content */}
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-              {sistemiTab === 'dominio' ? (
-                <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <DomainCard />
-                </div>
-              ) : (
-                <ToolFeed />
-              )}
+          </main>
+
+          {/* ── Right col: personal qcard + analytics qcard (50/50) ── */}
+          <aside className="right-col">
+            <div className="qcard">
+              <PersonalQuickCard onOpen={() => setOverlaySystem('personal')} />
             </div>
-          </div>
+            <div className="qcard">
+              <AnalyticsMiniPanel onOpen={() => setAnalyticsOpen(true)} />
+            </div>
+          </aside>
         </div>
 
-        {/* ── Resize handle ── */}
-        <div
-          onMouseDown={onHandleMouseDown}
-          style={{
-            width: 4,
-            flexShrink: 0,
-            cursor: 'col-resize',
-            background: 'var(--b0)',
-            transition: 'background .2s var(--e-io)',
-            zIndex: 10,
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(45,232,106,0.35)')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--b0)')}
-        />
-
-        {/* ── Right column ── */}
-        <div
-          style={{
-            width: rightWidth,
-            flexShrink: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            transition: transitioning ? 'width 0.4s var(--e-out)' : 'none',
-          }}
-        >
-          {activeDomain === 'personal' ? (
-            /* ── Personal right column ── */
-            <PersonalPanel />
-          ) : (
-            /* ── Etsy right column ── */
-            <>
-              {/* Listing — flex:3 */}
-              <div style={{ flex: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <ListingsPanel />
-              </div>
-
-              {/* Bottom-right — altezza naturale, listing si adatta */}
-              <div style={{
-                flexShrink: 0,
-                borderTop: '1px solid var(--b0)',
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-              }}>
-                {/* Scheduler */}
-                <div style={{ flexShrink: 0, borderBottom: '1px solid var(--b0)' }}>
-                  <SchedulerPanel />
-                </div>
-                {/* Costo */}
-                <div style={{ flexShrink: 0, borderBottom: '1px solid var(--b0)' }}>
-                  <CostPanel />
-                </div>
-                {/* Analytics mini */}
-                <div style={{ flexShrink: 0 }}>
-                  <AnalyticsMiniPanel onOpen={() => setAnalyticsOpen(true)} />
-                </div>
-              </div>
-            </>
-          )}
+        {/* ── Domains bar: 180px full-width bottom ── */}
+        <div className="domains">
+          <DomainCard />
         </div>
       </div>
 
-      {/* System overlay modal */}
-      <SystemOverlay />
-      {/* Analytics overlay modal */}
+      {/* ── Overlays ── */}
       <AnalyticsOverlay open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />
-      {/* Task detail overlay */}
-      <TaskDetailOverlay />
-    </div>
+      <SystemOverlay />
     </ErrorBoundary>
   )
 }

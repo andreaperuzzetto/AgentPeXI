@@ -89,21 +89,21 @@ function SectionHeader({ label, count }: { label: string; count?: number }) {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      borderBottom: '1px solid var(--b0)',
+      borderBottom: '1px solid var(--border-subtle)',
       flexShrink: 0,
     }}>
       <span style={{
-        fontFamily: 'var(--fh)',
+        fontFamily: 'var(--font-ui)',
         fontSize: 11,
         fontWeight: 700,
         letterSpacing: '0.08em',
         textTransform: 'uppercase' as const,
-        color: 'var(--tm)',
+        color: 'var(--text-secondary)',
       }}>
         {label}
       </span>
       {count !== undefined && (
-        <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
           {count}
         </span>
       )}
@@ -119,7 +119,7 @@ function ActivitySection({ items }: { items: RecentActivity[] }) {
       <SectionHeader label="Attività Recente" count={items.length || undefined} />
       {items.length === 0 ? (
         <div style={{ padding: '10px 13px' }}>
-          <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)' }}>
             Nessuna attività recente
           </span>
         </div>
@@ -136,14 +136,14 @@ function ActivitySection({ items }: { items: RecentActivity[] }) {
                 borderRadius: 4,
                 transition: 'background .2s var(--e-io)',
               }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(45,232,106,.04)' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'color-mix(in srgb, var(--accent) 4%, transparent)' }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
             >
               {/* Time */}
               <span style={{
-                fontFamily: 'var(--fd)',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 11,
-                color: 'var(--tf)',
+                color: 'var(--text-faint)',
                 width: 44,
                 flexShrink: 0,
               }}>
@@ -152,11 +152,11 @@ function ActivitySection({ items }: { items: RecentActivity[] }) {
 
               {/* Agent badge */}
               <span style={{
-                fontFamily: 'var(--fd)',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 10,
                 padding: '1px 5px',
                 borderRadius: 3,
-                border: '1px solid rgba(45,232,106,.18)',
+                border: '1px solid color-mix(in srgb, var(--accent) 18%, transparent)',
                 color: 'var(--accent)',
                 flexShrink: 0,
                 letterSpacing: '0.04em',
@@ -166,9 +166,9 @@ function ActivitySection({ items }: { items: RecentActivity[] }) {
 
               {/* Query */}
               <span style={{
-                fontFamily: 'var(--fd)',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 12,
-                color: 'var(--tm)',
+                color: 'var(--text-secondary)',
                 flex: 1,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -203,7 +203,7 @@ function RemindersSection({ items }: { items: Reminder[] }) {
       <SectionHeader label="Prossimi Reminder" count={pending.length || undefined} />
       {pending.length === 0 ? (
         <div style={{ padding: '10px 13px' }}>
-          <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)' }}>
             Nessun reminder in attesa
           </span>
         </div>
@@ -220,12 +220,12 @@ function RemindersSection({ items }: { items: Reminder[] }) {
                 borderRadius: 4,
                 transition: 'background .2s var(--e-io)',
               }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(45,232,106,.04)' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'color-mix(in srgb, var(--accent) 4%, transparent)' }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
             >
               {/* When */}
               <span style={{
-                fontFamily: 'var(--fd)',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 11,
                 color: 'var(--accent)',
                 width: 70,
@@ -236,9 +236,9 @@ function RemindersSection({ items }: { items: Reminder[] }) {
 
               {/* Message */}
               <span style={{
-                fontFamily: 'var(--fd)',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 13,
-                color: 'var(--tp)',
+                color: 'var(--text-primary)',
                 flex: 1,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -262,7 +262,7 @@ function ConnDot({ status }: { status: ConnStatus }) {
   const color =
     status === 'ok'      ? 'var(--ok)'     :
     status === 'error'   ? 'var(--err)'    :
-    /* unknown */          'var(--tf)'
+    /* unknown */          'var(--text-faint)'
   return (
     <span style={{
       width: 7,
@@ -272,7 +272,7 @@ function ConnDot({ status }: { status: ConnStatus }) {
       flexShrink: 0,
       display: 'inline-block',
       marginRight: 4,
-      boxShadow: status === 'ok' ? '0 0 5px rgba(45,232,106,.5)' : 'none',
+      boxShadow: status === 'ok' ? '0 0 5px color-mix(in srgb, var(--accent) 50%, transparent)' : 'none',
       transition: 'background .3s, box-shadow .3s',
     }} />
   )
@@ -299,7 +299,7 @@ function ConnectionsSection({
         {/* MCP services */}
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' as const }}>
           {mcpItems.map(({ key, label }) => (
-            <span key={key} style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tm)', display: 'flex', alignItems: 'center' }}>
+            <span key={key} style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center' }}>
               <ConnDot status={mcp ? mcp[key] : 'unknown'} />
               {label}
             </span>
@@ -313,28 +313,28 @@ function ConnectionsSection({
           gap: 8,
           padding: '5px 8px',
           borderRadius: 6,
-          background: 'var(--s2)',
-          border: '1px solid var(--b0)',
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border-subtle)',
           marginTop: 3,
         }}>
           <ConnDot status={ollama?.loaded ? 'ok' : 'unknown'} />
-          <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tm)' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>
             Ollama
           </span>
           {ollama && (
             <>
-              <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
                 {ollama.model}
               </span>
-              <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: ollama.loaded ? 'var(--accent)' : 'var(--tf)', marginLeft: 'auto' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: ollama.loaded ? 'var(--accent)' : 'var(--text-faint)', marginLeft: 'auto' }}>
                 {ollama.loaded ? 'warm' : 'cold'}
               </span>
               {ollama.latency_ms !== null && (
-                <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
                   {ollama.latency_ms}ms
                 </span>
               )}
-              <span style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--ok)', opacity: 0.8 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ok)', opacity: 0.8 }}>
                 €0
               </span>
             </>
@@ -395,29 +395,29 @@ export function PersonalPanel() {
       {/* Panel header */}
       <div style={{
         padding: '8px 13px',
-        borderBottom: '1px solid var(--b1)',
+        borderBottom: '1px solid var(--border-strong)',
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
         gap: 8,
       }}>
         <span style={{
-          fontFamily: 'var(--fh)',
+          fontFamily: 'var(--font-ui)',
           fontSize: 13,
           fontWeight: 700,
           letterSpacing: '0.06em',
-          color: 'var(--tp)',
+          color: 'var(--text-primary)',
           textTransform: 'uppercase' as const,
         }}>
           Personal
         </span>
         <span style={{
-          fontFamily: 'var(--fd)',
+          fontFamily: 'var(--font-mono)',
           fontSize: 11,
-          color: 'var(--tf)',
+          color: 'var(--text-faint)',
           padding: '1px 7px',
           borderRadius: 99,
-          border: '1px solid var(--b0)',
+          border: '1px solid var(--border-subtle)',
           marginLeft: 'auto',
         }}>
           OLLAMA · €0
@@ -440,7 +440,7 @@ export function PersonalPanel() {
             justifyContent: 'center',
             padding: '40px 0',
           }}>
-            <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)', letterSpacing: '0.06em' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', letterSpacing: '0.06em' }}>
               Caricamento…
             </span>
           </div>
@@ -448,10 +448,10 @@ export function PersonalPanel() {
           <>
             <ActivitySection items={activity} />
 
-            <div style={{ height: 1, background: 'var(--b0)', flexShrink: 0 }} />
+            <div style={{ height: 1, background: 'var(--border-subtle)', flexShrink: 0 }} />
             <RemindersSection items={reminders} />
 
-            <div style={{ height: 1, background: 'var(--b0)', flexShrink: 0 }} />
+            <div style={{ height: 1, background: 'var(--border-subtle)', flexShrink: 0 }} />
             <ConnectionsSection mcp={mcp} ollama={ollama} />
           </>
         )}

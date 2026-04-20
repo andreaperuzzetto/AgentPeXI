@@ -1,136 +1,123 @@
 import { useStore } from '../../store'
 
-interface MiniItem {
-  label: string
-  value: string | number
-  sub: string
-  accent?: boolean
-  err?: boolean
-  faint?: boolean
-}
-
-export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
-  const agents = useStore((s) => s.agents)
-  const summary = useStore((s) => s.analyticsSummary)
-
-  // Derive counts from store
-  // AgentStatusValue = 'idle' | 'running' | 'error' — 'done' is never set; idle = completed for display
-  const allStatuses = Object.values(agents).map((a) => a?.status ?? 'idle')
-  const running  = allStatuses.filter((s) => s === 'running').length
-
-  const pipelineTotal = summary?.total ?? 0
-  const completedTotal = summary?.completed ?? 0
-  const failedTotal = summary?.failed ?? 0
-  const successPct = pipelineTotal > 0 ? Math.round((completedTotal / pipelineTotal) * 100) : 0
-
-  const items: MiniItem[] = [
-    { label: 'Pipeline', value: pipelineTotal,   sub: running > 0 ? `${running} in corso` : '—',              accent: running > 0 },
-    { label: 'Successi', value: completedTotal,   sub: pipelineTotal > 0 ? `${successPct}%` : '—',            accent: true },
-    { label: 'Failures', value: failedTotal,      sub: pipelineTotal > 0 ? `${((failedTotal / pipelineTotal) * 100).toFixed(1)}%` : '0%', err: true },
-    { label: 'Design',   value: summary?.production_queue?.completed ?? 0, sub: 'completati',              faint: true },
-  ]
+/* ── Sparkline ───────────────────────────────────────────────── */
+function Sparkline({ perDay }: { perDay: Record<string, number> }) {
+  const days   = Object.keys(perDay).sort().slice(-14)
+  if (days.length < 2) return null
+  const values = days.map((d) => perDay[d] ?? 0)
+  const max    = Math.max(...values, 0.001)
+  const W = 320, H = 30
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * W
+    const y = H - (v / max) * (H - 2) - 1
+    return `${x},${y}`
+  }).join(' ')
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
+    <svg
+      width="100%"
+      height={H}
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      style={{ display: 'block', overflow: 'visible' }}
+    >
+      <polyline
+        points={pts}
+        fill="none"
+        stroke="var(--acc)"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        opacity={0.6}
+      />
+    </svg>
+  )
+}
 
-      {/* Mini title */}
-      <div style={{
-        padding: '7px 13px 6px',
-        flexShrink: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}>
-        <span style={{
-          fontFamily: 'var(--fh)',
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase' as const,
-          color: 'var(--tm)',
-        }}>
-          Analytics
-        </span>
-        <button
-          style={{
-            fontFamily: 'var(--fh)',
-            fontWeight: 700,
-            fontSize: 11,
-            letterSpacing: '0.05em',
-            textTransform: 'uppercase' as const,
-            background: 'none',
-            border: '1px solid var(--b0)',
-            borderRadius: 4,
-            padding: '3px 9px',
-            color: 'var(--tm)',
-            cursor: 'pointer',
-            transition: 'border-color .22s var(--e-io), color .22s var(--e-io), background .22s var(--e-io)',
-          }}
-          onClick={onOpen}
-          onMouseEnter={(e) => {
-            const el = e.currentTarget as HTMLElement
-            el.style.borderColor = 'var(--b1)'
-            el.style.color = 'var(--accent)'
-            el.style.background = 'rgba(45,232,106,.05)'
-          }}
-          onMouseLeave={(e) => {
-            const el = e.currentTarget as HTMLElement
-            el.style.borderColor = 'var(--b0)'
-            el.style.color = 'var(--tm)'
-            el.style.background = 'none'
-          }}
-        >
-          Apri →
-        </button>
+/* ── helpers ─────────────────────────────────────────────────── */
+const costStr = (n: number) =>
+  n === 0 ? '€0' : n < 0.01 ? `€${n.toFixed(4)}` : `€${n.toFixed(3)}`
+
+/* ── component ───────────────────────────────────────────────── */
+export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
+  const agents  = useStore((s) => s.agents)
+  const llm     = useStore((s) => s.llmStats)
+  const summary = useStore((s) => s.analyticsSummary)
+
+  const runCost   = llm.runCost
+  const totalCost = llm.totalCost
+  const sparkData = llm.perDay   // Record<YYYY-MM-DD, number>
+
+  const running   = Object.values(agents).filter((a) => a?.status === 'running').length
+  const completed = summary?.completed ?? 0
+  const failed    = summary?.failed    ?? 0
+
+  const hasGlow = running > 0
+
+  return (
+    <>
+      {/* ── header ── */}
+      <div className="qcard-head">
+        <span className="qcard-title">Analytics</span>
+        <button className="qcard-action" onClick={onOpen}>Espandi →</button>
       </div>
 
-      {/* 2×2 grid */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: 6,
-        padding: '0 13px 8px',
-      }}>
-        {items.map((item) => (
-          <div
-            key={item.label}
-            style={{
-              background: 'var(--s2)',
-              border: '1px solid var(--b0)',
-              borderRadius: 8,
-              padding: '7px 10px',
-              transition: 'border-color .25s var(--e-io), transform .25s var(--e-out)',
-              cursor: 'default',
-            }}
-            onMouseEnter={(e) => {
-              const el = e.currentTarget as HTMLElement
-              el.style.borderColor = 'var(--b1)'
-              el.style.transform = 'translateY(-1px)'
-            }}
-            onMouseLeave={(e) => {
-              const el = e.currentTarget as HTMLElement
-              el.style.borderColor = 'var(--b0)'
-              el.style.transform = 'none'
-            }}
-          >
-            <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', letterSpacing: '0.03em', textTransform: 'uppercase' as const }}>
-              {item.label}
-            </div>
-            <div style={{
-              fontFamily: 'var(--fd)',
-              fontSize: 22,
-              fontWeight: 500,
-              marginTop: 3,
-              color: item.err ? 'var(--err)' : item.faint ? 'var(--tf)' : item.accent ? 'var(--accent)' : 'var(--tp)',
-            }}>
-              {item.value}
-            </div>
-            <div style={{ fontFamily: 'var(--fd)', fontSize: 11, color: 'var(--tf)', marginTop: 1 }}>
-              {item.sub}
-            </div>
+      {/* ── body ── */}
+      <div className="qcard-body">
+
+        {/* Cost */}
+        <div>
+          <div className="a-cost-lbl" style={{ marginBottom: 4 }}>Costo sessione</div>
+          <div className="a-cost-big">
+            <span className="a-cost-val">{costStr(runCost)}</span>
+            {totalCost > 0 && (
+              <span className="a-cost-total">totale {costStr(totalCost)}</span>
+            )}
           </div>
-        ))}
+        </div>
+
+        {/* 3-stat grid */}
+        <div className="a-stats">
+          <div className="a-stat">
+            <span className="a-stat-lbl">Completati</span>
+            <span className="a-stat-val ok">{completed}</span>
+          </div>
+          <div className="a-stat">
+            <span className="a-stat-lbl">Falliti</span>
+            <span className="a-stat-val err">{failed}</span>
+          </div>
+          <div className="a-stat">
+            <span className="a-stat-lbl">Running</span>
+            <span className="a-stat-val dim">{running}</span>
+          </div>
+        </div>
+
+        {/* Sparkline */}
+        {Object.keys(sparkData).length > 1 && (
+          <div className="sparkline-wrap">
+            <span className="sparkline-lbl">14 giorni</span>
+            <Sparkline perDay={sparkData} />
+          </div>
+        )}
+
+        {/* Agents row */}
+        <div className="a-agents-row">
+          <span
+            className="a-agents-dot"
+            style={{
+              background:  hasGlow ? 'var(--ok)' : 'var(--tf)',
+              boxShadow:   hasGlow ? '0 0 6px rgba(27,255,94,.6)' : 'none',
+              animation:   hasGlow ? 'pdot 1.6s ease-in-out infinite' : 'none',
+            }}
+          />
+          <span className="a-agents-txt">
+            {running > 0
+              ? `${running} agente${running > 1 ? 'i' : ''} attivo${running > 1 ? 'i' : ''}`
+              : 'Nessun agente attivo'}
+          </span>
+        </div>
+
       </div>
-    </div>
+    </>
   )
 }

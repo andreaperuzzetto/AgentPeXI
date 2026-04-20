@@ -8,12 +8,16 @@ const AGENT_DESCS: Record<string, string> = {
   design:    'Generazione immagini, prompt engineering, output SVG e PNG ad alta risoluzione.',
   publisher: 'Creazione listing, titoli SEO, tag e pubblicazione su Etsy.',
   analytics: 'Monitoraggio KPI, A/B test, analisi performance e reportistica.',
+  finance:   'Gestione costi, margini, budget mensile e reportistica finanziaria.',
   // Personal
   recall:    'Ricerca nella memoria schermo. Risponde a "cosa stavo guardando?" via Ollama.',
-  watcher:   'Servizio di monitoraggio passivo. Cattura schermo, OCR e indicizzazione automatica in ChromaDB.',
+  remind:    'Gestione promemoria e notifiche programmate.',
+  summarize: 'Sintesi automatica di documenti, email e contenuti web.',
+  research_personal: 'Ricerca web e analisi documenti per uso personale.',
+  watcher:   'Monitoraggio passivo. Cattura schermo, OCR e indicizzazione in ChromaDB.',
+  gmail:     'Integrazione Gmail per lettura, risposta e archiviazione email.',
 }
 
-/** Questi ID sono servizi di sistema, non agenti LLM */
 const SERVICES = new Set(['watcher'])
 
 interface Props {
@@ -22,9 +26,9 @@ interface Props {
 }
 
 export function AgentOverlayCard({ agentName, index }: Props) {
-  const agent        = useStore((s) => s.agents[agentName])
-  const steps        = useStore((s) => s.agentSteps[agentName] ?? EMPTY_STEPS)
-  const selectedAgent = useStore((s) => s.selectedAgent)
+  const agent            = useStore((s) => s.agents[agentName])
+  const steps            = useStore((s) => s.agentSteps[agentName] ?? EMPTY_STEPS)
+  const selectedAgent    = useStore((s) => s.selectedAgent)
   const setSelectedAgent = useStore((s) => s.setSelectedAgent)
 
   const isSelected = selectedAgent === agentName
@@ -32,141 +36,63 @@ export function AgentOverlayCard({ agentName, index }: Props) {
   const isError    = agent?.status === 'error'
   const isService  = SERVICES.has(agentName)
 
-  const statusColor =
-    isRunning ? 'var(--accent)' :
-    isError   ? 'var(--err)' :
-    'var(--tf)'
+  const badgeClass = isRunning ? 'run' : isError ? 'err' : ''
+  const statusLabel = agent?.status?.toUpperCase() ?? 'IDLE'
 
   return (
-    /* .ov-card */
     <div
-      className="card animate-card-up"
-      style={{
-        padding: 16,
-        cursor: 'pointer',
-        animationDelay: `${index * 0.05}s`,
-        ...(isSelected ? {
-          borderColor: 'rgba(45,232,106,.4)',
-          boxShadow: `
-            inset 0 1px 0 rgba(255,255,255,.07),
-            0 2px 8px rgba(0,0,0,.5),
-            0 8px 28px rgba(0,0,0,.32),
-            0 0 0 1px rgba(45,232,106,.1),
-            0 0 32px rgba(45,232,106,.18)
-          `,
-        } : {}),
-      }}
+      className={`card ov-card animate-card-up${isSelected ? ' selected' : ''}`}
+      style={{ animationDelay: `${index * 0.05}s` }}
       onClick={() => setSelectedAgent(isSelected ? null : agentName)}
     >
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      {/* header */}
+      <div className="ov-card-header">
         <span
           className={isRunning ? 'status-dot status-dot--running' : 'status-dot'}
           style={
-            isError ? { background: 'var(--err)' } :
+            isError   ? { background: 'var(--err)' } :
             !isRunning ? { background: 'var(--tf)' } :
             undefined
           }
         />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' as const, gap: 2 }}>
-          <span
-            style={{
-              fontFamily: 'var(--fh)',
-              fontSize: 16,
-              fontWeight: 700,
-              letterSpacing: '0.05em',
-              textTransform: 'uppercase' as const,
-              color: 'var(--tp)',
-            }}
-          >
-            {agentName}
-          </span>
-          {isService && (
-            <span style={{ fontFamily: 'var(--fd)', fontSize: 10, color: 'var(--tf)', letterSpacing: '0.08em', textTransform: 'uppercase' as const }}>
-              SERVIZIO
-            </span>
-          )}
+        <div className="ov-card-info">
+          <span className="ov-card-name">{agentName.replace('_', ' ')}</span>
+          {isService && <span className="ov-card-svc">Servizio</span>}
         </div>
-        {/* Status badge */}
-        <span
-          style={{
-            fontFamily: 'var(--fd)',
-            fontSize: 11,
-            padding: '1px 8px',
-            borderRadius: 99,
-            border: `1px solid ${
-              isRunning ? 'rgba(45,232,106,.28)' :
-              isError   ? 'rgba(224,82,82,.28)' :
-              'var(--b0)'
-            }`,
-            color: statusColor,
-            letterSpacing: '0.04em',
-          }}
-        >
-          {agent?.status?.toUpperCase() ?? 'IDLE'}
+        <span className={`ov-card-badge${badgeClass ? ` ${badgeClass}` : ''}`}>
+          {statusLabel}
         </span>
       </div>
 
-      {/* Description — .ov-card-desc */}
-      <div
-        style={{
-          fontSize: 15,
-          color: 'var(--tm)',
-          marginTop: 6,
-          lineHeight: 1.6,
-        }}
-      >
+      {/* description / last task */}
+      <div className="ov-card-desc">
         {agent?.lastTask
           ? (agent.lastTask.length > 80 ? agent.lastTask.slice(0, 80) + '…' : agent.lastTask)
           : (AGENT_DESCS[agentName] ?? '')}
       </div>
 
-      {/* Last steps preview */}
+      {/* last 3 steps preview */}
       {steps.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 8 }}>
+        <div className="ov-card-steps">
           {steps.slice(-3).map((step, i) => {
             const isLatest = i === Math.min(2, steps.length - 1)
             return (
-              <div
-                key={step.id}
-                style={{
-                  fontFamily: 'var(--fd)',
-                  fontSize: 13,
-                  color: isLatest ? 'var(--tm)' : 'var(--tf)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap' as const,
-                }}
-              >
-                {step.description.length > 52 ? step.description.slice(0, 52) + '…' : step.description}
+              <div key={step.id} className={`ov-card-step${isLatest ? ' latest' : ''}`}>
+                {step.description.length > 52
+                  ? step.description.slice(0, 52) + '…'
+                  : step.description}
               </div>
             )
           })}
         </div>
       )}
 
-      {/* Footer — .ov-card-foot */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginTop: 11,
-          paddingTop: 9,
-          borderTop: '1px solid var(--b0)',
-        }}
-      >
-        <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)' }}>
+      {/* footer */}
+      <div className="ov-card-foot">
+        <span className="ov-card-count">
           {isService ? `${steps.length} catture` : `${steps.length} step registrati`}
         </span>
-        <span
-          style={{
-            fontFamily: 'var(--fd)',
-            fontSize: 12,
-            color: isSelected ? 'var(--tm)' : 'var(--accent)',
-            transition: 'letter-spacing .2s var(--e-out)',
-          }}
-        >
+        <span className={`ov-card-cta${isSelected ? ' open' : ''}`}>
           {isSelected ? 'Aperto ✓' : 'Dettaglio →'}
         </span>
       </div>

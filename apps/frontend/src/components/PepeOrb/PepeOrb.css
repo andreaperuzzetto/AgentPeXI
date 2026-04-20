@@ -1,0 +1,210 @@
+/* ── Atmosphere glow ───────────────────────────────────────── */
+.orb-atmos {
+  position: absolute;
+  width: 360px;
+  height: 360px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(27,255,94,.05) 0%,
+    rgba(27,255,94,.015) 50%,
+    transparent 72%
+  );
+  pointer-events: none;
+  animation: atmos 4s ease-in-out infinite;
+}
+@keyframes atmos {
+  0%, 100% { transform: scale(1);    opacity: .8; }
+  50%       { transform: scale(1.08); opacity: 1;  }
+}
+
+/* ── Orb container ─────────────────────────────────────────── */
+.orb-wrap {
+  position: relative;
+  width: 0;
+  height: 0;
+  --orb-size:   155px;
+  --opacity-pk: 0.72;
+  --time:       22s;
+  --wrap-time:  22s;
+}
+
+/* ── State presets ─────────────────────────────────────────── */
+.s-wakeword {
+  --orb-size:   140px;
+  --time:       22s;
+  --wrap-time:  22s;
+}
+.s-listening {
+  --orb-size:   185px;
+  --time:       13s;
+  --wrap-time:  10s;
+  animation: breathe 2.4s infinite ease-in-out;
+}
+.s-thinking {
+  --orb-size:   165px;
+  --time:        9s;
+  --wrap-time:   5.5s;
+  animation: flutter 0.85s infinite ease-in-out;
+}
+.s-speaking {
+  --orb-size:   205px;
+  --time:        7s;
+  --wrap-time:   5s;
+  animation: pulse 1.8s infinite ease-in-out;
+}
+
+@keyframes breathe { 0%, 100% { transform: scale(.92); } 50% { transform: scale(1.08); } }
+@keyframes flutter { 0%, 100% { transform: scale(.97); } 50% { transform: scale(1.03); } }
+@keyframes pulse   { 0%, 100% { transform: scale(.97); } 50% { transform: scale(1.03); } }
+
+/* ── 3D rotation cage ─────────────────────────────────────── */
+.orb-inner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  perspective: 1000px;
+  transform-style: preserve-3d;
+  animation: rotate var(--wrap-time, 22s) infinite linear;
+  cursor: pointer;
+}
+@keyframes rotate {
+  100% { transform: rotateY(360deg) rotateX(360deg); }
+}
+
+/* ── Particles ────────────────────────────────────────────── */
+.particle {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+/* ── State label ──────────────────────────────────────────── */
+.orb-state-lbl {
+  position: absolute;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 10px;
+  letter-spacing: .28em;
+  text-transform: uppercase;
+  color: rgba(27,255,94,.35);
+  pointer-events: none;
+  white-space: nowrap;
+  height: 16px;
+}
+
+/* ── State controls (bottom-left) ─────────────────────────── */
+.orb-controls {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  display: flex;
+  gap: 5px;
+}
+.orb-btn {
+  background: rgba(27,255,94,.04);
+  border: 1px solid rgba(27,255,94,.10);
+  border-radius: 3px;
+  color: rgba(27,255,94,.35);
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: all .15s;
+  outline: none;
+}
+.orb-btn:hover {
+  background: rgba(27,255,94,.09);
+  color: rgba(27,255,94,.70);
+  border-color: rgba(27,255,94,.28);
+}
+.orb-btn.active {
+  background: rgba(27,255,94,.10);
+  border-color: rgba(27,255,94,.38);
+  color: var(--acc, #1BFF5E);
+}
+
+/* ── Tool Activity Chip ───────────────────────────────────── */
+.tool-chip {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%) translateX(8px);
+  width: 220px;
+  background: rgba(10,16,10,.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(27,255,94,.14);
+  border-radius: 10px;
+  padding: 10px 13px;
+  box-shadow: 0 4px 24px rgba(0,0,0,.5), 0 0 20px rgba(27,255,94,.06);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .35s cubic-bezier(.22,1,.36,1), transform .35s cubic-bezier(.22,1,.36,1);
+  z-index: 5;
+}
+.tool-chip.visible {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+.tc-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+.tc-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--acc, #1BFF5E);
+  box-shadow: 0 0 6px rgba(27,255,94,.6);
+  animation: pdot 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pdot {
+  0%, 100% { opacity: 1;   transform: scale(1);    box-shadow: 0 0 7px rgba(27,255,94,.7); }
+  50%       { opacity: .55; transform: scale(.82);  box-shadow: 0 0 3px rgba(27,255,94,.3); }
+}
+.tc-agent {
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--acc, #1BFF5E);
+  opacity: .7;
+}
+.tc-badge {
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(27,255,94,.18);
+  color: rgba(27,255,94,.6);
+  letter-spacing: .04em;
+  margin-left: auto;
+}
+.tc-desc {
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  color: var(--tm, #6B8C70);
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.tc-time {
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 10px;
+  color: var(--tf, #2D4030);
+  margin-top: 5px;
+  opacity: .7;
+}
