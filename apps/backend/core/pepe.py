@@ -714,6 +714,18 @@ ESEMPI:
         if delegation:
             agent_name = delegation["delegate"]
 
+            # ── Pre-crea AgentTask — consente clarification formale con INPUT_REQUIRED (§5.2) ──
+            # Il task_id viene allocato qui: se serve clarification viene salvato come
+            # pending_action correlato; se no, viene subito messo in coda.
+            task = AgentTask(
+                agent_name=agent_name,
+                input_data={
+                    **delegation.get("input", {}),
+                    "task_type": delegation.get("task_type", "generic"),
+                },
+                source=source,
+            )
+
             # Clarification loop — derivato da AgentCard.requires_clarification
             _needs_clarify = bool(self._agent_requires_clarification(agent_name, delegation.get("input", {})))
             if not _needs_clarify:
@@ -724,7 +736,8 @@ ESEMPI:
                 )
             if _needs_clarify:
                 clarification = await self._clarify_if_needed(
-                    message, delegation, history, system, session_id, source
+                    message, delegation, history, system, session_id, source,
+                    task=task,  # ← task formale: abilita INPUT_REQUIRED + pending_action correlata
                 )
                 if clarification is not None:
                     return clarification
@@ -736,20 +749,14 @@ ESEMPI:
                     await self.memory.save_message(session_id, "assistant", duplicate_warning, source)
                     return duplicate_warning
 
-            # AGGIUNTA 3 — Context enrichment
+            # AGGIUNTA 3 — Context enrichment (aggiorna task.input_data in-place)
             enriched_input = await self._enrich_task_context(
                 agent_name=agent_name,
                 base_input=delegation.get("input", {}),
                 session_id=session_id,
             )
-            delegation["input"] = enriched_input
-
-            task = AgentTask(
-                agent_name=agent_name,
-                input_data=delegation.get("input", {}),
-                source=source,
-            )
-            task.input_data["task_type"] = delegation.get("task_type", "generic")
+            task.input_data.update(enriched_input)
+            delegation["input"] = enriched_input  # mantieni per coerenza downstream
 
             # Mette in coda e attende risultato
             try:
@@ -1377,6 +1384,12 @@ ESEMPI:
                 )
                 if not has_content:
                     missing.append("cosa vuoi che sintetizzi (URL o testo)")
+
+            elif agent_name == "research_personal":
+                # "query" obbligatoria — cosa cercare sul web
+                has_query = bool(agent_input.get("query") and str(agent_input["query"]).strip())
+                if not has_query:
+                    missing.append("cosa vuoi che cerchi")
 
         else:
             # ── Etsy: check per research (niche + product_type) ──

@@ -96,6 +96,7 @@ class ResearchPersonalAgent(AgentBase):
         input_schema={"query": "str", "depth": "quick|deep"},
         layer="personal",
         llm="ollama",
+        requires_clarification=["query"],   # chiede "cosa cerco?" se LLM non estrae query
         confidence_threshold=0.90,
     )
 

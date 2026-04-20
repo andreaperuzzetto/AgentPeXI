@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import logging.handlers
 import os
 import re
+import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -891,6 +893,86 @@ async def get_analytics_failures(limit: Annotated[int, Query(ge=1, le=500)] = 20
 # ------------------------------------------------------------------
 # WebSocket
 # ------------------------------------------------------------------
+
+
+@app.websocket("/ws/voice")
+async def ws_voice(websocket: WebSocket) -> None:
+    """WebSocket dedicato al canale voce Orb.
+
+    Protocollo a due fasi (vedi docs/changes.md §11.5):
+
+    Fase 1 — Wake word:
+      Client → Server: binario (chunk PCM 16kHz mono, ~500ms)
+      Server → Client: {"type": "wake"}  quando rilevato
+
+    Fase 2 — Utterance:
+      Client → Server: binario (blob audio completo, max 8s)
+      Server → Client: {"type": "response", "text": "...", "audio_b64": "..."|null}
+
+    Dopo la risposta il ciclo riparte dalla Fase 1.
+    Canale separato da /ws/chat — non interferisce con gli eventi UI.
+    """
+    from apps.backend.voice.stt import transcribe
+    from apps.backend.voice.tts import synthesize
+    from apps.backend.voice.wake import detect_wake_word
+
+    await websocket.accept()
+    logger.info("WebSocket /ws/voice connesso")
+    phase = "wakeword"  # "wakeword" | "utterance"
+
+    try:
+        while True:
+            data = await websocket.receive_bytes()
+
+            if phase == "wakeword":
+                detected = detect_wake_word(data)
+                if detected:
+                    await websocket.send_json({"type": "wake"})
+                    phase = "utterance"
+
+            elif phase == "utterance":
+                # Scrive il blob in un file temporaneo → STT → Pepe → risposta
+                with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+                    f.write(data)
+                    tmp_path = f.name
+                try:
+                    text = await transcribe(tmp_path)
+                    if text.strip():
+                        reply = await pepe.handle_user_message(
+                            message=text,
+                            session_id="voice_orb",
+                            source="orb_voice",
+                        )
+                        # TTS: ElevenLabs se API key configurata, altrimenti None
+                        audio_b64: str | None = None
+                        if getattr(settings, "ELEVENLABS_API_KEY", None):
+                            try:
+                                audio_bytes = await synthesize(reply)
+                                audio_b64 = base64.b64encode(audio_bytes).decode()
+                            except Exception as tts_exc:
+                                logger.warning("TTS ElevenLabs fallito: %s", tts_exc)
+                        await websocket.send_json({
+                            "type": "response",
+                            "text": reply,
+                            "audio_b64": audio_b64,
+                        })
+                    else:
+                        # Trascrizione vuota — nessun testo rilevato
+                        await websocket.send_json({"type": "response", "text": "", "audio_b64": None})
+                except Exception as stt_exc:
+                    logger.exception("Errore STT/Pepe in /ws/voice: %s", stt_exc)
+                    await websocket.send_json({"type": "error", "message": "Errore trascrizione"})
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                phase = "wakeword"  # torna in ascolto wake word
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket /ws/voice disconnesso")
+    except Exception:
+        logger.exception("Errore imprevisto in /ws/voice")
 
 
 @app.websocket("/ws/chat")
