@@ -98,6 +98,8 @@ export function Header() {
           <button
             key={d}
             onClick={() => handleDomainSwitch(d)}
+            aria-label={`Attiva dominio ${d === 'personal' ? 'Personale' : 'Etsy'}`}
+            aria-pressed={activeDomain === d}
             style={{
               height: 24,
               padding: '0 12px',

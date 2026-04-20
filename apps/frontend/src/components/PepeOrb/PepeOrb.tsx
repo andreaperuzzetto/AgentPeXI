@@ -3,6 +3,30 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 // ─── Types ────────────────────────────────────────────────────────
 type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking'
 
+interface SpeechRecognitionResult {
+  readonly transcript: string
+  readonly confidence: number
+}
+interface SpeechRecognitionResultList {
+  readonly length: number
+  item(index: number): SpeechRecognitionResult[]
+  [index: number]: SpeechRecognitionResult[]
+}
+interface SpeechRecognitionEvent extends Event {
+  readonly results: SpeechRecognitionResultList
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  onresult: ((event: SpeechRecognitionEvent) => void) | null
+  onerror: (() => void) | null
+  onend: (() => void) | null
+  start(): void
+  stop(): void
+}
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance
+
 // ─── Canvas dimensions ────────────────────────────────────────────
 const CW = 580
 const CH = 440
@@ -208,9 +232,15 @@ function drawBlob(
 }
 
 // ─── Web Speech API ───────────────────────────────────────────────
-const SpeechRecognitionAPI: any =
+const SpeechRecognitionAPI: SpeechRecognitionConstructor | null =
   typeof window !== 'undefined'
-    ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    ? (
+        (window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor })
+          .SpeechRecognition ??
+        (window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor })
+          .webkitSpeechRecognition ??
+        null
+      )
     : null
 
 // ─── Component ────────────────────────────────────────────────────
@@ -219,7 +249,7 @@ export function PepeOrb() {
   const [lastQuery, setLastQuery] = useState('')
   const [error, setError]         = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const recRef    = useRef<any>(null)
+  const recRef    = useRef<SpeechRecognitionInstance | null>(null)
   const stateRef  = useRef<OrbState>('idle')
 
   useEffect(() => { stateRef.current = state }, [state])
@@ -301,7 +331,7 @@ export function PepeOrb() {
     rec.lang            = 'it-IT'
     rec.continuous      = false
     rec.interimResults  = false
-    rec.onresult = (e: any) => {
+    rec.onresult = (e: SpeechRecognitionEvent) => {
       const txt: string = e.results[0]?.[0]?.transcript?.trim() ?? ''
       if (txt) handleVoiceResult(txt)
       else setState('idle')
@@ -345,6 +375,14 @@ export function PepeOrb() {
         width={CW}
         height={CH}
         onClick={handleClick}
+        role="button"
+        tabIndex={0}
+        aria-label={
+          state === 'idle'      ? 'Clicca per parlare con Pepe' :
+          state === 'listening' ? 'In ascolto — clicca per fermare' :
+          state === 'speaking'  ? 'Pepe sta parlando — clicca per fermare' :
+          'Pepe sta elaborando…'
+        }
         title={
           state === 'idle'      ? 'Clicca per parlare' :
           state === 'listening' ? 'Clicca per fermare'  :

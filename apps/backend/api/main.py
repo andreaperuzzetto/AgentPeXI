@@ -10,7 +10,7 @@ import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -399,7 +399,7 @@ async def get_status() -> dict:
     agent_statuses = pepe.get_agent_statuses() if pepe else {}
     return {
         "status": "running",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "agents": agent_statuses,
         "queue_size": pepe._queue.qsize() if pepe else 0,
         "connected_clients": len(ws_manager._connections),
@@ -439,11 +439,8 @@ async def get_listings() -> dict:
     """Lista dei listing Etsy dal DB locale."""
     if not memory:
         return {"listings": []}
-    cursor = await memory._db.execute(
-        "SELECT * FROM etsy_listings ORDER BY created_at DESC LIMIT 100"
-    )
-    rows = await cursor.fetchall()
-    return {"listings": [dict(r) for r in rows]}
+    listings = await memory.get_etsy_listings(limit=100)
+    return {"listings": listings}
 
 
 @app.get("/api/scheduler")
@@ -451,11 +448,7 @@ async def get_scheduler() -> dict:
     """Task schedulati: job APScheduler attivi + task da DB."""
     db_tasks: list[dict] = []
     if memory:
-        cursor = await memory._db.execute(
-            "SELECT * FROM scheduled_tasks ORDER BY next_run"
-        )
-        rows = await cursor.fetchall()
-        db_tasks = [dict(r) for r in rows]
+        db_tasks = await memory.get_scheduled_tasks()
 
     apscheduler_jobs: list[dict] = []
     if scheduler:
@@ -488,14 +481,7 @@ async def get_recent_agent_steps(limit: Annotated[int, Query(ge=1, le=500)] = 50
     """Ultimi N step per agente — usato per reidratare il ReasoningPanel al refresh."""
     if not memory:
         return {"steps": []}
-    cursor = await memory._db.execute(
-        """SELECT id, task_id, agent_name, step_number, step_type, description, duration_ms, timestamp
-           FROM agent_steps
-           ORDER BY id DESC LIMIT ?""",
-        (limit,),
-    )
-    rows = await cursor.fetchall()
-    steps = [dict(r) for r in reversed(rows)]
+    steps = await memory.get_recent_agent_steps(limit)
     return {"steps": steps}
 
 
@@ -561,29 +547,7 @@ async def get_personal_recalls(limit: Annotated[int, Query(ge=1, le=100)] = 10) 
     """Ultimi N recall completati: query + risposta troncata + timestamp."""
     if not memory:
         return {"recalls": []}
-    cursor = await memory._db.execute(
-        """SELECT task_id, input_data, output_data, created_at, status
-           FROM agent_logs
-           WHERE agent_name = 'recall' AND domain = 'personal'
-           ORDER BY created_at DESC LIMIT ?""",
-        (limit,),
-    )
-    rows = await cursor.fetchall()
-    recalls = []
-    for r in rows:
-        try:
-            inp = json.loads(r["input_data"] or "{}")
-            out = json.loads(r["output_data"] or "{}")
-        except Exception:
-            inp, out = {}, {}
-        response_raw = out.get("response") or out.get("answer") or ""
-        recalls.append({
-            "task_id": r["task_id"],
-            "query": inp.get("query", ""),
-            "response": response_raw[:200] + ("…" if len(response_raw) > 200 else ""),
-            "status": r["status"],
-            "timestamp": r["created_at"],
-        })
+    recalls = await memory.get_personal_recalls(limit)
     return {"recalls": recalls}
 
 
@@ -634,23 +598,7 @@ async def get_personal_stats(days: Annotated[int, Query(ge=1, le=365)] = 14) -> 
     """Aggregati agenti Personal: task completati/falliti per agente, ultimi N giorni."""
     if not memory:
         return {"stats": {}}
-    since = f"-{days} days"
-    cursor = await memory._db.execute(
-        """SELECT agent_name, status, COUNT(*) as cnt
-           FROM agent_logs
-           WHERE domain = 'personal' AND created_at >= datetime('now', ?)
-           GROUP BY agent_name, status
-           ORDER BY agent_name, status""",
-        (since,),
-    )
-    rows = await cursor.fetchall()
-    stats: dict[str, dict] = {}
-    for r in rows:
-        name = r["agent_name"]
-        if name not in stats:
-            stats[name] = {"completed": 0, "failed": 0, "running": 0}
-        key = r["status"] if r["status"] in stats[name] else "running"
-        stats[name][key] = r["cnt"]
+    stats = await memory.get_domain_agent_stats(domain="personal", days=days)
     return {"stats": stats, "days": days}
 
 

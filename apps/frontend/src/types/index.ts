@@ -77,6 +77,35 @@ export interface ContextUpdateEvent {
   timestamp: string
 }
 
+export interface WatcherStatus {
+  type: 'watcher_status'
+  status: 'active' | 'paused' | 'error'
+  message?: string
+  last_task?: string
+  captures_today: number
+  last_capture_time: string | null
+  last_capture_app: string | null
+}
+
+export interface WatcherCapture {
+  type: 'watcher_capture'
+  agent: string
+  task_id: string
+  step_id: string
+  step_number: number
+  step_type: string
+  description: string
+  duration_ms: number
+  timestamp: string
+  app_name: string
+  chunks: number
+}
+
+export interface DomainSwitched {
+  type: 'domain_switched'
+  domain: string
+}
+
 export type WSIncoming =
   | AgentStarted
   | AgentCompleted
@@ -86,6 +115,9 @@ export type WSIncoming =
   | AgentStepEvent
   | LlmCallEvent
   | ContextUpdateEvent
+  | WatcherStatus
+  | WatcherCapture
+  | DomainSwitched
 
 /* ── UI models ── */
 

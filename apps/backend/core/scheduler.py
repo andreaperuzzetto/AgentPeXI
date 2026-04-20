@@ -7,7 +7,7 @@ import logging
 import os
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Coroutine
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -249,7 +249,7 @@ class Scheduler:
                 "type": "system_status",
                 "event": "ssd_offline",
                 "storage_path": settings.STORAGE_PATH,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
         else:
             free_gb = health["free_gb"]
@@ -268,7 +268,7 @@ class Scheduler:
                 "type": "system_status",
                 "event": "ssd_health",
                 "health": health,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
     async def _sync_agent_status(self) -> None:
@@ -287,7 +287,7 @@ class Scheduler:
             "queue_size": queue_size,
             "active_tasks": active_tasks,
             "mock_mode": getattr(self.pepe, "mock_mode", False),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
         # Emetti anche lo stato contestuale — toglierà i valori mock dal pannello
@@ -309,7 +309,7 @@ class Scheduler:
         """Esegue un task schedulato: aggiorna last_run e delega a Pepe."""
         # Aggiorna last_run nel DB
         try:
-            await self.memory.update_task_last_run(task_id, datetime.utcnow().isoformat())
+            await self.memory.update_task_last_run(task_id, datetime.now(timezone.utc).isoformat())
         except Exception as exc:
             logger.warning("Errore aggiornamento last_run per task %d: %s", task_id, exc)
 
@@ -740,7 +740,7 @@ class Scheduler:
                 "template": template,
                 "files_count": len(file_paths),
                 "cost_usd": cost,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
         except Exception as exc:
             logger.error("Design fallito per '%s': %s", niche, exc)
@@ -900,7 +900,7 @@ class Scheduler:
                 "total_jobs": total_jobs,
                 "listings_created": listings_created,
                 "cost_usd": total_cost,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             if job_index == total_jobs - 1:
                 await self._notify_telegram(

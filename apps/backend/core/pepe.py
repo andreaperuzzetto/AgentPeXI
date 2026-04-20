@@ -241,6 +241,15 @@ class Pepe:
         self._workers.clear()
         logger.info("Pepe fermato")
 
+    def _fire(self, coro: "Coroutine[Any, Any, Any]", name: str = "") -> asyncio.Task:
+        """Schedula una coroutine fire-and-forget con logging delle eccezioni."""
+        task = asyncio.create_task(coro, name=name or coro.__qualname__)
+        task.add_done_callback(
+            lambda t: logger.error("Background task '%s' fallito: %s", task.get_name(), t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
+        return task
+
     # ------------------------------------------------------------------
     # Registrazione agenti
     # ------------------------------------------------------------------
@@ -1551,8 +1560,9 @@ class Pepe:
 
             # Wiki hook — Branch 2 (prima di _advance_pipeline, vedi Step 5.2.2a)
             if hasattr(self, "wiki") and self.wiki is not None:
-                asyncio.create_task(
-                    self._compile_wiki_entry(agent_name, result, session_id)
+                self._fire(
+                    self._compile_wiki_entry(agent_name, result, session_id),
+                    name="wiki_compile",
                 )
 
             await self.memory.save_message(session_id, "assistant", final_reply, source)
@@ -1573,8 +1583,9 @@ class Pepe:
 
             # Wiki hook — Branch 3
             if hasattr(self, "wiki") and self.wiki is not None:
-                asyncio.create_task(
-                    self._compile_wiki_entry(agent_name, result, session_id)
+                self._fire(
+                    self._compile_wiki_entry(agent_name, result, session_id),
+                    name="wiki_compile",
                 )
 
             disclaimer = (
@@ -1743,7 +1754,10 @@ class Pepe:
                     "Publisher completato (%d listing) → auto-trigger Analytics",
                     listings_created,
                 )
-                asyncio.create_task(self._run_analytics_auto(analytics_task, session_id))
+                self._fire(
+                    self._run_analytics_auto(analytics_task, session_id),
+                    name="analytics_auto",
+                )
             return
 
         if agent_name == "design":
@@ -1795,7 +1809,7 @@ class Pepe:
                 len(file_paths),
             )
             # Fire-and-forget: non blocca la risposta a Andrea
-            asyncio.create_task(self._run_publisher_auto(publish_task, session_id))
+            self._fire(self._run_publisher_auto(publish_task, session_id), name="publisher_auto")
             return
 
         if agent_name == "research" and result.status == TaskStatus.COMPLETED:
@@ -1837,7 +1851,10 @@ class Pepe:
                     "Research completato → auto-trigger Design per nicchia '%s'",
                     niche_name or "?",
                 )
-                asyncio.create_task(self._run_design_auto(design_task, session_id))
+                self._fire(
+                    self._run_design_auto(design_task, session_id),
+                    name="design_auto",
+                )
             return
 
     async def _run_design_auto(self, task: AgentTask, session_id: str) -> None:

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useStore } from '../../store'
 
 const EMPTY_STEPS: never[] = []
@@ -13,6 +14,7 @@ export function AgentDetailPanel() {
   const setSelectedAgent = useStore((s) => s.setSelectedAgent)
   const agent = useStore((s) => s.agents[selectedAgent ?? ''])
   const steps = useStore((s) => s.agentSteps[selectedAgent ?? ''] ?? EMPTY_STEPS)
+  const reversedSteps = useMemo(() => [...steps].reverse(), [steps])
 
   const isVisible = !!selectedAgent
 
@@ -117,7 +119,7 @@ export function AgentDetailPanel() {
         )}
 
         {/* Step list — .ad-step */}
-        {[...steps].reverse().map((step, i) => {
+        {reversedSteps.map((step, i) => {
           const isLatest = i === 0
           const tag = STEP_TAG[step.stepType]
           return (

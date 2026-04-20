@@ -35,7 +35,6 @@ const AGENTS_INIT: Record<string, AgentState> = {
   design:            { status: 'idle', lastTask: '' },
   publisher:         { status: 'idle', lastTask: '' },
   analytics:         { status: 'idle', lastTask: '' },
-  customer_service:  { status: 'idle', lastTask: '' },
   finance:           { status: 'idle', lastTask: '' },
   // --- Personal ---
   recall:            { status: 'idle', lastTask: '' },

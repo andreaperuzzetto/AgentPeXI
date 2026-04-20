@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Component, type ReactNode, type ErrorInfo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Header } from './components/Header'
 import { ReasoningPanel } from './components/ReasoningPanel/ReasoningPanel'
 import { ListingsPanel } from './components/Listings/ListingsPanel'
@@ -19,14 +20,36 @@ import { useStore } from './store'
 const RIGHT_WIDTH_ETSY     = 340
 const RIGHT_WIDTH_PERSONAL = 480
 
+interface ErrState { error: Error | null }
+class ErrorBoundary extends Component<{ children: ReactNode }, ErrState> {
+  state: ErrState = { error: null }
+  static getDerivedStateFromError(error: Error): ErrState { return { error } }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error('[ErrorBoundary]', error, info) }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ color: 'var(--danger, #f87171)', padding: 32, fontFamily: 'monospace' }}>
+          <strong>Errore critico</strong>
+          <pre style={{ marginTop: 8, fontSize: 12 }}>{this.state.error.message}</pre>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export default function App() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
   const [sistemiTab, setSistemiTab] = useState<'dominio' | 'tool'>('dominio')
-  const setCostsData = useStore((s) => s.setCostsData)
-  const addAgentStep = useStore((s) => s.addAgentStep)
-  const setAnalyticsSummary = useStore((s) => s.setAnalyticsSummary)
-  const setChromaStats = useStore((s) => s.setChromaStats)
-  const activeDomain = useStore((s) => s.activeDomain)
+  const { setCostsData, addAgentStep, setAnalyticsSummary, setChromaStats, activeDomain } = useStore(
+    useShallow((s) => ({
+      setCostsData:       s.setCostsData,
+      addAgentStep:       s.addAgentStep,
+      setAnalyticsSummary: s.setAnalyticsSummary,
+      setChromaStats:     s.setChromaStats,
+      activeDomain:       s.activeDomain,
+    }))
+  )
   useWebSocket()
 
   const { width: rightWidth, transitioning, onHandleMouseDown, snapTo } =
@@ -102,6 +125,7 @@ export default function App() {
   }, [setCostsData, setAnalyticsSummary, setChromaStats])
 
   return (
+    <ErrorBoundary>
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--base)' }}>
       <Header />
 
@@ -234,5 +258,6 @@ export default function App() {
       {/* Task detail overlay */}
       <TaskDetailOverlay />
     </div>
+    </ErrorBoundary>
   )
 }

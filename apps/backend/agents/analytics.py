@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
 
 import anthropic
@@ -51,7 +51,7 @@ class AnalyticsAgent(AgentBase):
     # ------------------------------------------------------------------
 
     async def run(self, task: AgentTask) -> AgentResult:
-        today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         # --- Passo 1 — Lettura listing (draft + active, escluso archived) ---
         # draft = appena pubblicato in mock/staging; active = live su Etsy
@@ -97,7 +97,7 @@ class AnalyticsAgent(AgentBase):
             price = float(data.get("price", {}).get("amount", 0)) / 100 if isinstance(data.get("price"), dict) else float(data.get("price", 0))
             revenue_eur = sales * price
 
-            now_iso = datetime.utcnow().isoformat()
+            now_iso = datetime.now(timezone.utc).isoformat()
             await self.memory.update_etsy_listing_stats(
                 listing_id=lid,
                 views=views,
@@ -541,7 +541,7 @@ class AnalyticsAgent(AgentBase):
         cause = analysis["cause"]
         avoid = analysis["avoid_in_future"]
         recs = "; ".join(analysis["recommendations"])
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         text = (
             f"FAILURE {failure_type} | niche: {niche} | template: {template} | "
@@ -619,7 +619,7 @@ class AnalyticsAgent(AgentBase):
                     "niche": niche,
                     "template": template,
                     "color_scheme": color_scheme,
-                    "date": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 },
             )
 
@@ -682,7 +682,7 @@ class AnalyticsAgent(AgentBase):
                 "template": template,
                 "color_scheme": color_scheme,
                 "performance": performance,
-                "date": datetime.utcnow().strftime("%Y-%m-%d"),
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             },
         )
 

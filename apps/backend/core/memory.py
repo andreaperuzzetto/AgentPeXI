@@ -1679,6 +1679,76 @@ class MemoryManager:
             return {"available": False, "count": 0, "error": str(exc)}
 
     # ------------------------------------------------------------------
+    # Query pubbliche esposte da main.py
+    # ------------------------------------------------------------------
+
+    async def get_scheduled_tasks(self) -> list[dict]:
+        """Task schedulati dal DB, ordinati per prossima esecuzione."""
+        cursor = await self._db.execute("SELECT * FROM scheduled_tasks ORDER BY next_run")
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_recent_agent_steps(self, limit: int = 50) -> list[dict]:
+        """Ultimi N step per agente, in ordine cronologico crescente."""
+        cursor = await self._db.execute(
+            """SELECT id, task_id, agent_name, step_number, step_type,
+                      description, duration_ms, timestamp
+               FROM agent_steps
+               ORDER BY id DESC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return list(reversed([dict(r) for r in rows]))
+
+    async def get_personal_recalls(self, limit: int = 10) -> list[dict]:
+        """Ultimi N recall completati dall'agente recall/personal con risposta troncata."""
+        cursor = await self._db.execute(
+            """SELECT task_id, input_data, output_data, created_at, status
+               FROM agent_logs
+               WHERE agent_name = 'recall' AND domain = 'personal'
+               ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        result = []
+        for r in rows:
+            try:
+                inp = json.loads(r["input_data"] or "{}")
+                out = json.loads(r["output_data"] or "{}")
+            except Exception:
+                inp, out = {}, {}
+            response_raw = out.get("response") or out.get("answer") or ""
+            result.append({
+                "task_id": r["task_id"],
+                "query": inp.get("query", ""),
+                "response": response_raw[:200] + ("…" if len(response_raw) > 200 else ""),
+                "status": r["status"],
+                "timestamp": r["created_at"],
+            })
+        return result
+
+    async def get_domain_agent_stats(self, domain: str = "personal", days: int = 14) -> dict[str, dict]:
+        """Aggregati completati/falliti per agente in un dominio, ultimi N giorni."""
+        since = f"-{days} days"
+        cursor = await self._db.execute(
+            """SELECT agent_name, status, COUNT(*) as cnt
+               FROM agent_logs
+               WHERE domain = ? AND created_at >= datetime('now', ?)
+               GROUP BY agent_name, status
+               ORDER BY agent_name, status""",
+            (domain, since),
+        )
+        rows = await cursor.fetchall()
+        stats: dict[str, dict] = {}
+        for r in rows:
+            name = r["agent_name"]
+            if name not in stats:
+                stats[name] = {"completed": 0, "failed": 0, "running": 0}
+            key = r["status"] if r["status"] in stats[name] else "running"
+            stats[name][key] = r["cnt"]
+        return stats
+
+    # ------------------------------------------------------------------
     # Reminders
     # ------------------------------------------------------------------
 

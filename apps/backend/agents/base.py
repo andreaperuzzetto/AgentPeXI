@@ -6,7 +6,7 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
 
 import anthropic
@@ -520,7 +520,7 @@ class AgentBase(ABC):
                 "status": status,
                 "duration_ms": duration_ms,
                 "cost_usd": cost_usd,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
             self._tool_call_count += 1

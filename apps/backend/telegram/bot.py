@@ -269,11 +269,11 @@ class TelegramBot:
             await update.message.reply_text("❌ Scheduler non disponibile.")
             return
         await update.message.reply_text("⏳ Pipeline avviata — Research in corso...")
-        try:
-            asyncio.create_task(self.scheduler._run_pipeline())
-        except Exception as exc:
-            logger.error("Pipeline manuale fallita: %s", exc)
-            await update.message.reply_text(f"❌ Pipeline fallita: {exc}")
+        task = asyncio.create_task(self.scheduler._run_pipeline(), name="pipeline_manual")
+        task.add_done_callback(
+            lambda t: logger.error("Pipeline manuale fallita: %s", t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
 
     async def _cmd_finance(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/finance — avvia manualmente il Finance Agent."""
@@ -281,11 +281,11 @@ class TelegramBot:
             await update.message.reply_text("❌ Scheduler non disponibile.")
             return
         await update.message.reply_text("⏳ Finance report in avvio...")
-        try:
-            asyncio.create_task(self.scheduler._run_finance())
-        except Exception as exc:
-            logger.error("Finance manuale fallito: %s", exc)
-            await update.message.reply_text(f"❌ Finance fallito: {exc}")
+        task = asyncio.create_task(self.scheduler._run_finance(), name="finance_manual")
+        task.add_done_callback(
+            lambda t: logger.error("Finance manuale fallito: %s", t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
 
     async def _cmd_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/list — lista tutti i comandi disponibili."""
@@ -774,7 +774,14 @@ class TelegramBot:
             await update.message.reply_text("⏳ Wiki health check in avvio (compact + lint + update_index)…")
             try:
                 if self.scheduler:
-                    asyncio.create_task(self.scheduler._run_wiki_health_check())
+                    task = asyncio.create_task(
+                        self.scheduler._run_wiki_health_check(),
+                        name="wiki_health_manual",
+                    )
+                    task.add_done_callback(
+                        lambda t: logger.error("Wiki health check fallito: %s", t.exception())
+                        if not t.cancelled() and t.exception() else None
+                    )
                 else:
                     # Fallback diretto senza scheduler
                     llm_etsy     = self.pepe.client

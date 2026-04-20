@@ -352,33 +352,37 @@ export function PersonalPanel() {
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [mcp, setMcp] = useState<McpStatus | null>(null)
   const [ollama, setOllama] = useState<OllamaStatus | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const fetchAll = () => {
-    fetch('/api/personal/recalls?limit=8')
-      .then((r) => r.ok ? r.json() : { items: [] })
-      .then((d) => setActivity(Array.isArray(d.items) ? d.items : []))
-      .catch(() => {})
+  const fetchAll = (): Promise<void> => {
+    return Promise.allSettled([
+      fetch('/api/personal/recalls?limit=8')
+        .then((r) => r.ok ? r.json() : { items: [] })
+        .then((d) => setActivity(Array.isArray(d.items) ? d.items : []))
+        .catch(() => {}),
 
-    fetch('/api/personal/reminders?limit=10')
-      .then((r) => r.ok ? r.json() : { items: [] })
-      .then((d) => setReminders(Array.isArray(d.items) ? d.items : []))
-      .catch(() => {})
+      fetch('/api/personal/reminders?limit=10')
+        .then((r) => r.ok ? r.json() : { items: [] })
+        .then((d) => setReminders(Array.isArray(d.items) ? d.items : []))
+        .catch(() => {}),
 
-    fetch('/api/personal/mcp/status')
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => { if (d) setMcp(d) })
-      .catch(() => {})
+      fetch('/api/personal/mcp/status')
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { if (d) setMcp(d) })
+        .catch(() => {}),
 
-    fetch('/api/ollama/status')
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => { if (d) setOllama(d) })
-      .catch(() => {})
+      fetch('/api/ollama/status')
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { if (d) setOllama(d) })
+        .catch(() => {}),
+    ]).then(() => {})
   }
 
   useEffect(() => {
-    fetchAll()
+    fetchAll().finally(() => setLoading(false))
     const id = setInterval(fetchAll, 30_000)
     return () => clearInterval(id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
@@ -428,13 +432,29 @@ export function PersonalPanel() {
         flexDirection: 'column',
         gap: 0,
       }}>
-        <ActivitySection items={activity} />
+        {loading ? (
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '40px 0',
+          }}>
+            <span style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--tf)', letterSpacing: '0.06em' }}>
+              Caricamento…
+            </span>
+          </div>
+        ) : (
+          <>
+            <ActivitySection items={activity} />
 
-        <div style={{ height: 1, background: 'var(--b0)', flexShrink: 0 }} />
-        <RemindersSection items={reminders} />
+            <div style={{ height: 1, background: 'var(--b0)', flexShrink: 0 }} />
+            <RemindersSection items={reminders} />
 
-        <div style={{ height: 1, background: 'var(--b0)', flexShrink: 0 }} />
-        <ConnectionsSection mcp={mcp} ollama={ollama} />
+            <div style={{ height: 1, background: 'var(--b0)', flexShrink: 0 }} />
+            <ConnectionsSection mcp={mcp} ollama={ollama} />
+          </>
+        )}
       </div>
     </div>
   )

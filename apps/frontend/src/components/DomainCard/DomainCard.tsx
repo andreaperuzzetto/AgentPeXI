@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useStore } from '../../store'
 
 const ETSY_AGENTS    = ['research', 'design', 'publisher', 'analytics']
@@ -23,30 +24,15 @@ function ServiceCard({
 }) {
   const setOverlaySystem = useStore((s) => s.setOverlaySystem)
   const agents = useStore((s) => s.agents)
+  const [hovered, setHovered] = useState(false)
 
   return (
     <div
       className="card"
       onClick={() => setOverlaySystem(sectionKey)}
       style={{ padding: '13px 14px', cursor: 'pointer', flex: 1, minWidth: 0 }}
-      onMouseEnter={(e) => {
-        const icon = e.currentTarget.querySelector('.sys-icon') as HTMLElement | null
-        if (icon) {
-          icon.style.borderColor = 'rgba(45,232,106,.25)'
-          icon.style.boxShadow = '0 0 8px var(--aglow)'
-        }
-        const cta = e.currentTarget.querySelector('.sys-cta-text') as HTMLElement | null
-        if (cta) cta.style.letterSpacing = '0.04em'
-      }}
-      onMouseLeave={(e) => {
-        const icon = e.currentTarget.querySelector('.sys-icon') as HTMLElement | null
-        if (icon) {
-          icon.style.borderColor = 'var(--b0)'
-          icon.style.boxShadow = 'none'
-        }
-        const cta = e.currentTarget.querySelector('.sys-cta-text') as HTMLElement | null
-        if (cta) cta.style.letterSpacing = '0'
-      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       {/* Card header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -57,7 +43,8 @@ function ServiceCard({
             height: 32,
             borderRadius: 7,
             background: 'var(--s3)',
-            border: '1px solid var(--b0)',
+            border: `1px solid ${hovered ? 'rgba(45,232,106,.25)' : 'var(--b0)'}`,
+            boxShadow: hovered ? '0 0 8px var(--aglow)' : 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -109,7 +96,7 @@ function ServiceCard({
 
       {/* CTA */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--b0)' }}>
-        <span className="sys-cta-text" style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--accent)', transition: 'letter-spacing .2s var(--e-out)' }}>
+        <span className="sys-cta-text" style={{ fontFamily: 'var(--fd)', fontSize: 12, color: 'var(--accent)', transition: 'letter-spacing .2s var(--e-out)', letterSpacing: hovered ? '0.04em' : '0' }}>
           {label} →
         </span>
       </div>

@@ -17,7 +17,7 @@ import hashlib
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Coroutine
 
 from apps.backend.core.config import settings
@@ -365,7 +365,7 @@ class ScreenWatcher:
     async def _store_chunks(self, text: str, app_name: str, bundle_id: str) -> None:
         """Chunking + store in screen_memory ChromaDB."""
         chunks = self._chunk_text(text)
-        ts = datetime.utcnow().isoformat()
+        ts = datetime.now(timezone.utc).isoformat()
         ts_safe = ts.replace(":", "-").replace(".", "-")
         bundle_safe = (bundle_id or "unknown").replace(".", "-")
 
@@ -453,7 +453,7 @@ class ScreenWatcher:
     async def cleanup_old_memories(self) -> int:
         """Elimina chunk più vecchi di SCREEN_RETENTION_DAYS. Chiamato dallo scheduler."""
         from datetime import timedelta
-        cutoff = (datetime.utcnow() - timedelta(days=settings.SCREEN_RETENTION_DAYS)).isoformat()
+        cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=settings.SCREEN_RETENTION_DAYS)).isoformat()
         deleted = await self.memory.delete_old_screen_memory(older_than_iso=cutoff)
         if deleted:
             logger.info("screen_cleanup: eliminati %d chunk (retention %dd)", deleted, settings.SCREEN_RETENTION_DAYS)

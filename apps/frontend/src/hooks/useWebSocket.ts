@@ -69,7 +69,7 @@ function handleMessage(raw: MessageEvent) {
       break
 
     case 'context_update':
-      store.setContextState(data as any)
+      store.setContextState(data)
       break
 
     case 'watcher_status':
@@ -108,7 +108,6 @@ export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectDelay = useRef(RECONNECT_BASE)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const connectedAt = useRef<Date | null>(null)
 
   useEffect(() => {
     let unmounted = false
@@ -140,31 +139,6 @@ export function useWebSocket() {
         }
       } catch {}
 
-      // Ripristina passi reasoning (ultimi 50 step da DB → ReasoningPanel)
-      try {
-        const r = await fetch('/api/agents/steps/recent?limit=50')
-        if (r.ok) {
-          const { steps } = await r.json()
-          if (Array.isArray(steps) && steps.length > 0) {
-            steps.forEach((s: {
-              id: number; task_id: string; agent_name: string;
-              step_number: number; step_type: string; description: string;
-              duration_ms: number; timestamp: string
-            }) => {
-              store.addAgentStep({
-                id: String(s.id),
-                agent: s.agent_name,
-                taskId: s.task_id,
-                stepNumber: s.step_number,
-                stepType: s.step_type,
-                description: s.description ?? '',
-                durationMs: s.duration_ms ?? 0,
-                timestamp: s.timestamp,
-              })
-            })
-          }
-        }
-      } catch {}
     }
 
     function scheduleReconnect() {
@@ -187,7 +161,6 @@ export function useWebSocket() {
         useStore.getState().setWsConnected(true)
         useStore.getState().setConnectedAt(Date.now())
         reconnectDelay.current = RECONNECT_BASE
-        connectedAt.current = new Date()
         hydrateOnConnect()
       })
 
@@ -213,16 +186,4 @@ export function useWebSocket() {
       useStore.getState().setWsConnected(false)
     }
   }, [])
-
-  return {
-    getUptime() {
-      if (!connectedAt.current) return '—'
-      const diff = Date.now() - connectedAt.current.getTime()
-      const minutes = Math.floor(diff / 60000)
-      const hours = Math.floor(minutes / 60)
-      const mins = minutes % 60
-      if (hours > 0) return `${hours}h ${mins}m`
-      return `${mins}m`
-    },
-  }
 }

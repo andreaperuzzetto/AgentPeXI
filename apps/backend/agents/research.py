@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from apps.backend.agents.base import AgentBase
@@ -334,7 +334,7 @@ class ResearchAgent(AgentBase):
             if created_at_str:
                 try:
                     created_at = datetime.fromisoformat(created_at_str)
-                    if datetime.utcnow() - created_at < timedelta(days=7):
+                    if datetime.now(timezone.utc).replace(tzinfo=None) - created_at < timedelta(days=7):
                         use_cache = True
                         cached_data = cached[0]
                 except (ValueError, TypeError):
@@ -520,7 +520,7 @@ class ResearchAgent(AgentBase):
                     "niche": niche,
                     "agent": self.name,
                     "task_id": self._task_id,
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "confidence": confidence,
                     "peak_months": str(first_viable.get("demand", {}).get("peak_months", [])),
                     "etsy_tags_13": json.dumps(first_viable.get("etsy_tags_13", [])[:13]),

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Coroutine
 
 import anthropic
@@ -65,7 +65,7 @@ class FinanceAgent(AgentBase):
 
     async def run(self, task: AgentTask) -> AgentResult:
         period_days: int = task.input_data.get("period_days", 30)
-        today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         # ----------------------------------------------------------------
         # Passo 1 — Costi LLM (sempre disponibili, no dipendenza Etsy)
@@ -710,7 +710,7 @@ class FinanceAgent(AgentBase):
                 "costs_eur": costs_eur,
                 "monthly_equivalent": monthly_equivalent,
                 "threshold": BUDGET_ALERT_EUR,
-                "triggered_at": datetime.utcnow().isoformat(),
+                "triggered_at": datetime.now(timezone.utc).isoformat(),
             },
             expires_hours=24,
         )
