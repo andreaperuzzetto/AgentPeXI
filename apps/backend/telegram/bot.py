@@ -22,7 +22,7 @@ from telegram.ext import (
 )
 
 from apps.backend.core.config import settings
-from apps.backend.core.domains import DOMAIN_ETSY, DOMAIN_PERSONAL
+from apps.backend.core.domains import DOMAIN_ETSY
 from apps.backend.core.models import AgentTask
 
 if TYPE_CHECKING:
@@ -156,8 +156,9 @@ class TelegramBot:
         lines.append(f"\n📋 Task in coda: {queue_size}")
 
         domain = self.pepe.get_active_domain()
-        domain_icon = "🏪" if domain.name == "etsy_store" else "🧠"
-        lines.append(f"\n{domain_icon} *Dominio attivo*: {domain.name}")
+        domain_name = domain.name if domain else "personal"
+        domain_icon = "🏪" if domain_name == "etsy_store" else "🧠"
+        lines.append(f"\n{domain_icon} *Dominio attivo*: {domain_name}")
 
         mock_line = "\n🟡 *MOCK MODE ATTIVO*" if self.pepe.mock_mode else ""
         if mock_line:
@@ -290,9 +291,10 @@ class TelegramBot:
     async def _cmd_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/list — lista tutti i comandi disponibili."""
         domain = self.pepe.get_active_domain()
-        domain_icon = "🧠" if domain.name == "personal" else "🏪"
+        domain_name = domain.name if domain else "personal"
+        domain_icon = "🧠" if not domain else "🏪"
         lines = [
-            f"📋 *Comandi AgentPeXI* ({domain_icon} {domain.name})\n",
+            f"📋 *Comandi AgentPeXI* ({domain_icon} {domain_name})\n",
             "*— Sistema —*",
             "/status — stato agenti, coda, dominio attivo",
             "/list — questo messaggio",
@@ -382,7 +384,7 @@ class TelegramBot:
 
     async def _cmd_personal(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/personal — passa al dominio Personal (Ollama locale, privacy totale)."""
-        self.pepe.set_active_domain(DOMAIN_PERSONAL)
+        self.pepe.set_active_domain(None)
         if self.pepe._ws_broadcast:
             await self.pepe._ws_broadcast({
                 "type": "system_status",
@@ -390,10 +392,9 @@ class TelegramBot:
                 "message": "Dominio Personal attivato",
             })
         await update.message.reply_text(
-            "🧠 *Dominio Personal attivo*\n\n"
-            "Sono passato in modalità assistente personale.\n"
-            f"LLM: Ollama locale ({settings.OLLAMA_MODEL}) — privacy totale, costo zero.\n"
-            "Usa /etsy per tornare alla gestione store.",
+            "🧠 *Dominio business disattivato*\n\n"
+            "Gli agenti personal sono sempre disponibili — "
+            "usa /etsy per attivare la pipeline Etsy.",
             parse_mode="Markdown",
         )
 
@@ -408,8 +409,7 @@ class TelegramBot:
             })
         await update.message.reply_text(
             "🏪 *Dominio Etsy attivo*\n\n"
-            "Torno alla gestione dello store.\n"
-            "LLM: Claude (Anthropic). Usa /personal per la modalità personale.",
+            "Gli agenti personal rimangono disponibili in qualsiasi momento.",
             parse_mode="Markdown",
         )
 

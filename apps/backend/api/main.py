@@ -476,6 +476,19 @@ async def get_task_timeline(task_id: str) -> dict:
     return {"task_id": task_id, "timeline": timeline}
 
 
+@app.get("/api/tasks/pending-input")
+async def get_pending_input_tasks() -> dict:
+    """Lista task in stato INPUT_REQUIRED — sospesi in attesa di risposta utente."""
+    if not memory:
+        return {"tasks": []}
+    try:
+        tasks = await memory.get_pending_input_tasks()
+        return {"tasks": tasks}
+    except Exception:
+        logger.exception("pending-input error")
+        return JSONResponse(status_code=500, content={"error": "Errore interno"})
+
+
 @app.get("/api/agents/steps/recent")
 async def get_recent_agent_steps(limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
     """Ultimi N step per agente — usato per reidratare il ReasoningPanel al refresh."""
@@ -649,8 +662,6 @@ async def personal_ask(request: Request, body: dict) -> dict:
     text = (body or {}).get("text", "").strip()
     if not text:
         return JSONResponse(status_code=400, content={"error": "Campo 'text' mancante o vuoto"})
-    from apps.backend.core.domains import DOMAIN_PERSONAL
-    pepe.set_active_domain(DOMAIN_PERSONAL)
     response = await pepe.handle_user_message(
         text,
         source="dashboard_voice",
@@ -757,10 +768,10 @@ async def switch_domain(body: dict) -> dict:
     """Cambia dominio attivo. Body: {domain: 'etsy'|'personal'}."""
     if not pepe:
         return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    from apps.backend.core.domains import DOMAIN_ETSY, DOMAIN_PERSONAL
+    from apps.backend.core.domains import DOMAIN_ETSY
     domain_name = (body or {}).get("domain", "")
     if domain_name == "personal":
-        pepe.set_active_domain(DOMAIN_PERSONAL)
+        pepe.set_active_domain(None)
     elif domain_name == "etsy":
         pepe.set_active_domain(DOMAIN_ETSY)
     else:

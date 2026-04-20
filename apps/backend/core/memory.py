@@ -1413,6 +1413,23 @@ class MemoryManager:
         )
         await self._db.commit()
 
+    async def get_pending_input_tasks(self) -> list[dict]:
+        """Lista task in stato INPUT_REQUIRED (pending_actions con action_type=clarification, non scadute)."""
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await self._db.execute(
+            """SELECT * FROM pending_actions
+               WHERE action_type = 'clarification' AND expires_at > ?
+               ORDER BY rowid DESC""",
+            (now,),
+        )
+        rows = await cursor.fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["payload"] = _json_loads(d.get("payload"))
+            result.append(d)
+        return result
+
     # ------------------------------------------------------------------
     # OAuth tokens
     # ------------------------------------------------------------------

@@ -13,7 +13,7 @@ import anthropic
 import openai
 
 from apps.backend.core.config import MODEL_SONNET, MODEL_HAIKU, settings
-from apps.backend.core.domains import DomainContext, DOMAIN_ETSY, DOMAIN_PERSONAL, PersonalLayer, PERSONAL_LAYER
+from apps.backend.core.domains import DomainContext, DOMAIN_ETSY, PersonalLayer, PERSONAL_LAYER
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentCard, AgentResult, AgentStatus, AgentTask, TaskStatus
 from apps.backend.agents.base import AgentBase
@@ -145,7 +145,7 @@ class Pepe:
         self,
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
-        active_domain: DomainContext = DOMAIN_PERSONAL,
+        active_domain: DomainContext | None = None,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
@@ -922,15 +922,13 @@ ESEMPI:
     # Domain routing
     # ------------------------------------------------------------------
 
-    def set_active_domain(self, domain: DomainContext) -> None:
+    def set_active_domain(self, domain: DomainContext | None) -> None:
         """Cambia dominio attivo a runtime. Sticky fino al riavvio o al prossimo switch.
 
-        Versione transitoria: accetta ancora DOMAIN_PERSONAL come sentinel per
-        compatibilità con bot.py e api/main.py. Internamente usa _business_domain.
-        Step 9a rimuoverà il check su DOMAIN_PERSONAL e aggiornerà la firma.
+        None → disattiva il business domain (solo personal layer attivo).
+        DomainContext → attiva il dominio business specificato.
         """
-        # Se arriva DOMAIN_PERSONAL → _business_domain = None (semantica nuova)
-        if domain is DOMAIN_PERSONAL:
+        if domain is None:
             prev = self._business_domain.name if self._business_domain else "none"
             self._business_domain = None
             logger.info("Business domain disattivato (era: %s)", prev)
@@ -938,11 +936,10 @@ ESEMPI:
             prev = self._business_domain.name if self._business_domain else "none"
             self._business_domain = domain
             logger.info("Business domain: %s → %s", prev, domain.name)
-        self.domain = domain
 
-    def get_active_domain(self) -> DomainContext:
-        """Restituisce il dominio attualmente attivo."""
-        return self._business_domain if self._business_domain is not None else DOMAIN_PERSONAL
+    def get_active_domain(self) -> DomainContext | None:
+        """Restituisce il dominio business attivo, o None se solo personal layer è attivo."""
+        return self._business_domain
 
     # ------------------------------------------------------------------
     # Urgency system — metodi
@@ -1229,7 +1226,7 @@ ESEMPI:
             " Il sistema procede automaticamente — non chiedere conferma, non fare domande."
         ) if autonomous else ""
 
-        domain_label = "assistente personale di Andrea" if self.domain is DOMAIN_PERSONAL else "sistema di automazione Etsy"
+        domain_label = "sistema di automazione Etsy" if self._has_business_domain() else "assistente personale di Andrea"
         synth_system = (
             f"Sei Pepe, {domain_label}. "
             "Rispondi SEMPRE nel formato compatto indicato. "
@@ -1355,7 +1352,7 @@ ESEMPI:
         agent_name   = delegation.get("delegate", "")
         missing: list[str] = []
 
-        if self.domain is DOMAIN_PERSONAL:
+        if not self._has_business_domain():
             # ── Personal: check per remind e summarize ──
             if agent_name == "remind":
                 # "when" obbligatorio — senza non si può schedulare
