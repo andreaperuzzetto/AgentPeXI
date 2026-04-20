@@ -24,14 +24,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_HAIKU, settings
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 from apps.backend.tools.text_extract import TextExtractor
 from apps.backend.tools.web_search import WebSearchTool
 
@@ -89,6 +89,15 @@ _MAX_CHARS_PER_URL = 5_000
 
 class ResearchPersonalAgent(AgentBase):
     """Ricerca web + sintesi strutturata per dominio Personal. DuckDuckGo, mai Tavily."""
+
+    card: ClassVar[AgentCard] = AgentCard(
+        name="research_personal",
+        description="Ricerca web con Tavily, sintesi locale via Ollama, nessun contesto business",
+        input_schema={"query": "str", "depth": "quick|deep"},
+        layer="personal",
+        llm="ollama",
+        confidence_threshold=0.90,
+    )
 
     def __init__(
         self,

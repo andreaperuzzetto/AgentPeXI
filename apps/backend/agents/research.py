@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, ClassVar
 
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_HAIKU
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 from apps.backend.tools import tavily as tavily_tool
 from apps.backend.tools.trends import get_google_trends
 
@@ -108,6 +108,17 @@ Schema OBBLIGATORIO:
 
 class ResearchAgent(AgentBase):
     """Agente specializzato in ricerca di mercato Etsy."""
+
+    card: ClassVar[AgentCard] = AgentCard(
+        name="research",
+        description="Analisi nicchie Etsy: domanda, competizione, pricing, tag SEO, selling signals",
+        input_schema={"niches": "list[str]", "product_type": "printable_pdf|digital_art_png|svg_bundle"},
+        layer="business",
+        llm="haiku",
+        requires_clarification=["niches", "product_type"],
+        confidence_threshold=0.85,
+        pipeline_position=1,
+    )
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(name="research", model=MODEL_HAIKU, **kwargs)

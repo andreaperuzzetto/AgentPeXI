@@ -13,14 +13,14 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_HAIKU, MODEL_SONNET, settings
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 
 logger = logging.getLogger("agentpexi.finance")
 
@@ -41,6 +41,15 @@ BUDGET_ALERT_EUR: float = getattr(settings, "COST_ALERT_THRESHOLD_EUR", 70.0)
 
 class FinanceAgent(AgentBase):
     """Agente finanziario: costi LLM, revenue Etsy, margini netti, ROI per nicchia."""
+
+    card: ClassVar[AgentCard] = AgentCard(
+        name="finance",
+        description="Report economico: costi LLM, revenue Etsy, margini, ROI per nicchia",
+        input_schema={"period_days": "int = 30"},
+        layer="business",
+        llm="haiku",
+        confidence_threshold=0.85,
+    )
 
     def __init__(
         self,

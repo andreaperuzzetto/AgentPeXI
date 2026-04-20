@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 
 class AgentStatus(str, Enum):
@@ -22,9 +22,11 @@ class TaskStatus(str, Enum):
 
     PENDING = "pending"
     RUNNING = "running"
+    INPUT_REQUIRED = "input_required"
     COMPLETED = "completed"
     PARTIAL = "partial"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -36,6 +38,26 @@ class AgentTask:
     source: str = "web"  # "web" | "telegram" | "scheduler"
     task_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    pending_input: dict | None = None
+
+
+@dataclass
+class AgentCard:
+    """
+    Auto-dichiarazione delle capabilities di un agente.
+    Definita a livello di classe in ogni AgentBase subclass.
+    Pepe la legge dal registry per costruire tool, routing e prompt.
+    """
+
+    name: str
+    description: str
+    input_schema: dict
+    layer: Literal["personal", "business"]
+    llm: Literal["ollama", "sonnet", "haiku"]
+    requires_confirmation: bool = False
+    requires_clarification: list[str] = field(default_factory=list)
+    confidence_threshold: float = 0.85
+    pipeline_position: int | None = None
 
 
 @dataclass

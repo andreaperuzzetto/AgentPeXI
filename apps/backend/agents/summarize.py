@@ -24,14 +24,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_HAIKU, settings
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 from apps.backend.tools.text_extract import TextExtractor
 
 logger = logging.getLogger("agentpexi.summarize")
@@ -75,6 +75,16 @@ _MERGE_SYSTEM = (
 
 class SummarizeAgent(AgentBase):
     """Riassume testi da URL, file e testo inline. Map-reduce per testi lunghi."""
+
+    card: ClassVar[AgentCard] = AgentCard(
+        name="summarize",
+        description="Riassume URL, file o testo lungo in formato configurabile",
+        input_schema={"content": "str", "style": "bullet|prose|short"},
+        layer="personal",
+        llm="ollama",
+        requires_clarification=["content"],
+        confidence_threshold=0.90,
+    )
 
     def __init__(
         self,

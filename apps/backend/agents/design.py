@@ -8,7 +8,7 @@ import logging
 import re
 from datetime import date
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 from reportlab.lib.colors import HexColor
@@ -19,7 +19,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_HAIKU
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 from apps.backend.core.storage import StorageManager
 from apps.backend.tools.file_gen import ColorScheme, PDFGenerator
 from apps.backend.tools.image_gen import create_image_generator
@@ -574,6 +574,16 @@ def _calculate_design_confidence(
 
 class DesignAgent(AgentBase):
     """Agente per generazione digital products (Printable PDF focus)."""
+
+    card: ClassVar[AgentCard] = AgentCard(
+        name="design",
+        description="Genera PDF/PNG/SVG con template ottimali per la nicchia",
+        input_schema={"product_type": "str", "niche": "str", "research_context": "dict"},
+        layer="business",
+        llm="sonnet",
+        confidence_threshold=0.85,
+        pipeline_position=2,
+    )
 
     def __init__(
         self,

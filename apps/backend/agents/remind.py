@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 import dateparser
@@ -44,7 +44,7 @@ import dateparser
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import settings
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 from apps.backend.tools.notion_calendar import NotionCalendar
 
 logger = logging.getLogger("agentpexi.remind")
@@ -68,6 +68,16 @@ _DATEPARSER_SETTINGS = {
 
 class RemindAgent(AgentBase):
     """Gestisce reminder: creazione, lista, cancellazione, acknowledgment."""
+
+    card: ClassVar[AgentCard] = AgentCard(
+        name="remind",
+        description="Crea, lista, cancella e conferma reminder tramite APScheduler",
+        input_schema={"message": "str", "when": "stringa data naturale"},
+        layer="personal",
+        llm="ollama",
+        requires_clarification=["when"],
+        confidence_threshold=0.90,
+    )
 
     def __init__(
         self,

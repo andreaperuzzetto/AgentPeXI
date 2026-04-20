@@ -7,18 +7,20 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 import openai
 
 from apps.backend.core.config import MODEL_SONNET, settings
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 
 
 class AgentBase(ABC):
     """Base comune per Research, Design, Publisher, Analytics, CustomerService, Finance."""
+
+    card: ClassVar[AgentCard]   # ogni subclass DEVE definire questa ClassVar
 
     # Client Ollama condiviso a livello di classe — creato al primo utilizzo.
     # AsyncOpenAI è thread-safe e connection-pool-aware: non va istanziato ad ogni chiamata.

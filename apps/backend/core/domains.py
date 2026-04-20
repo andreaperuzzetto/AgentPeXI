@@ -180,3 +180,39 @@ DOMAIN_PERSONAL = DomainContext(
         "Stai cercando qualcosa su Notion, Gmail o Calendar?",
     ],
 )
+
+
+# ---------------------------------------------------------------------------
+# Personal Layer — trasversale, sempre attivo, indipendente dal business domain
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PersonalLayer:
+    """
+    Layer trasversale sempre attivo, indipendente dal business domain.
+    Non è un dominio — è un insieme di capacità sempre disponibili.
+    Non ha pipeline, non ha learning triggers, non ha stagionalità.
+    """
+
+    agents: dict[str, str]               # nome → descrizione schema (per system prompt)
+    confidence_threshold: float = 0.90
+    confidence_disclaimer: float = 0.60
+    clarification_questions: list[str] = field(default_factory=list)
+
+
+PERSONAL_LAYER = PersonalLayer(
+    agents={
+        "recall":            'input: {"query": "...", "time_from": "ISO8601|null", "time_to": "ISO8601|null"}',
+        "remind":            'input: {"message": "...", "when": "stringa data naturale"}',
+        "summarize":         'input: {"content": "...", "style": "bullet|prose|short"}',
+        "research_personal": 'input: {"query": "...", "depth": "quick|deep"}',
+        "file":              'input: {"operation": "read|write|move|search|list", "path": "...", "content": "..."}',
+        "notion":            'input: {"operation": "read|create|update|search", "page_id": "...", "content": "..."}',
+        "gmail":             'input: {"operation": "read|search|draft", "query": "...", "draft": {...}}',
+        "calendar":          'input: {"operation": "read|create", "event": {...}, "range": "..."}',
+    },
+    # clarification_questions: campo NON usato da nessun metodo nel refactor.
+    # Con AgentCard la logica di clarification è in card.requires_clarification.
+    # Questo campo è dead code — da rimuovere anche da PersonalLayer dataclass in Step 2.
+    clarification_questions=[],
+)

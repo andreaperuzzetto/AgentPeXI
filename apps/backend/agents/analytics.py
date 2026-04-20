@@ -6,20 +6,29 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_HAIKU, MODEL_SONNET, settings
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 
 logger = logging.getLogger("agentpexi.analytics")
 
 
 class AnalyticsAgent(AgentBase):
     """Agente analytics: sync stats, failure analysis, bestseller proposals."""
+
+    card: ClassVar[AgentCard] = AgentCard(
+        name="analytics",
+        description="Sync stats Etsy, failure analysis, bestseller proposals",
+        input_schema={},
+        layer="business",
+        llm="haiku",
+        confidence_threshold=0.85,
+    )
 
     def __init__(
         self,

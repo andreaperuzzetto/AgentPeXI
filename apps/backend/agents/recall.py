@@ -20,14 +20,14 @@ import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import settings
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 
 logger = logging.getLogger("agentpexi.recall")
 
@@ -64,6 +64,15 @@ _MIN_RELEVANT = 3
 
 class RecallAgent(AgentBase):
     """Ricerca multi-sorgente con CRAG + Autonomous RAG. Privacy totale — nessuna API esterna."""
+
+    card: ClassVar[AgentCard] = AgentCard(
+        name="recall",
+        description="Ricerca nella memoria schermo ChromaDB con filtro temporale",
+        input_schema={"query": "str", "time_from": "ISO8601|null", "time_to": "ISO8601|null"},
+        layer="personal",
+        llm="ollama",
+        confidence_threshold=0.90,
+    )
 
     def __init__(
         self,

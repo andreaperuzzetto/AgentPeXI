@@ -6,14 +6,14 @@ import datetime
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_SONNET, settings
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 from apps.backend.core.storage import StorageManager
 
 logger = logging.getLogger("agentpexi.publisher")
@@ -40,6 +40,17 @@ AB_PRICES = {
 
 class PublisherAgent(AgentBase):
     """Pubblica file generati dal Design Agent su Etsy come draft listing."""
+
+    card: ClassVar[AgentCard] = AgentCard(
+        name="publisher",
+        description="Pubblica listing Etsy con SEO, pricing e thumbnail verificati",
+        input_schema={"file_paths": "list[str]", "niche": "str", "research_context": "dict"},
+        layer="business",
+        llm="sonnet",
+        requires_confirmation=False,   # pubblica come draft, non live
+        confidence_threshold=0.85,
+        pipeline_position=3,
+    )
 
     def __init__(
         self,
