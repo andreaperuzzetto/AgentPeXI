@@ -58,7 +58,7 @@ _DEFAULT_BLOCKLIST_NAMES: set[str] = {
 REDACTION_PATTERNS: list[re.Pattern] = [
     re.compile(r'(?i)(password|passwd|pwd)\s*[:=]\s*\S+'),
     re.compile(r'Bearer\s+[A-Za-z0-9\-._~+/]+=*'),
-    re.compile(r'[A-Za-z0-9]{40,}'),           # token/chiavi molto lunghe
+    re.compile(r'(?<![/\w])[A-Za-z0-9]{40,}(?![/\w])'),  # token/chiavi molto lunghe (non URL né path)
     re.compile(r'\b[A-Z0-9]{20,}\b'),           # API keys uppercase
     re.compile(r'sk-[A-Za-z0-9]{20,}'),         # OpenAI-style keys
     re.compile(r'ghp_[A-Za-z0-9]{36}'),         # GitHub PAT

@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     # Voice
     ELEVENLABS_API_KEY: str = ""
     ELEVENLABS_VOICE_ID: str = ""
+    ELEVENLABS_MAX_CHARS: int = 5000  # limite caratteri per singola richiesta TTS
+    WHISPER_MODEL: str = "base"       # tiny | base | small | medium | large-v3
+    WHISPER_DEVICE: str = "cpu"       # cpu | cuda
+    WHISPER_LANGUAGE: str = "it"      # codice lingua ISO 639-1
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str = ""
@@ -86,6 +90,9 @@ class Settings(BaseSettings):
     # Storage & Security
     STORAGE_PATH: str = "~/.agentpexi-storage"  # sovrascrivibile via STORAGE_PATH nel .env
     SECRET_KEY: str = ""
+
+    # CORS — origini consentite (CSV). Default: solo localhost dev (Vite 5173 + produzione 8000)
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:8000"
 
     # System
     MAX_PARALLEL_TASKS: int = 5

@@ -10,8 +10,15 @@ from apps.backend.core.config import settings
 logger = logging.getLogger("agentpexi.voice.tts")
 
 
+_TTS_MAX_CHARS_FALLBACK = 5000
+
+
 async def synthesize(text: str) -> bytes:
     """Sintetizza testo in audio (bytes MP3) via ElevenLabs."""
+    max_chars = settings.ELEVENLABS_MAX_CHARS or _TTS_MAX_CHARS_FALLBACK
+    if len(text) > max_chars:
+        logger.warning("TTS: testo troncato da %d a %d caratteri", len(text), max_chars)
+        text = text[:max_chars]
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _synthesize_sync, text)
 

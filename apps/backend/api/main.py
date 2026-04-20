@@ -7,16 +7,23 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRouter
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from apps.backend.core.config import settings
 from apps.backend.core.memory import MemoryManager
@@ -339,7 +346,22 @@ async def lifespan(app: FastAPI):
 # App FastAPI
 # ------------------------------------------------------------------
 
+# Rate limiter — IP-based, in-memory
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+
 app = FastAPI(title="AgentPeXI", version="0.1.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS — solo origini esplicitamente configurate
+_cors_origins = [o.strip() for o in settings.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["X-Personal-Key", "Content-Type"],
+)
 
 
 # ------------------------------------------------------------------
@@ -350,13 +372,13 @@ app = FastAPI(title="AgentPeXI", version="0.1.0", lifespan=lifespan)
 async def verify_personal_key(request: Request) -> None:
     """Verifica header X-Personal-Key per endpoint personal e screen.
 
-    Se PERSONAL_API_KEY non è configurata in .env la chiave non viene
-    controllata (fail-open intenzionale — la feature è opt-in).
-    Il bot Telegram non fa chiamate HTTP → nessun impatto sul dominio personal.
+    Fail-closed: se PERSONAL_API_KEY non è configurata in .env, tutti gli
+    endpoint personal/screen restituiscono 403. Impostare la chiave in .env
+    per abilitare l'accesso.
     """
     api_key = settings.PERSONAL_API_KEY
     if not api_key:
-        return  # non configurata → accesso libero
+        raise HTTPException(status_code=403, detail="PERSONAL_API_KEY non configurata")
     key = request.headers.get("X-Personal-Key", "")
     if key != api_key:
         raise HTTPException(status_code=403, detail="Unauthorized")
@@ -391,8 +413,9 @@ async def get_mock_status() -> dict:
     return {"mock_mode": pepe.mock_mode if pepe else False}
 
 
-@app.post("/api/run/analytics")
-async def run_analytics_now() -> dict:
+@app.post("/api/run/analytics", dependencies=[Depends(verify_personal_key)])
+@limiter.limit("5/minute")
+async def run_analytics_now(request: Request) -> dict:
     """Trigger manuale analytics (non aspetta le 08:00)."""
     if not pepe:
         return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
@@ -442,7 +465,7 @@ async def get_scheduler() -> dict:
 
 
 @app.get("/api/production-queue")
-async def get_production_queue(status: str | None = None, limit: int = 50) -> dict:
+async def get_production_queue(status: str | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
     """Lista items dalla production_queue, filtrabili per status."""
     if not memory:
         return {"items": []}
@@ -461,7 +484,7 @@ async def get_task_timeline(task_id: str) -> dict:
 
 
 @app.get("/api/agents/steps/recent")
-async def get_recent_agent_steps(limit: int = 50) -> dict:
+async def get_recent_agent_steps(limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
     """Ultimi N step per agente — usato per reidratare il ReasoningPanel al refresh."""
     if not memory:
         return {"steps": []}
@@ -477,7 +500,7 @@ async def get_recent_agent_steps(limit: int = 50) -> dict:
 
 
 @app.get("/api/costs")
-async def get_costs(days: int = 30) -> dict:
+async def get_costs(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
     """Cost breakdown per periodo."""
     if not memory:
         return {"breakdown": {}}
@@ -487,7 +510,7 @@ async def get_costs(days: int = 30) -> dict:
 
 
 @app.get("/api/analytics/summary")
-async def get_analytics_summary_endpoint(days: int = 14) -> dict:
+async def get_analytics_summary_endpoint(days: Annotated[int, Query(ge=1, le=365)] = 14) -> dict:
     """Aggregati task (agent_logs + production_queue) per il pannello Analytics.
 
     Ritorna: total/completed/failed/running per periodo, per-day breakdown,
@@ -525,7 +548,7 @@ async def get_screen_status() -> dict:
 
 
 @personal_router.get("/api/personal/reminders")
-async def get_personal_reminders(limit: int = 10) -> dict:
+async def get_personal_reminders(limit: Annotated[int, Query(ge=1, le=100)] = 10) -> dict:
     """Prossimi reminder pending ordinati per trigger_at."""
     if not memory:
         return {"reminders": []}
@@ -534,7 +557,7 @@ async def get_personal_reminders(limit: int = 10) -> dict:
 
 
 @personal_router.get("/api/personal/recalls")
-async def get_personal_recalls(limit: int = 10) -> dict:
+async def get_personal_recalls(limit: Annotated[int, Query(ge=1, le=100)] = 10) -> dict:
     """Ultimi N recall completati: query + risposta troncata + timestamp."""
     if not memory:
         return {"recalls": []}
@@ -607,7 +630,7 @@ async def get_mcp_status() -> dict:
 
 
 @personal_router.get("/api/personal/stats")
-async def get_personal_stats(days: int = 14) -> dict:
+async def get_personal_stats(days: Annotated[int, Query(ge=1, le=365)] = 14) -> dict:
     """Aggregati agenti Personal: task completati/falliti per agente, ultimi N giorni."""
     if not memory:
         return {"stats": {}}
@@ -668,7 +691,8 @@ async def get_ollama_status() -> dict:
 
 
 @personal_router.post("/api/personal/ask")
-async def personal_ask(body: dict) -> dict:
+@limiter.limit("30/minute")
+async def personal_ask(request: Request, body: dict) -> dict:
     """Endpoint voce: riceve testo trascritto, risponde via Pepe in dominio Personal.
     Usato dal PepeOrb nel frontend — nessuna pipeline, risposta diretta.
     """
@@ -708,7 +732,8 @@ async def get_wiki_stats() -> dict:
         stats = await pepe.wiki.get_stats()
         return stats
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        logger.exception("wiki stats error")
+        return JSONResponse(status_code=500, content={"error": "Errore interno"})
 
 
 @app.get("/api/wiki/query")
@@ -729,24 +754,31 @@ async def wiki_query(domain: str = "etsy", q: str = "") -> dict:
         result = await pepe.wiki.query(domain, q, llm)
         return {"domain": domain, "query": q, "result": result}
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        logger.exception("wiki query error")
+        return JSONResponse(status_code=500, content={"error": "Errore interno"})
+
+
+_NICHE_SAFE_RE = re.compile(r'^[A-Za-z0-9 _\-]{1,80}$')
 
 
 @app.get("/api/wiki/niche/{niche}")
 async def get_wiki_niche(niche: str) -> dict:
     """Contesto wiki per una nicchia Etsy specifica (lettura diretta, no LLM)."""
+    if not _NICHE_SAFE_RE.match(niche):
+        return JSONResponse(status_code=400, content={"error": "Parametro 'niche' non valido"})
     if not pepe or not getattr(pepe, "wiki", None):
         return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
     try:
         content = await pepe.wiki.get_niche_context(niche)
         if content is None:
-            return JSONResponse(status_code=404, content={"error": f"Niche '{niche}' non trovata"})
+            return JSONResponse(status_code=404, content={"error": "Niche non trovata"})
         return {"niche": niche, "content": content}
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        logger.exception("wiki niche error")
+        return JSONResponse(status_code=500, content={"error": "Errore interno"})
 
 
-@app.post("/api/wiki/lint")
+@app.post("/api/wiki/lint", dependencies=[Depends(verify_personal_key)])
 async def wiki_lint(body: dict | None = None) -> dict:
     """Lint wiki: wikilinks rotti + raw pending + suggerimenti.
 
@@ -763,7 +795,8 @@ async def wiki_lint(body: dict | None = None) -> dict:
         report = await pepe.wiki.lint(domain, llm)
         return {"domain": domain, "report": report}
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        logger.exception("wiki lint error")
+        return JSONResponse(status_code=500, content={"error": "Errore interno"})
 
 
 # ------------------------------------------------------------------
@@ -771,7 +804,7 @@ async def wiki_lint(body: dict | None = None) -> dict:
 # ------------------------------------------------------------------
 
 
-@app.post("/api/domain")
+@app.post("/api/domain", dependencies=[Depends(verify_personal_key)])
 async def switch_domain(body: dict) -> dict:
     """Cambia dominio attivo. Body: {domain: 'etsy'|'personal'}."""
     if not pepe:
@@ -820,13 +853,15 @@ async def etsy_shop_info() -> dict:
         shop = await etsy_api.get_shop()
         return {"shop": shop}
     except RuntimeError as exc:
-        return JSONResponse(status_code=401, content={"error": str(exc)})
+        logger.warning("etsy shop auth error: %s", exc)
+        return JSONResponse(status_code=401, content={"error": "Token Etsy non valido o scaduto"})
     except Exception as exc:
-        return JSONResponse(status_code=502, content={"error": str(exc)})
+        logger.exception("etsy shop error")
+        return JSONResponse(status_code=502, content={"error": "Errore comunicazione Etsy"})
 
 
 @app.get("/api/etsy/listings")
-async def get_etsy_listings(status: str = "all", limit: int = 50) -> dict:
+async def get_etsy_listings(status: str = "all", limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
     """Lista listing Etsy con filtro status (draft|active|all)."""
     if not memory:
         return {"listings": []}
@@ -841,7 +876,7 @@ async def get_etsy_listings(status: str = "all", limit: int = 50) -> dict:
 
 
 @app.get("/api/finance/report")
-async def get_finance_report(days: int = 30) -> dict:
+async def get_finance_report(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
     """Ultimo report finance da ChromaDB + trigger run se mai eseguito."""
     if not memory:
         return {"report": None}
@@ -853,12 +888,13 @@ async def get_finance_report(days: int = 30) -> dict:
     return {"report": results[0] if results else None, "days": days}
 
 
-@app.post("/api/finance/run")
-async def run_finance_agent(body: dict | None = None) -> dict:
+@app.post("/api/finance/run", dependencies=[Depends(verify_personal_key)])
+@limiter.limit("5/minute")
+async def run_finance_agent(request: Request, body: dict | None = None) -> dict:
     """Esegue il FinanceAgent manualmente (period_days dal body, default 30)."""
     if not pepe:
         return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    period_days = (body or {}).get("period_days", 30)
+    period_days = max(1, min(int((body or {}).get("period_days", 30)), 365))
     import uuid
     task_id = str(uuid.uuid4())
     task = AgentTask(
@@ -885,7 +921,7 @@ async def get_analytics_latest() -> dict:
 
 
 @app.get("/api/analytics/failures")
-async def get_analytics_failures(limit: int = 20) -> dict:
+async def get_analytics_failures(limit: Annotated[int, Query(ge=1, le=500)] = 20) -> dict:
     """Ultime failure analysis dai listing."""
     if not memory:
         return {"failures": []}

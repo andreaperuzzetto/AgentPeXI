@@ -47,8 +47,14 @@ class TelegramBot:
         self.screen_watcher = screen_watcher
         self._app: Application | None = None
 
-        # Filtro: rispondi solo ad Andrea
-        self._chat_filter = filters.Chat(chat_id=int(settings.TELEGRAM_CHAT_ID)) if settings.TELEGRAM_CHAT_ID else filters.ALL
+        # Filtro: rispondi solo all'utente autorizzato.
+        # Fail-closed: se TELEGRAM_CHAT_ID non è configurato, il bot non parte.
+        if not settings.TELEGRAM_CHAT_ID:
+            raise RuntimeError(
+                "TELEGRAM_CHAT_ID non configurato in .env — "
+                "impostarlo per evitare che qualsiasi utente possa interagire col bot"
+            )
+        self._chat_filter = filters.Chat(chat_id=int(settings.TELEGRAM_CHAT_ID))
 
     # ------------------------------------------------------------------
     # Startup / shutdown (chiamati dal lifespan FastAPI)
@@ -191,17 +197,13 @@ class TelegramBot:
 
     async def _cmd_listings(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/listings — lista listing Etsy recenti."""
-        cursor = await self.pepe.memory._db.execute(
-            "SELECT title, status, sales, revenue_eur FROM etsy_listings ORDER BY created_at DESC LIMIT 10"
-        )
-        rows = await cursor.fetchall()
+        rows = await self.pepe.memory.get_etsy_listings(limit=10)
         if not rows:
             await update.message.reply_text("Nessun listing trovato.")
             return
 
         lines = ["📦 *Listing recenti*\n"]
-        for r in rows:
-            row = dict(r)
+        for row in rows:
             lines.append(
                 f"• {row['title'][:40]} — {row['status']} | 🛒 {row['sales']} | €{row['revenue_eur']:.2f}"
             )
