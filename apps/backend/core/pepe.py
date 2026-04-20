@@ -7,82 +7,35 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, Literal
 
 import anthropic
 import openai
 
 from apps.backend.core.config import MODEL_SONNET, MODEL_HAIKU, settings
-from apps.backend.core.domains import DomainContext, DOMAIN_ETSY, DOMAIN_PERSONAL
+from apps.backend.core.domains import DomainContext, DOMAIN_ETSY, DOMAIN_PERSONAL, PersonalLayer, PERSONAL_LAYER
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentResult, AgentStatus, AgentTask, TaskStatus
+from apps.backend.core.models import AgentCard, AgentResult, AgentStatus, AgentTask, TaskStatus
 from apps.backend.agents.base import AgentBase
 
 logger = logging.getLogger("agentpexi.pepe")
 
 # ------------------------------------------------------------------
 # Tool definition per delega agenti (Anthropic tool_use)
+# Descrizione base — il tool completo viene costruito on-demand da
+# Pepe._build_delegation_tool() usando le AgentCard registrate.
 # ------------------------------------------------------------------
 
-DELEGATION_TOOL = {
-    "name": "delegate_to_agent",
-    "description": (
-        "Delega un task a un agente specializzato. "
-        "Usalo SEMPRE quando l'utente chiede di creare prodotti, fare ricerca di mercato, "
-        "pubblicare listing, analizzare performance o generare report finanziari. "
-        "NON rispondere in prosa descrivendo cosa faresti — delega direttamente. "
-        "REGOLA PIPELINE: per avviare una pipeline, creare un prodotto o analizzare una nicchia, "
-        "delega SEMPRE a 'research' come primo step — mai ad analytics o altri agenti. "
-        "'analytics' si usa SOLO quando l'utente chiede esplicitamente statistiche "
-        "o performance di listing già pubblicati."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "delegate": {
-                "type": "string",
-                "enum": ["research", "design", "publisher", "analytics", "finance", "remind", "summarize", "research_personal", "recall"],
-                "description": (
-                    "Nome dell'agente a cui delegare. "
-                    "Ordine pipeline obbligatorio: research → design → publisher. "
-                    "'analytics' = solo sync stats listing esistenti. "
-                    "'finance' = solo report economici. "
-                    "'remind' = crea/lista/cancella/conferma reminder. "
-                    "'summarize' = riassume URL, file o testo. "
-                    "'research_personal' = ricerca web DuckDuckGo. "
-                    "'recall' = recupera memoria schermo e insights."
-                ),
-            },
-            "input": {
-                "type": "object",
-                "description": "Parametri per l'agente. Per research: {niches: [...], product_type: '...'}. Per design: {niche, product_type, research_context}. Per analytics/finance: {}.",
-            },
-            "task_type": {
-                "type": "string",
-                "description": "Tipo di task (es: niche_research, create_listing, full_pipeline, analytics_report).",
-            },
-        },
-        "required": ["delegate", "input"],
-    },
-}
-
-# OpenAI-compatible version of the same tool (Ollama /v1 endpoint)
-DELEGATION_TOOL_OAI = {
-    "type": "function",
-    "function": {
-        "name": "delegate_to_agent",
-        "description": DELEGATION_TOOL["description"],
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "delegate": DELEGATION_TOOL["input_schema"]["properties"]["delegate"],
-                "input":    DELEGATION_TOOL["input_schema"]["properties"]["input"],
-                "task_type": DELEGATION_TOOL["input_schema"]["properties"]["task_type"],
-            },
-            "required": ["delegate", "input"],
-        },
-    },
-}
+DELEGATION_BASE_DESCRIPTION = (
+    "Delega un task a un agente specializzato. "
+    "Usalo SEMPRE quando l'utente chiede di creare prodotti, fare ricerca di mercato, "
+    "pubblicare listing, analizzare performance o generare report finanziari. "
+    "NON rispondere in prosa descrivendo cosa faresti — delega direttamente. "
+    "REGOLA PIPELINE: per avviare una pipeline, creare un prodotto o analizzare una nicchia, "
+    "delega SEMPRE a 'research' come primo step — mai ad analytics o altri agenti. "
+    "'analytics' si usa SOLO quando l'utente chiede esplicitamente statistiche "
+    "o performance di listing già pubblicati."
+)
 
 
 # ------------------------------------------------------------------
@@ -106,6 +59,17 @@ _RECALL_PATTERN = re.compile(
     r"guardav[oa]|leggev[oa]|facev[oa]|usav[oa]|era\s+aperto)",
     re.IGNORECASE,
 )
+
+# Pattern per rilevare intent personal in messaggi misti (§4.P5)
+PERSONAL_INTENT_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b(ricord[ai]mi|reminder|promemoria|avvisami|mettimi\s+un)\b", re.I), "remind"),
+    (re.compile(r"\b(cosa\s+stav[oa]|ho\s+(visto|letto|aperto|cercato|usato))\b", re.I), "recall"),
+    (re.compile(r"\b(riassumi|summarize|sintetizza|fammi\s+un\s+riassunto)\b", re.I), "summarize"),
+    (re.compile(r"\b(gmail|mail\b|manda\s+un[a']?\s+mail|scrivi\s+(a|ad)\s+\w+)\b", re.I), "gmail"),
+    (re.compile(r"\b(notion|appunta|salva\s+(su|in)\s+notion)\b", re.I), "notion"),
+    (re.compile(r"\b(calendario|agenda|appuntamento|crea\s+un\s+evento)\b", re.I), "calendar"),
+    (re.compile(r"\b(cerca|ricerca|dimmi).{0,20}\b(personale|per\s+me|mio)\b", re.I), "research_personal"),
+]
 
 # Prompt Ollama caveman per classificazione urgenza
 _URGENCY_SYSTEM = (
@@ -186,6 +150,9 @@ class Pepe:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
         self.domain = active_domain
+        self._business_domain: DomainContext | None = None
+        self._personal_layer: PersonalLayer = PERSONAL_LAYER
+        self._agent_cards: dict[str, AgentCard] = {}
 
         # Anthropic client (Etsy domain — Sonnet)
         self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -222,6 +189,9 @@ class Pepe:
         self._urgency_medium_buffer: list[dict] = []
         self._medium_buffer_lock = asyncio.Lock()
 
+    def _has_business_domain(self) -> bool:
+        return self._business_domain is not None
+
     # ------------------------------------------------------------------
     # Startup / shutdown
     # ------------------------------------------------------------------
@@ -257,7 +227,13 @@ class Pepe:
     def register_agent(self, name: str, agent: AgentBase) -> None:
         self._agents[name] = agent
         self._agent_status[name] = AgentStatus.IDLE
-        logger.info("Agente registrato: %s", name)
+        # Indicizza la card per lookup rapido
+        if hasattr(agent, 'card'):
+            self._agent_cards[name] = agent.card
+        logger.info("Agente registrato: %s (layer=%s, llm=%s)",
+                    name,
+                    getattr(agent, 'card', {}).layer if hasattr(agent, 'card') else 'unknown',
+                    getattr(agent, 'card', {}).llm if hasattr(agent, 'card') else 'unknown')
 
     def get_agent_statuses(self) -> dict[str, str]:
         return {name: status.value for name, status in self._agent_status.items()}
@@ -270,79 +246,254 @@ class Pepe:
             return True
         return False
 
+    def _get_agent_llm(self, agent_name: str) -> Literal['ollama', 'sonnet', 'haiku']:
+        card = self._agent_cards.get(agent_name)
+        return card.llm if card else 'sonnet'   # fallback sicuro
+
+    def _agent_requires_clarification(self, agent_name: str, input_data: dict) -> list[str]:
+        """Ritorna lista di campi mancanti richiesti dall'agente."""
+        card = self._agent_cards.get(agent_name)
+        if not card or not card.requires_clarification:
+            return []
+        return [f for f in card.requires_clarification if not input_data.get(f)]
+
+    def _agent_requires_confirmation(self, agent_name: str) -> bool:
+        card = self._agent_cards.get(agent_name)
+        return card.requires_confirmation if card else False
+
+    def _build_delegation_tool(self) -> tuple[dict, dict]:
+        """Costruisce DELEGATION_TOOL e DELEGATION_TOOL_OAI dalle AgentCard registrate.
+        Versione finale — supera l'implementazione in §4.P4 che usava _personal_layer.agents.
+        """
+        personal_pairs = [
+            (name, card) for name, card in self._agent_cards.items()
+            if card.layer == 'personal'
+        ]
+        business_pairs = [
+            (name, card) for name, card in self._agent_cards.items()
+            if card.layer == 'business'
+            and (self._has_business_domain() and name in (self._business_domain.agents or self._agent_cards))
+        ] if self._has_business_domain() else []
+
+        # FALLBACK per agenti registrati senza card (transizione Step 3-7)
+        # Agenti senza card ma in _business_domain.agents vengono inclusi senza descrizione
+        if self._has_business_domain():
+            card_names = {name for name, _ in business_pairs}
+            for name in (self._business_domain.agents or {}):
+                if name not in card_names and name in self._agents:
+                    business_pairs.append((name, None))  # None = no card, agente legacy
+
+        all_names = [name for name, _ in personal_pairs] + [name for name, _ in business_pairs]
+
+        personal_desc = ", ".join(name for name, _ in personal_pairs)
+        enum_desc = f"Utilità personal (sempre disponibili): {personal_desc}."
+        if business_pairs:
+            business_desc = ", ".join(name for name, _ in business_pairs)
+            pipeline = " → ".join(self._business_domain.pipeline_steps or [])
+            enum_desc += f" Agenti business (solo contesto Etsy): {business_desc}."
+            if pipeline:
+                enum_desc += f" Pipeline obbligatoria: {pipeline}."
+
+        properties = {
+            "delegate": {"type": "string", "enum": all_names, "description": enum_desc},
+            "input": {"type": "object", "description": "Parametri per l'agente."},
+            "task_type": {"type": "string"},
+        }
+        required = ["delegate", "input"]
+
+        # Formato Anthropic
+        tool = {
+            "name": "delegate_to_agent",
+            "description": DELEGATION_BASE_DESCRIPTION,
+            "input_schema": {"type": "object", "properties": properties, "required": required},
+        }
+        # Formato OpenAI-compat (Ollama)
+        tool_oai = {
+            "type": "function",
+            "function": {
+                "name": "delegate_to_agent",
+                "description": DELEGATION_BASE_DESCRIPTION,
+                "parameters": {"type": "object", "properties": properties, "required": required},
+            },
+        }
+        return tool, tool_oai
+
     # ------------------------------------------------------------------
-    # System prompt — costruito dal DomainContext attivo
+    # System prompt — prompt misto personal + business (§10.3)
     # ------------------------------------------------------------------
 
-    def _build_system_prompt(
-        self,
-        agent_statuses: dict[str, str],
-        production_queue_summary: str = "",
-        recent_analytics: str = "",
-        current_month: int | None = None,
-        wiki_context: str = "",
-    ) -> str:
-        import calendar
-        month_name = calendar.month_name[current_month] if current_month else ""
+    def _is_personal_intent(self, message: str) -> bool:
+        return any(p.search(message) for p, _ in PERSONAL_INTENT_PATTERNS)
 
-        # Identità — invariante, non viene dal dominio
+    def _build_system_prompt(self, last_message: str = "") -> str:
+        """
+        Costruisce il system prompt con personal layer sempre presente
+        e business layer condizionale. Ordine sezioni adattivo per intent.
+        """
+        is_personal = self._is_personal_intent(last_message) if last_message else False
+        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+        # ─── IDENTITÀ ────────────────────────────────────────────────────────────
         identity = (
-            "Sei Pepe, orchestratore di AgentPeXI. "
-            "Il tuo proprietario è Andrea. Rispondi sempre in italiano. "
-            "Il tuo obiettivo non è gestire agenti — è raggiungere i risultati "
-            "di business del dominio attivo."
+            "Sei Pepe, orchestratore di AgentPeXI. Coordini agenti specializzati per "
+            "supportare Andrea nelle sue attività. Hai accesso a due livelli di capacità: "
+            "utilità personali (sempre disponibili) e agenti di dominio business "
+            "(attivi se un dominio è selezionato)."
         )
 
-        # Obiettivo — dal dominio
-        objective = f"## Obiettivo attuale ({self.domain.name})\n{self.domain.objective}"
-
-        # Regole di business — dal dominio
-        rules = "## Regole di business (NON negoziabili)\n"
-        rules += "\n".join(f"- {r}" for r in self.domain.business_rules)
-
-        # Agenti disponibili — dal dominio
-        agents_section = "## Agenti disponibili\n"
-        for agent_name, schema in self.domain.agents.items():
-            agents_section += f"- **{agent_name}**: {schema}\n"
-
-        # Sezioni extra — dal dominio (es. stagionalità)
-        extras = ""
-        if self.domain.extra_sections:
-            extras = "\n\n".join(
-                f"## {title}\n{body}"
-                for title, body in self.domain.extra_sections.items()
+        # ─── OBIETTIVO ───────────────────────────────────────────────────────────
+        if self._has_business_domain():
+            objective = (
+                f"## Obiettivo attuale — {self._business_domain.name}\n"
+                f"{self._business_domain.objective}\n\n"
+                "Le utilità personali rimangono disponibili per qualsiasi richiesta "
+                "di supporto personale, indipendentemente dal contesto business."
             )
-            if month_name:
-                extras += f"\n\nMese corrente: {month_name}."
+        else:
+            objective = (
+                "## Obiettivo\n"
+                "Supporto personale ad Andrea. Usa le utilità disponibili su sua richiesta "
+                "esplicita. Non avviare pipeline automatiche."
+            )
 
-        # Sequenza pipeline obbligatoria — dal dominio
+        # ─── LAYER PERSONAL ──────────────────────────────────────────────────────
+        personal_agents_list = ""
+        for name, card in self._agent_cards.items():
+            if card.layer == "personal":
+                personal_agents_list += f"- **{name}**: {card.description}\n  input: {card.input_schema}\n"
+
+        personal_names = ", ".join(
+            name for name, card in self._agent_cards.items() if card.layer == "personal"
+        )
+        personal_section = (
+            "## LIVELLO PERSONALE — sempre attivo\n"
+            f"Agenti: {personal_names}.\n"
+            "SEMPRE disponibili. Anche se dominio Etsy è attivo.\n"
+            "NON sono pipeline. NON hanno regole Etsy.\n"
+            "Chiamali subito. Non aspettare altri step.\n\n"
+            f"{personal_agents_list}"
+        )
+
+        # ─── LAYER BUSINESS ──────────────────────────────────────────────────────
+        business_section = ""
         pipeline_section = ""
-        if self.domain.pipeline_steps:
-            steps_str = " → ".join(self.domain.pipeline_steps)
-            pipeline_section = (
-                f"## Sequenza pipeline obbligatoria\n"
-                f"{steps_str}\n"
-                f"Per qualsiasi richiesta di creare prodotti o analizzare nicchie, "
-                f"il primo agente da chiamare è SEMPRE '{self.domain.pipeline_steps[0]}'. "
-                f"Non saltare step e non partire da un agente diverso."
+        rules_section = ""
+        wiki_section = ""
+        seasonality_section = ""
+
+        if self._has_business_domain():
+            d = self._business_domain
+            business_agents_list = ""
+            for name in (d.agents.keys() if d.agents else []):
+                card = self._agent_cards.get(name)
+                if card:
+                    business_agents_list += f"- **{name}**: {card.description}\n  input: {card.input_schema}\n"
+                elif name in d.agents:
+                    business_agents_list += f"- **{name}**: {d.agents[name]}\n"
+
+            business_names = ", ".join(
+                name for name, card in self._agent_cards.items() if card.layer == "business"
+            )
+            business_section = (
+                f"## LIVELLO BUSINESS — {d.name}\n"
+                f"Agenti: {business_names}.\n"
+                "Solo per task Etsy. Seguono pipeline. Seguono regole business.\n\n"
+                f"{business_agents_list}"
             )
 
-        # Contesto runtime — invariante
-        agent_status_str = ", ".join(f"{n}: {s}" for n, s in agent_statuses.items())
-        runtime = f"## Stato sistema\nAgenti: {agent_status_str}"
-        if production_queue_summary:
-            runtime += f"\nPipeline: {production_queue_summary}"
-        if recent_analytics:
-            runtime += f"\nPerformance recente: {recent_analytics}"
+            if d.pipeline_steps:
+                steps_str = " → ".join(d.pipeline_steps)
+                pipeline_section = (
+                    f"## PIPELINE OBBLIGATORIA — {d.name}\n"
+                    f"Ordine: {steps_str}\n"
+                    f"PRIMO step è SEMPRE: {d.pipeline_steps[0]}.\n"
+                    "NON saltare step.\n"
+                    "NON chiamare design senza output di research.\n"
+                    "NON chiamare publisher senza output di design.\n"
+                    f"PIPELINE = solo agenti business. NON vale per {personal_names}."
+                )
 
-        # Wiki knowledge base — iniettato solo se presente (Step 5.2.3)
-        wiki_section = ""
-        if wiki_context:
-            wiki_section = f"## Conoscenza accumulata (Wiki)\n{wiki_context}"
+            if d.business_rules:
+                rules_list = "\n".join(f"- {r}" for r in d.business_rules)
+                rules_section = (
+                    "## REGOLE BUSINESS\n"
+                    f"{rules_list}\n\n"
+                    f"ATTENZIONE: queste regole valgono SOLO per {business_names}.\n"
+                    f"NON valgono per {personal_names}."
+                )
 
-        return "\n\n".join(filter(bool, [
-            identity, objective, rules, agents_section, pipeline_section, extras, runtime, wiki_section
-        ]))
+            if d.extra_sections:
+                seasonality_section = "\n\n".join(
+                    f"## {title}\n{body}"
+                    for title, body in d.extra_sections.items()
+                )
+
+            if hasattr(self, "_wiki") and self._wiki:
+                wiki_section = f"## Contesto wiki — {d.name}\n{self._wiki}"
+
+        # ─── DISAMBIGUAZIONE — caveman-style ─────────────────────────────────────
+        disambiguation = """## REGOLA SCELTA AGENTE
+
+Parola chiave nel messaggio → agente corretto:
+
+"ricordami" / "reminder" / "avvisami" → remind
+"cosa ho visto" / "cosa ho cercato" / "cosa ho fatto" / "ho aperto" → recall
+"riassumi" / "sintetizza" / "fammi un riassunto" → summarize
+"gmail" / "mail" / "manda una mail" / "scrivi a" → gmail
+"notion" / "appunta" / "salva su notion" → notion
+"calendario" / "appuntamento" / "crea evento" → calendar
+"nicchia" / "niche" / "listing" / "pubblica" / "bestseller" / "tag Etsy" → research (poi pipeline)
+"analisi vendite" / "stats" / "quante views" → analytics
+"costi" / "revenue" / "margine" / "ROI" → finance
+
+REGOLA: "cerca" / "ricerca" DA SOLO non basta.
+  "cerca nicchie" → research (ha "nicchie")
+  "cerca info su X" / "cerca come funziona Y" → research_personal
+  "ricordami di fare ricerca" → remind (è un promemoria)
+
+REGOLA DEFAULT: dubbio tra personal e business → scegli personal.
+Business si attiva SOLO se messaggio menziona: nicchie, listing, Etsy store, vendite, prodotti digitali, pipeline.
+
+ESEMPI:
+"ricordami di fare ricerca su botanical art" → remind (NON research)
+"cerca nicchie botanical art su Etsy" → research
+"cosa ho guardato ieri?" → recall
+"analisi vendite settimana" → analytics
+"riassumi questo articolo" → summarize
+"aggiungi nota Notion: pipeline ok" → notion (NON pipeline business)
+"cerca come funziona algoritmo Etsy" → research_personal (NON research)"""
+
+        # ─── STATO SISTEMA ───────────────────────────────────────────────────────
+        status_lines = "\n".join(
+            f"- {name}: {status.value}"
+            for name, status in self._agent_status.items()
+        )
+        system_state = f"## Stato sistema — {now_str}\n{status_lines}"
+
+        # ─── ASSEMBLAGGIO — ordine adattivo ──────────────────────────────────────
+        blocks = [identity, objective]
+
+        if is_personal:
+            # Intent personal rilevato: personal prima, business dopo (se presente)
+            blocks.append(personal_section)
+            if business_section:
+                blocks += [business_section, pipeline_section, rules_section]
+        else:
+            # Intent business o neutro: business prima (se presente), personal dopo
+            if business_section:
+                blocks += [business_section, pipeline_section, rules_section]
+            blocks.append(personal_section)
+
+        blocks += [disambiguation, system_state]
+
+        # Sezioni extra solo se business attivo
+        if seasonality_section:
+            blocks.append(seasonality_section)
+        if wiki_section:
+            blocks.append(wiki_section)
+
+        # Rimuovere blocchi vuoti
+        return "\n\n".join(b for b in blocks if b.strip())
 
     # ------------------------------------------------------------------
     # Entry point — messaggio utente
@@ -354,13 +505,24 @@ class Pepe:
         user_content: str,
         max_tokens: int = 512,
         use_haiku: bool = False,
+        agent_name: str | None = None,
     ) -> str:
-        """Chiamata LLM single-turn senza tools, routed per dominio.
+        """Chiamata LLM single-turn senza tools, routed per agente e dominio.
 
-        Personal → Ollama locale.
-        Etsy     → Anthropic (Haiku se use_haiku=True, Sonnet altrimenti).
+        Ollama se:  nessun business domain attivo
+                 OR agent_name è un agente personal (layer=personal da AgentCard)
+        Anthropic altrimenti (Haiku se use_haiku=True, Sonnet altrimenti).
         """
-        if self.domain is DOMAIN_PERSONAL:
+        _personal_names = {
+            name for name, card in self._agent_cards.items()
+            if card.layer == "personal"
+        }
+        use_ollama = (
+            not self._has_business_domain()
+            or (agent_name is not None and agent_name in _personal_names)
+        )
+
+        if use_ollama:
             try:
                 resp = await self._local_client.chat.completions.create(
                     model=settings.OLLAMA_MODEL,
@@ -391,54 +553,73 @@ class Pepe:
         self,
         history: list[dict],
         system: str,
+        message: str = "",
     ) -> tuple[dict | None, str]:
-        """Chiama il LLM corretto in base al dominio attivo.
+        """Chiama il LLM corretto in base al dominio attivo e all'intent del messaggio.
+
+        Routing a 3 vie (§4.P5):
+        - nessun business domain → sempre Ollama
+        - business attivo + intent personal → Ollama (fallback Sonnet)
+        - business attivo + intent business/neutro → Sonnet
 
         Returns:
             (delegation, reply_text) — delegation è None se risposta diretta.
         """
-        if self.domain is DOMAIN_PERSONAL:
-            # ── Ollama locale — zero costo, privacy totale ──
-            oai_messages = [{"role": "system", "content": system}] + history
+        _tool, _tool_oai = self._build_delegation_tool()
+
+        if not self._has_business_domain():
+            # Nessun business domain → sempre Ollama
+            return await self._llm_decide_ollama(history, system, _tool_oai)
+        elif self._is_personal_intent(message):
+            # Business attivo ma intento chiaramente personal → Ollama
+            # (fallback su Sonnet se Ollama non risponde)
             try:
-                oai_resp = await self._local_client.chat.completions.create(
-                    model=settings.OLLAMA_MODEL,
-                    messages=oai_messages,
-                    tools=[DELEGATION_TOOL_OAI],
-                    tool_choice="auto",
-                )
-            except Exception as exc:
-                logger.error("Ollama _llm_decide fallito: %s — fallback Sonnet", exc)
-                # Fallback su Sonnet se Ollama non è raggiungibile
-                return await self._llm_decide_anthropic(history, system)
-
-            msg = oai_resp.choices[0].message
-            delegation: dict | None = None
-            if msg.tool_calls:
-                tc = msg.tool_calls[0]
-                try:
-                    delegation = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    pass
-            reply_text = msg.content or ""
-            return delegation, reply_text
-
+                return await self._llm_decide_ollama(history, system, _tool_oai)
+            except Exception:
+                return await self._llm_decide_anthropic(history, system, _tool)
         else:
-            # ── Anthropic Sonnet — Etsy domain ──
-            return await self._llm_decide_anthropic(history, system)
+            # Business attivo, intento business → Claude Sonnet
+            return await self._llm_decide_anthropic(history, system, _tool)
+
+    async def _llm_decide_ollama(
+        self,
+        history: list[dict],
+        system: str,
+        tool_oai: dict,
+    ) -> tuple[dict | None, str]:
+        """Chiamata Ollama con delegation tool OpenAI-compat."""
+        oai_messages = [{"role": "system", "content": system}] + history
+        oai_resp = await self._local_client.chat.completions.create(
+            model=settings.OLLAMA_MODEL,
+            messages=oai_messages,
+            tools=[tool_oai],
+            tool_choice="auto",
+        )
+        msg = oai_resp.choices[0].message
+        delegation: dict | None = None
+        if msg.tool_calls:
+            tc = msg.tool_calls[0]
+            try:
+                delegation = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                pass
+        reply_text = msg.content or ""
+        return delegation, reply_text
 
     async def _llm_decide_anthropic(
         self,
         history: list[dict],
         system: str,
+        tool: dict | None = None,
     ) -> tuple[dict | None, str]:
-        """Chiamata Anthropic Sonnet con DELEGATION_TOOL."""
+        """Chiamata Anthropic Sonnet con delegation tool dinamico."""
+        _tool = tool if tool is not None else self._build_delegation_tool()[0]
         response = await self.client.messages.create(
             model=MODEL_SONNET,
             system=system,
             messages=history,
             max_tokens=2048,
-            tools=[DELEGATION_TOOL],
+            tools=[_tool],
         )
         delegation: dict | None = None
         reply_text = ""
@@ -512,39 +693,35 @@ class Pepe:
             user_content += context_text
         history.append({"role": "user", "content": user_content})
 
-        # Wiki-first context injection — Step 5.2.3
-        # Solo dominio Etsy e solo se wiki è inizializzato.
-        # Non blocca: se query fallisce, wiki_context rimane "".
-        wiki_context = ""
-        if self.domain is not DOMAIN_PERSONAL and hasattr(self, "wiki") and self.wiki is not None:
+        # Wiki context — iniettato su self._wiki per _build_system_prompt (Step 5.2.3)
+        # Non blocca: se query fallisce, self._wiki rimane "".
+        self._wiki = ""
+        if self._has_business_domain() and hasattr(self, "wiki") and self.wiki is not None:
             try:
-                wiki_context = await self.wiki.query("etsy", message, self.client)
+                self._wiki = await self.wiki.query(
+                    self._business_domain.name.lower(), message, self.client
+                )
             except Exception as exc:
                 logger.warning("wiki.query fallita in handle_user_message: %s", exc)
 
-        # System prompt dinamico con contesto iniettato
-        system = self._build_system_prompt(
-            agent_statuses={n: s.value for n, s in self._agent_status.items()},
-            production_queue_summary=pipeline_summary,
-            recent_analytics=analytics_summary,
-            wiki_context=wiki_context,
-        )
+        # System prompt dinamico — prompt misto personal + business
+        system = self._build_system_prompt(last_message=message)
 
         # Prima chiamata LLM — decide se delegare o rispondere in testo.
-        # Dominio Personal → Ollama locale (zero costo).
-        # Dominio Etsy → Anthropic Sonnet.
-        delegation, reply_text = await self._llm_decide(history, system)
+        # Routing: no business domain → Ollama; personal intent → Ollama; else → Sonnet.
+        delegation, reply_text = await self._llm_decide(history, system, message=message)
 
         if delegation:
             agent_name = delegation["delegate"]
 
-            # Clarification loop — agenti che richiedono contesto minimo prima di procedere
-            # Etsy:    solo "research" (niche + product_type)
-            # Personal: "remind" (when) + "summarize" (content)
-            _needs_clarify = (
-                (self.domain is DOMAIN_PERSONAL and agent_name in {"remind", "summarize"})
-                or (self.domain is not DOMAIN_PERSONAL and agent_name == "research")
-            )
+            # Clarification loop — derivato da AgentCard.requires_clarification
+            _needs_clarify = bool(self._agent_requires_clarification(agent_name, delegation.get("input", {})))
+            if not _needs_clarify:
+                # Fallback transitorio per agenti senza card ancora registrata
+                _needs_clarify = (
+                    agent_name in {"remind", "summarize"}
+                    or (self._has_business_domain() and agent_name == "research")
+                )
             if _needs_clarify:
                 clarification = await self._clarify_if_needed(
                     message, delegation, history, system, session_id, source
@@ -552,8 +729,8 @@ class Pepe:
                 if clarification is not None:
                     return clarification
 
-            # Verifica duplicati in pipeline (solo Etsy)
-            if self.domain is not DOMAIN_PERSONAL and agent_name == "research":
+            # Verifica duplicati in pipeline (solo business domain)
+            if self._has_business_domain() and agent_name == "research":
                 duplicate_warning = await self._check_pipeline_duplicate(delegation)
                 if duplicate_warning:
                     await self.memory.save_message(session_id, "assistant", duplicate_warning, source)
@@ -748,15 +925,24 @@ class Pepe:
     def set_active_domain(self, domain: DomainContext) -> None:
         """Cambia dominio attivo a runtime. Sticky fino al riavvio o al prossimo switch.
 
-        Al riavvio server il default torna sempre DOMAIN_PERSONAL (by design).
+        Versione transitoria: accetta ancora DOMAIN_PERSONAL come sentinel per
+        compatibilità con bot.py e api/main.py. Internamente usa _business_domain.
+        Step 9a rimuoverà il check su DOMAIN_PERSONAL e aggiornerà la firma.
         """
-        prev = self.domain.name
+        # Se arriva DOMAIN_PERSONAL → _business_domain = None (semantica nuova)
+        if domain is DOMAIN_PERSONAL:
+            prev = self._business_domain.name if self._business_domain else "none"
+            self._business_domain = None
+            logger.info("Business domain disattivato (era: %s)", prev)
+        else:
+            prev = self._business_domain.name if self._business_domain else "none"
+            self._business_domain = domain
+            logger.info("Business domain: %s → %s", prev, domain.name)
         self.domain = domain
-        logger.info("Dominio cambiato: %s → %s", prev, domain.name)
 
     def get_active_domain(self) -> DomainContext:
         """Restituisce il dominio attualmente attivo."""
-        return self.domain
+        return self._business_domain if self._business_domain is not None else DOMAIN_PERSONAL
 
     # ------------------------------------------------------------------
     # Urgency system — metodi
@@ -853,6 +1039,13 @@ class Pepe:
                 if not kw or kw not in text_lower:
                     continue
                 w = p.get("weight", 0.5)
+                # Verifica acceptance rate: applica solo pattern con signal history utile
+                acceptance_rate = await self.memory.get_pattern_acceptance_rate(kw, last_n=20)
+                if acceptance_rate < 0.5:
+                    logger.debug(
+                        "Pattern signal '%s' ha acceptance rate bassa (%.2f), skip", kw, acceptance_rate
+                    )
+                    continue
                 if w > 0.7 and level in ("MEDIUM", "LOW"):
                     return "HIGH"
                 if w < 0.3 and level == "HIGH":
@@ -1050,7 +1243,7 @@ class Pepe:
             f"Confidence: {result.output_data.get('confidence', 'N/A') if isinstance(result.output_data, dict) else 'N/A'}\n\n"
             f"Output:\n{output_str}"
         )
-        text = await self._llm_simple_call(synth_system, user_content, max_tokens=500)
+        text = await self._llm_simple_call(synth_system, user_content, max_tokens=500, agent_name=agent_name)
         return text or f"Agente {agent_name} completato. Controlla la dashboard per i dettagli."
 
     async def _broadcast(self, event: dict) -> None:
@@ -1105,7 +1298,8 @@ class Pepe:
             "confidence_threshold": getattr(self.domain, "confidence_threshold", 0.85),
             "confidence_current": confidence,
             "strategy": "research_first",
-            "domain": getattr(self.domain, "name", "etsy_store"),
+            "domain": self._business_domain.name if self._business_domain else None,
+            "personal_layer_active": True,
             "next_action": next_action,
             "retry_policy": "max_3 · backoff_2s",
             "failure_count": failure_count,
@@ -1145,11 +1339,15 @@ class Pepe:
         system: str,
         session_id: str,
         source: str,
+        task: AgentTask | None = None,    # ← nuovo: task già creato, per correlazione
     ) -> str | None:
         """Verifica se il contesto è sufficiente prima di eseguire l'agente.
 
         Ritorna una domanda di chiarimento (str) se manca qualcosa,
         None se il contesto è sufficiente e si può procedere.
+
+        Se task è fornito: imposta task.status = INPUT_REQUIRED e salva pending_action
+        con task_id correlato + broadcast WS.
 
         Routing LLM: Ollama in Personal, Haiku in Etsy.
         """
@@ -1220,10 +1418,36 @@ class Pepe:
         )
 
         question = await self._llm_simple_call(
-            clarify_system, clarify_user, max_tokens=150, use_haiku=True
+            clarify_system, clarify_user, max_tokens=150, use_haiku=True, agent_name=agent_name
         )
         if not question:
             return None  # Fallback: procedi senza chiarimento
+
+        # ── Se task fornito: aggiorna stato e persisti pending_action correlata ──
+        if task is not None:
+            task.status = TaskStatus.INPUT_REQUIRED
+            task.pending_input = {
+                "required_fields": missing,
+                "question": question,
+                "context": agent_input,
+            }
+            await self.memory.save_pending_action(
+                action_type="clarification",
+                payload={
+                    "task_id": task.task_id,
+                    "agent_name": agent_name,
+                    "question": question,
+                    "partial_input": agent_input,
+                },
+                task_id=task.task_id,
+            )
+            if self._ws_broadcast:
+                await self._ws_broadcast({
+                    "type": "task_input_required",
+                    "task_id": task.task_id,
+                    "agent_name": agent_name,
+                    "question": question,
+                })
 
         await self.memory.save_message(session_id, "assistant", question, source)
         return question
@@ -1481,6 +1705,28 @@ class Pepe:
             else:
                 return "👍 Ok, non lo gestisco. Ho preso nota per il futuro."
 
+        # --- clarification (task_id correlato) ---
+        clarification_pending = await self.memory.get_pending_action("clarification")
+        if clarification_pending:
+            payload = clarification_pending.get("payload", {})
+            task_id = payload.get("task_id")
+            agent_name = payload.get("agent_name")
+            partial_input = payload.get("partial_input", {})
+
+            # Merge risposta utente con input parziale
+            enriched_input = {**partial_input, "user_clarification": message}
+
+            # Ricreare il task e rimetterlo in coda (stesso task_id per tracciabilità)
+            new_task = AgentTask(
+                task_id=task_id,
+                agent_name=agent_name,
+                input_data=enriched_input,
+                source=source,
+                status=TaskStatus.PENDING,
+            )
+            await self.memory.resolve_pending_input(task_id)
+            return await self._enqueue_and_wait(new_task)
+
         pending = await self.memory.get_pending_action("production_queue_proposal")
 
         if not pending:
@@ -1554,8 +1800,29 @@ class Pepe:
             )
             return reply
 
+        # Source of truth: AgentCard.confidence_threshold
+        # Fallback: PersonalLayer / DomainContext per retrocompatibilità transizione
+        card = self._agent_cards.get(agent_name)
+        if card:
+            threshold = card.confidence_threshold
+            # confidence_disclaimer non è in AgentCard — usa il layer di appartenenza
+            if card.layer == "personal":
+                disclaimer = self._personal_layer.confidence_disclaimer
+            else:
+                disclaimer = self._business_domain.confidence_disclaimer if self._business_domain else 0.60
+        else:
+            # Fallback legacy: agente senza card ancora
+            _personal_names = {n for n, c in self._agent_cards.items() if c.layer == "personal"}
+            if agent_name in _personal_names or not self._has_business_domain():
+                threshold = self._personal_layer.confidence_threshold
+                disclaimer = self._personal_layer.confidence_disclaimer
+            else:
+                d = self._business_domain
+                threshold = d.confidence_threshold if d else 0.85
+                disclaimer = d.confidence_disclaimer if d else 0.60
+
         # confidence None o >= threshold: procedi autonomamente
-        if confidence is None or confidence >= self.domain.confidence_threshold:
+        if confidence is None or confidence >= threshold:
             final_reply = await self._synthesize_reply(user_message, agent_name, result, autonomous=True)
 
             # Wiki hook — Branch 2 (prima di _advance_pipeline, vedi Step 5.2.2a)
@@ -1578,7 +1845,7 @@ class Pepe:
             return final_reply
 
         # confidence >= disclaimer threshold: procedi con disclaimer e proposta
-        if confidence >= self.domain.confidence_disclaimer:
+        if confidence >= disclaimer:
             final_reply = await self._synthesize_reply(user_message, agent_name, result)
 
             # Wiki hook — Branch 3
@@ -1643,8 +1910,13 @@ class Pepe:
         # Copia difensiva — result.output_data potrebbe essere None o oggetto condiviso
         output = dict(result.output_data or {})
 
-        # LLM client per dominio — Personal usa Ollama locale, Etsy usa Anthropic
-        llm = self._local_client if self.domain is DOMAIN_PERSONAL else self.client
+        # LLM client per-agente — source of truth: AgentCard.layer (fallback per agenti senza card)
+        card = self._agent_cards.get(agent_name)
+        if card:
+            llm = self._local_client if card.layer == "personal" else self.client
+        else:
+            # Fallback legacy
+            llm = self._local_client if not self._has_business_domain() else self.client
 
         try:
             if agent_name == "research":
@@ -1690,8 +1962,9 @@ class Pepe:
         missing_data: list[str] | None = None,
     ) -> str:
         """Sintetizza errore in linguaggio naturale per l'utente."""
+        domain_label = self._business_domain.name if self._business_domain else "personal"
         error_system = (
-            f"Sei Pepe, orchestratore di AgentPeXI per il dominio {self.domain.name}. "
+            f"Sei Pepe, orchestratore di AgentPeXI per il dominio {domain_label}. "
             "Un agente ha fallito. Riferisci onestamente cosa è successo: "
             "descrivi l'errore reale (anche tecnico se necessario), spiega la causa probabile "
             "solo se deducibile dall'errore stesso — non speculare. "
@@ -1710,7 +1983,7 @@ class Pepe:
             f"Missing data: {missing_str}"
         )
         text = await self._llm_simple_call(
-            error_system, user_content, max_tokens=512, use_haiku=True
+            error_system, user_content, max_tokens=512, use_haiku=True, agent_name=agent_name
         )
         return text or f"L'agente {agent_name} ha fallito: {error_message}"
 
@@ -1979,6 +2252,63 @@ class Pepe:
     # Learning loop (Intervento 9)
     # ------------------------------------------------------------------
 
+    async def _evaluate_and_gate_pattern(
+        self,
+        signal: str,
+        pattern_value: str,
+        metric_type: str,
+        current_metric: float,
+    ) -> bool:
+        """Applica acceptance gate prima di salvare un pattern appreso.
+
+        Recupera il baseline della metrica dalle ultime LEARNING_EVAL_WINDOW occorrenze.
+        Se il delta >= LEARNING_ACCEPTANCE_THRESHOLD: salva il pattern, ritorna True.
+        Se il delta < threshold: non salva, logga il rifiuto, ritorna False.
+        Se dati insufficienti (prima volta): salva comunque (cold start), ritorna True.
+        """
+        baseline = await self.memory.get_baseline_metric(
+            metric_type, window=settings.LEARNING_EVAL_WINDOW
+        )
+
+        if baseline is None:
+            # Cold start: nessun dato storico, accetta comunque
+            logger.info(
+                "Learning gate: cold start per signal=%s, pattern=%s — accettato",
+                signal, pattern_value
+            )
+            return True
+
+        delta = current_metric - baseline
+
+        if delta >= settings.LEARNING_ACCEPTANCE_THRESHOLD:
+            await self.memory.save_learning_evaluation(
+                pattern_id=f"{signal}:{pattern_value}",
+                signal_type=signal,
+                metric_type=metric_type,
+                baseline_value=baseline,
+                post_value=current_metric,
+                accepted=True,
+            )
+            logger.info(
+                "Learning gate: ACCETTATO signal=%s delta=%.3f (baseline=%.3f post=%.3f)",
+                signal, delta, baseline, current_metric
+            )
+            return True
+        else:
+            await self.memory.save_learning_evaluation(
+                pattern_id=f"{signal}:{pattern_value}",
+                signal_type=signal,
+                metric_type=metric_type,
+                baseline_value=baseline,
+                post_value=current_metric,
+                accepted=False,
+            )
+            logger.info(
+                "Learning gate: RIFIUTATO signal=%s delta=%.3f < threshold=%.3f",
+                signal, delta, settings.LEARNING_ACCEPTANCE_THRESHOLD
+            )
+            return False
+
     async def _handle_learning_loop(self, analytics_output: dict) -> None:
         """Processa i risultati dell'Analytics Agent e triggera azioni autonome.
 
@@ -2011,6 +2341,15 @@ class Pepe:
             action = self.domain.learning_triggers.get(signal)
 
             if action == "propose_variant":
+                # Gate: accetta pattern bestseller solo se le vendite segnano un delta positivo
+                accepted = await self._evaluate_and_gate_pattern(
+                    signal="bestseller",
+                    pattern_value=niche,
+                    metric_type="sales_delta",
+                    current_metric=float(sales),
+                )
+                if not accepted:
+                    continue
                 proposal_msg = (
                     f"🌟 **Bestseller rilevato**: {listing.get('title', listing_id)}\n"
                     f"📊 {sales} vendite, {views} views\n\n"
@@ -2031,6 +2370,16 @@ class Pepe:
                 )
 
             elif action == "fix_tags":
+                # Gate: accetta fix_tags solo se il delta views giustifica l'intervento
+                views_delta = listing.get("delta_views_vs_yesterday", 0)
+                accepted = await self._evaluate_and_gate_pattern(
+                    signal="no_views",
+                    pattern_value=niche,
+                    metric_type="views_delta",
+                    current_metric=float(views_delta),
+                )
+                if not accepted:
+                    continue
                 fix_task = AgentTask(
                     agent_name="research",
                     input_data={
@@ -2049,6 +2398,15 @@ class Pepe:
                 )
 
             elif action == "fix_pricing":
+                # Gate: accetta fix_pricing solo se il delta conversioni giustifica l'intervento
+                accepted = await self._evaluate_and_gate_pattern(
+                    signal="no_conversion",
+                    pattern_value=niche,
+                    metric_type="task_success_rate",
+                    current_metric=0.0,  # 0 conversioni = task_success_rate = 0
+                )
+                if not accepted:
+                    continue
                 fix_task = AgentTask(
                     agent_name="research",
                     input_data={
