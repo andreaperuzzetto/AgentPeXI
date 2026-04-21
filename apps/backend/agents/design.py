@@ -1188,6 +1188,8 @@ Respond with ONLY: dated or undated"""
             },
         )
 
+        _n_var = len(generated_variants)
+        _var_label = "variante generata" if _n_var == 1 else "varianti generate"
         return AgentResult(
             task_id=task.task_id,
             agent_name=self.name,
@@ -1204,6 +1206,7 @@ Respond with ONLY: dated or undated"""
             },
             confidence=confidence,
             missing_data=missing_data,
+            reply_voice=f"Design completato. {_n_var} {_var_label}.",
         )
 
     # ------------------------------------------------------------------

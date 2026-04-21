@@ -72,6 +72,7 @@ class AnalyticsAgent(AgentBase):
                 agent_name=self.name,
                 status=TaskStatus.COMPLETED,
                 output_data={"message": "Nessun listing attivo da sincronizzare"},
+                reply_voice="Nessun listing attivo da sincronizzare.",
             )
 
         # --- Passo 2 — Sync stats (parallelo, max 5 concurrent) ---
@@ -200,6 +201,10 @@ class AnalyticsAgent(AgentBase):
             listings, synced, failure_counts,
         )
 
+        _n_synced = len(synced)
+        _sync_label = "listing sincronizzato" if _n_synced == 1 else "listing sincronizzati"
+        _reply_voice = f"Analytics aggiornato. {_n_synced} {_sync_label}."
+
         return AgentResult(
             task_id=task.task_id,
             agent_name=self.name,
@@ -207,6 +212,7 @@ class AnalyticsAgent(AgentBase):
             output_data=report,
             confidence=confidence,
             missing_data=missing_data,
+            reply_voice=_reply_voice,
         )
 
     # ------------------------------------------------------------------

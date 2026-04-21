@@ -73,3 +73,6 @@ class AgentResult:
     duration_ms: int = 0
     confidence: float = 0.0
     missing_data: list[str] = field(default_factory=list)
+    # Risposta breve per canale vocale (1-2 frasi, no emoji, no tecnicismi).
+    # Se vuoto, pepe.py genera la risposta vocale dalla reply_text standard.
+    reply_voice: str = ""

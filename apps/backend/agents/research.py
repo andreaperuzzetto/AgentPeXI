@@ -120,8 +120,16 @@ class ResearchAgent(AgentBase):
         pipeline_position=1,
     )
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, telegram_broadcaster: Callable | None = None, **kwargs: Any) -> None:
         super().__init__(name="research", model=MODEL_HAIKU, **kwargs)
+        self._telegram_broadcast = telegram_broadcaster
+
+    async def _notify_telegram(self, message: str) -> None:
+        if self._telegram_broadcast:
+            try:
+                await self._telegram_broadcast(message)
+            except Exception:
+                pass
 
     @staticmethod
     def _sanitize_prompt_input(value: str, max_len: int = 300) -> str:
@@ -168,14 +176,23 @@ class ResearchAgent(AgentBase):
 
         # Se c'è una query generica senza nicchie specifiche, usala direttamente
         if not niches and query:
-            return await self._single_research(task, query)
+            result = await self._single_research(task, query)
+        elif len(niches) == 1:
+            result = await self._single_niche_research(task, niches[0])
+        else:
+            result = await self._multi_niche_research(task, niches)
 
-        # Se c'è una sola nicchia, ricerca diretta
-        if len(niches) == 1:
-            return await self._single_niche_research(task, niches[0])
+        # Notifica Telegram se completato con successo
+        if result.status == TaskStatus.COMPLETED:
+            _out = result.output_data or {}
+            _subject = niches[0] if niches else query
+            _summary = _out.get("summary", "")
+            _tg_lines = [f"🔬 Ricerca Etsy: {_subject}"]
+            if _summary:
+                _tg_lines.append(f"{'─' * 28}\n{_summary}")
+            await self._notify_telegram("\n".join(_tg_lines))
 
-        # Più nicchie → sub-agenti paralleli + sintesi
-        return await self._multi_niche_research(task, niches)
+        return result
 
     # ------------------------------------------------------------------
     # Ricerca singola query generica
@@ -321,6 +338,7 @@ class ResearchAgent(AgentBase):
             agent_name=self.name,
             status=TaskStatus.COMPLETED,
             output_data=output,
+            reply_voice="Ricerca completata, controlla il pannello.",
         )
 
     # ------------------------------------------------------------------
@@ -543,6 +561,7 @@ class ResearchAgent(AgentBase):
             agent_name=self.name,
             status=TaskStatus.COMPLETED,
             output_data=output,
+            reply_voice="Ricerca completata, controlla il pannello.",
         )
 
     # ------------------------------------------------------------------
@@ -652,6 +671,7 @@ class ResearchAgent(AgentBase):
                 "recommended_next_steps": rec.get("recommended_next_steps", []),
                 "data_quality_warning": dq_warning,
             },
+            reply_voice="Ricerca completata, controlla il pannello.",
         )
 
     # ------------------------------------------------------------------

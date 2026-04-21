@@ -221,6 +221,143 @@ class Pepe:
         return task
 
     # ------------------------------------------------------------------
+    # LLM wrapper tracciato — retry + cost logging + WebSocket
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _estimate_cost(
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read: int = 0,
+        cache_write: int = 0,
+    ) -> float:
+        """Stima costo USD (mirror di AgentBase._estimate_cost)."""
+        if "sonnet" in model:
+            cost = (
+                input_tokens * settings.LLM_SONNET_INPUT_PRICE
+                + output_tokens * settings.LLM_SONNET_OUTPUT_PRICE
+            ) / 1_000_000
+            cost += (
+                cache_read * settings.LLM_SONNET_CACHE_READ_PRICE
+                + cache_write * settings.LLM_SONNET_CACHE_WRITE_PRICE
+            ) / 1_000_000
+        elif "haiku" in model:
+            cost = (
+                input_tokens * settings.LLM_HAIKU_INPUT_PRICE
+                + output_tokens * settings.LLM_HAIKU_OUTPUT_PRICE
+            ) / 1_000_000
+            cost += (
+                cache_read * settings.LLM_HAIKU_CACHE_READ_PRICE
+                + cache_write * settings.LLM_HAIKU_CACHE_WRITE_PRICE
+            ) / 1_000_000
+        else:
+            cost = (
+                input_tokens * settings.LLM_SONNET_INPUT_PRICE
+                + output_tokens * settings.LLM_SONNET_OUTPUT_PRICE
+            ) / 1_000_000
+        return round(cost, 6)
+
+    async def _pepe_llm_call(
+        self,
+        model: str,
+        messages: list[dict],
+        system: str | None = None,
+        max_tokens: int = 2048,
+        tools: list[dict] | None = None,
+        label: str = "pepe.routing",
+    ) -> Any:
+        """Wrapper Anthropic tracciato per le chiamate interne di Pepe.
+
+        Garantisce: retry su 429/529, log in llm_calls, cost tracking,
+        evento WebSocket — identico a AgentBase._call_llm.
+
+        Usare questo invece di self.client.messages.create() direttamente.
+        """
+        import time as _time
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        if system:
+            kwargs["system"] = system
+        if tools:
+            kwargs["tools"] = tools
+
+        t0 = _time.monotonic()
+        last_exc: Exception | None = None
+        response = None
+        for attempt in range(3):
+            try:
+                response = await self.client.messages.create(**kwargs)
+                break
+            except anthropic.RateLimitError as exc:
+                last_exc = exc
+                await asyncio.sleep(2 ** attempt)
+            except anthropic.APIStatusError as exc:
+                if exc.status_code == 529:
+                    last_exc = exc
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise
+        if response is None:
+            raise last_exc  # type: ignore[misc]
+
+        duration_ms = int((_time.monotonic() - t0) * 1000)
+        usage = response.usage
+        input_tokens  = usage.input_tokens
+        output_tokens = usage.output_tokens
+        cache_read    = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_write   = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        cost_usd      = self._estimate_cost(model, input_tokens, output_tokens, cache_read, cache_write)
+
+        # Log in llm_calls (stessa tabella degli agenti → cost dashboard completo)
+        try:
+            await self.memory.log_llm_call(
+                task_id=None,
+                step_id=None,
+                agent_name=label,
+                model=model,
+                system_prompt=system,
+                messages=messages,
+                response="<structured>",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read,
+                cache_write_tokens=cache_write,
+                cost_usd=cost_usd,
+                duration_ms=duration_ms,
+                provider="anthropic",
+            )
+        except Exception as exc:
+            logger.warning("_pepe_llm_call: log_llm_call fallito: %s", exc)
+
+        # Evento WebSocket → cost dashboard live
+        if self._ws_broadcast:
+            try:
+                await self._ws_broadcast({
+                    "type": "llm_call",
+                    "agent": label,
+                    "task_id": None,
+                    "model": model,
+                    "provider": "anthropic",
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost_usd": cost_usd,
+                    "duration_ms": duration_ms,
+                })
+            except Exception:
+                pass
+
+        logger.debug(
+            "_pepe_llm_call [%s]: model=%s in=%d out=%d cost=$%.5f dur=%dms",
+            label, model, input_tokens, output_tokens, cost_usd, duration_ms,
+        )
+        return response
+
+    # ------------------------------------------------------------------
     # Registrazione agenti
     # ------------------------------------------------------------------
 
@@ -436,7 +573,8 @@ class Pepe:
 
 Parola chiave nel messaggio → agente corretto:
 
-"ricordami" / "reminder" / "avvisami" → remind
+"ricordami" / "reminder" / "avvisami" → remind (action='create')
+"leggimi i reminder" / "mostrami i promemoria" / "reminder più recente" / "cosa ho in agenda" / "dimmi i promemoria" / "quali reminder" / "lista reminder" → remind (action='list')
 "cosa ho visto" / "cosa ho cercato" / "cosa ho fatto" / "ho aperto" → recall
 "riassumi" / "sintetizza" / "fammi un riassunto" → summarize
 "gmail" / "mail" / "manda una mail" / "scrivi a" → gmail
@@ -455,7 +593,10 @@ REGOLA DEFAULT: dubbio tra personal e business → scegli personal.
 Business si attiva SOLO se messaggio menziona: nicchie, listing, Etsy store, vendite, prodotti digitali, pipeline.
 
 ESEMPI:
-"ricordami di fare ricerca su botanical art" → remind (NON research)
+"ricordami di fare ricerca su botanical art" → remind action='create' (NON research)
+"leggimi il reminder più recente" → remind action='list'
+"ricordami quella cosa di prima" → remind action='list' (vuole LEGGERE, non creare)
+"quali sono i miei reminder?" → remind action='list'
 "cerca nicchie botanical art su Etsy" → research
 "cosa ho guardato ieri?" → recall
 "analisi vendite settimana" → analytics
@@ -513,37 +654,25 @@ ESEMPI:
                  OR agent_name è un agente personal (layer=personal da AgentCard)
         Anthropic altrimenti (Haiku se use_haiku=True, Sonnet altrimenti).
         """
+        # Routing: sempre Anthropic (Ollama rimosso — inaffidabile su hardware corrente).
+        # Haiku per agenti personal e chiamate leggere, Sonnet per business.
         _personal_names = {
             name for name, card in self._agent_cards.items()
             if card.layer == "personal"
         }
-        use_ollama = (
+        use_haiku = use_haiku or (
             not self._has_business_domain()
             or (agent_name is not None and agent_name in _personal_names)
         )
-
-        if use_ollama:
-            try:
-                resp = await self._local_client.chat.completions.create(
-                    model=settings.OLLAMA_MODEL,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user",   "content": user_content},
-                    ],
-                    max_tokens=max_tokens,
-                )
-                return resp.choices[0].message.content or ""
-            except Exception as exc:
-                logger.error("Ollama _llm_simple_call fallito: %s", exc)
-                return ""
-        else:
+        if True:  # sempre Anthropic
             model = MODEL_HAIKU if use_haiku else MODEL_SONNET
             try:
-                resp = await self.client.messages.create(
+                resp = await self._pepe_llm_call(
                     model=model,
                     system=system,
                     messages=[{"role": "user", "content": user_content}],
                     max_tokens=max_tokens,
+                    label=f"pepe.simple/{agent_name or 'unknown'}",
                 )
                 return resp.content[0].text if resp.content else ""
             except Exception:
@@ -557,10 +686,13 @@ ESEMPI:
     ) -> tuple[dict | None, str]:
         """Chiama il LLM corretto in base al dominio attivo e all'intent del messaggio.
 
-        Routing a 3 vie (§4.P5):
-        - nessun business domain → sempre Ollama
-        - business attivo + intent personal → Ollama (fallback Sonnet)
+        Routing a 3 vie (§4.P5 — aggiornato: Ollama rimosso dalla rotta routing):
+        - nessun business domain → Haiku (affidabile per tool calling, economico)
+        - business attivo + intent personal → Haiku (fallback Sonnet)
         - business attivo + intent business/neutro → Sonnet
+
+        Motivazione: qwen3:8b locale produceva risposte vuote al tool calling,
+        bloccando ogni delega ad agenti. Haiku è 100% affidabile, ~0.001€/call.
 
         Returns:
             (delegation, reply_text) — delegation è None se risposta diretta.
@@ -568,13 +700,12 @@ ESEMPI:
         _tool, _tool_oai = self._build_delegation_tool()
 
         if not self._has_business_domain():
-            # Nessun business domain → sempre Ollama
-            return await self._llm_decide_ollama(history, system, _tool_oai)
+            # Nessun business domain → Haiku (personal assistant, tool calling affidabile)
+            return await self._llm_decide_anthropic(history, system, _tool, model=MODEL_HAIKU)
         elif self._is_personal_intent(message):
-            # Business attivo ma intento chiaramente personal → Ollama
-            # (fallback su Sonnet se Ollama non risponde)
+            # Business attivo ma intento chiaramente personal → Haiku, fallback Sonnet
             try:
-                return await self._llm_decide_ollama(history, system, _tool_oai)
+                return await self._llm_decide_anthropic(history, system, _tool, model=MODEL_HAIKU)
             except Exception:
                 return await self._llm_decide_anthropic(history, system, _tool)
         else:
@@ -602,8 +733,16 @@ ESEMPI:
             try:
                 delegation = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
-                pass
+                logger.warning("_llm_decide_ollama: JSON delegation non parsabile: %s", tc.function.arguments[:200])
         reply_text = msg.content or ""
+        logger.debug(
+            "_llm_decide_ollama: delegation=%s agent=%s reply_text='%s'",
+            bool(delegation),
+            delegation.get("delegate") if delegation else None,
+            reply_text[:80],
+        )
+        if not delegation and not reply_text:
+            logger.warning("_llm_decide_ollama: Ollama ha prodotto né delegation né reply_text (risposta vuota)")
         return delegation, reply_text
 
     async def _llm_decide_anthropic(
@@ -611,15 +750,24 @@ ESEMPI:
         history: list[dict],
         system: str,
         tool: dict | None = None,
+        model: str | None = None,
     ) -> tuple[dict | None, str]:
-        """Chiamata Anthropic Sonnet con delegation tool dinamico."""
+        """Chiamata Anthropic con delegation tool dinamico.
+
+        Args:
+            model: modello da usare (default MODEL_SONNET). Passare MODEL_HAIKU
+                   per routing economico in contesti personal/no-business.
+        """
         _tool = tool if tool is not None else self._build_delegation_tool()[0]
-        response = await self.client.messages.create(
-            model=MODEL_SONNET,
+        _model = model if model is not None else MODEL_SONNET
+        logger.debug("_llm_decide_anthropic: model=%s", _model)
+        response = await self._pepe_llm_call(
+            model=_model,
             system=system,
             messages=history,
             max_tokens=2048,
             tools=[_tool],
+            label="pepe.routing",
         )
         delegation: dict | None = None
         reply_text = ""
@@ -659,7 +807,10 @@ ESEMPI:
                     message, "recall", result, session_id, source
                 )
             except Exception as exc:
-                final_reply = await self._synthesize_error("recall", str(exc), {})
+                if source == "orb_voice":
+                    final_reply = self._voice_error_phrase(str(exc))
+                else:
+                    final_reply = await self._synthesize_error("recall", str(exc), {})
                 await self.memory.save_message(session_id, "assistant", final_reply, source)
             return final_reply
 
@@ -707,8 +858,27 @@ ESEMPI:
         # System prompt dinamico — prompt misto personal + business
         system = self._build_system_prompt(last_message=message)
 
+        # Modalità vocale: istruzioni per risposta parlata naturale
+        if source == "orb_voice":
+            system += (
+                "\n\n## MODALITÀ VOCALE — obbligatorio\n"
+                "La tua risposta verrà letta ad alta voce da un TTS. "
+                "Deve essere ascoltabile senza sembrare troncata.\n"
+                "REGOLE ASSOLUTE:\n"
+                "- Niente markdown: niente **, ##, *, liste con numeri o trattini\n"
+                "- Niente emoji\n"
+                "- Italiano parlato naturale, come se stessi rispondendo a voce\n"
+                "- Se devi elencare cose, fallo in prosa: 'posso fare X, Y e Z'\n"
+                "- Lunghezza: massimo 2-3 frasi COMPLETE. "
+                "Non iniziare un elenco che non riesci a finire entro 3 frasi. "
+                "Se l'argomento è ampio, dai i punti principali (2-3) e aggiungi "
+                "'per i dettagli chiedimi su Telegram' — poi fermati.\n"
+                "- Ogni risposta deve terminare con una frase grammaticalmente completa, mai a metà\n"
+                "- Non iniziare con 'Certo!', 'Perfetto!', 'Ottima domanda!' — vai dritto al punto"
+            )
+
         # Prima chiamata LLM — decide se delegare o rispondere in testo.
-        # Routing: no business domain → Ollama; personal intent → Ollama; else → Sonnet.
+        # Routing: no business domain → Haiku; personal intent → Haiku; else → Sonnet.
         delegation, reply_text = await self._llm_decide(history, system, message=message)
 
         if delegation:
@@ -722,6 +892,7 @@ ESEMPI:
                 input_data={
                     **delegation.get("input", {}),
                     "task_type": delegation.get("task_type", "generic"),
+                    "_user_message": message,   # testo originale completo — usato da remind per dateparser
                 },
                 source=source,
             )
@@ -762,9 +933,12 @@ ESEMPI:
             try:
                 result = await self._enqueue_and_wait(task)
             except Exception as exc:
-                error_reply = await self._synthesize_error(
-                    agent_name, str(exc), task.input_data
-                )
+                if source == "orb_voice":
+                    error_reply = self._voice_error_phrase(str(exc))
+                else:
+                    error_reply = await self._synthesize_error(
+                        agent_name, str(exc), task.input_data
+                    )
                 await self.memory.save_message(session_id, "assistant", error_reply, source)
                 return error_reply
 
@@ -775,6 +949,15 @@ ESEMPI:
             return final_reply
 
         # Risposta diretta
+        if source == "orb_voice" and reply_text:
+            # Canale vocale: strip markdown, tronca a max 1-2 frasi corte
+            import re as _re
+            _v = _re.sub(r'\*{1,2}|#{1,6}\s*|`{1,3}|\[.*?\]\(.*?\)', '', reply_text)
+            _v = _re.sub(r'\s+', ' ', _v).strip()
+            # Prendi la prima frase significativa (split su . ! ?)
+            _sentences = _re.split(r'(?<=[.!?])\s+', _v)
+            _short = ' '.join(_sentences[:2])[:180].strip()
+            reply_text = _short or "Non ho capito, puoi ripetere?"
         await self.memory.save_message(session_id, "assistant", reply_text, source)
         return reply_text
 
@@ -782,14 +965,52 @@ ESEMPI:
     # Task queue
     # ------------------------------------------------------------------
 
+    # Timeout per agente (secondi). Usato da _enqueue_and_wait per evitare
+    # worker bloccati a tempo indeterminato. Agenti lenti (research, finance)
+    # hanno più margine; agenti rapidi (remind, recall) molto meno.
+    _AGENT_TIMEOUTS: dict[str, float] = {
+        "remind":            30.0,
+        "recall":            30.0,
+        "summarize":         90.0,
+        "research":         180.0,
+        "research_personal": 90.0,
+        "analytics":        180.0,
+        "finance":          180.0,
+        "design":           180.0,
+        "publisher":        240.0,
+    }
+    _AGENT_TIMEOUT_DEFAULT: float = 120.0  # fallback per agenti non in lista
+
     async def _enqueue_and_wait(self, task: AgentTask) -> AgentResult:
-        """Mette il task in coda, crea un Future e attende il risultato."""
+        """Mette il task in coda, crea un Future e attende il risultato.
+
+        Applica un timeout per-agente: se l'agente non risponde entro il limite
+        il Future viene pulito e viene sollevato asyncio.TimeoutError (gestito
+        dai caller in handle_user_message come errore agente).
+        """
         loop = asyncio.get_running_loop()
         future: asyncio.Future[AgentResult] = loop.create_future()
         self._pending_futures[task.task_id] = future
         await self._queue.put(task)
-        logger.info("Task %s in coda per agente %s", task.task_id, task.agent_name)
-        return await future
+        timeout = self._AGENT_TIMEOUTS.get(task.agent_name, self._AGENT_TIMEOUT_DEFAULT)
+        logger.info(
+            "Task %s in coda per agente %s (timeout=%.0fs)",
+            task.task_id, task.agent_name, timeout,
+        )
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error(
+                "Task %s agente '%s' timeout dopo %.0fs — Future cancellato",
+                task.task_id, task.agent_name, timeout,
+            )
+            # Pulizia: rimuovi il future per evitare leak; il worker continuerà
+            # ma il risultato verrà scartato (future già rimosso da _pending_futures).
+            self._pending_futures.pop(task.task_id, None)
+            raise
+        except BaseException:
+            self._pending_futures.pop(task.task_id, None)
+            raise
 
     async def _worker_loop(self, worker_id: int) -> None:
         """Worker loop: prende task dalla queue e li esegue."""
@@ -886,6 +1107,15 @@ ESEMPI:
     # ------------------------------------------------------------------
     # Notifiche Telegram
     # ------------------------------------------------------------------
+
+    async def has_pending_voice_clarification(self) -> bool:
+        """Controlla se la sessione voice_orb ha una clarification in attesa.
+
+        Usato dal WebSocket vocale per decidere se restare in ascolto
+        (fase utterance) invece di tornare al wake word.
+        """
+        action = await self.memory.get_pending_action("clarification")
+        return action is not None
 
     async def notify_telegram(self, message: str, priority: bool = False) -> None:
         """Invia notifica via Telegram se il notifier è configurato."""
@@ -1362,18 +1592,20 @@ ESEMPI:
         if not self._has_business_domain():
             # ── Personal: check per remind e summarize ──
             if agent_name == "remind":
-                # "when" obbligatorio — senza non si può schedulare
-                has_when = bool(
-                    agent_input.get("when")
-                    or any(
-                        w in user_message.lower()
-                        for w in ["domani", "stasera", "stanotte", "tra", "alle", "lunedì",
-                                  "martedì", "mercoledì", "giovedì", "venerdì", "sabato",
-                                  "domenica", "oggi", "settimana", "mese", "ora", "minuti"]
+                # action='list' non richiede when — salta il check
+                action = agent_input.get("action", "create")
+                if action != "list":
+                    has_when = bool(
+                        agent_input.get("when")
+                        or any(
+                            w in user_message.lower()
+                            for w in ["domani", "stasera", "stanotte", "tra", "alle", "lunedì",
+                                      "martedì", "mercoledì", "giovedì", "venerdì", "sabato",
+                                      "domenica", "oggi", "settimana", "mese", "ora", "minuti"]
+                        )
                     )
-                )
-                if not has_when:
-                    missing.append("quando vuoi essere ricordato")
+                    if not has_when:
+                        missing.append("quando vuoi essere ricordato")
 
             elif agent_name == "summarize":
                 # "content" obbligatorio — URL o testo da sintetizzare
@@ -1411,11 +1643,13 @@ ESEMPI:
             return None  # Contesto sufficiente, procedi
 
         # ── Genera UNA domanda tramite LLM (domain-routed) ──
-        questions_pool = self.domain.clarification_questions
+        _domain = getattr(self, "_business_domain", None) or getattr(self, "domain", None)
+        questions_pool = _domain.clarification_questions if _domain else []
         questions_hint = "\n".join(f"- {q}" for q in questions_pool) if questions_pool else ""
+        _domain_name = _domain.name if _domain else "personal"
 
         clarify_system = (
-            f"Sei Pepe, assistente di Andrea per il dominio {self.domain.name}. "
+            f"Sei Pepe, assistente di Andrea per il dominio {_domain_name}. "
             "Devi fare UNA domanda specifica per ottenere le informazioni mancanti. "
             "La domanda deve essere diretta, concisa, in italiano. "
             "Rispondi solo con la domanda, niente altro."
@@ -1796,12 +2030,31 @@ ESEMPI:
 
         # Task FAILED
         if result.status == TaskStatus.FAILED:
+            from datetime import timezone as _tz
             error_msg = (
                 output.get("error", "Errore sconosciuto")
                 if isinstance(output, dict)
                 else str(output)
             )
-            reply = await self._synthesize_error(agent_name, error_msg, {}, missing_data)
+            if source == "orb_voice":
+                # Voce: frase corta umana. Il dettaglio tecnico arriva via WebSocket
+                # come campo "detail" nel messaggio "error" → green card sul frontend.
+                reply = result.reply_voice or "Non sono riuscito, puoi ripetere?"
+                # Broadcast green card con dettaglio tecnico
+                if self._ws_broadcast:
+                    try:
+                        from datetime import datetime as _dt
+                        await self._ws_broadcast({
+                            "type": "error",
+                            "message": reply,
+                            "detail": error_msg,
+                            "agent": agent_name,
+                            "ts": _dt.now(_tz.utc).isoformat(),
+                        })
+                    except Exception:
+                        pass
+            else:
+                reply = await self._synthesize_error(agent_name, error_msg, {}, missing_data)
             await self.memory.save_message(session_id, "assistant", reply, source)
             await self._broadcast_context_update(
                 confidence=confidence,
@@ -1833,7 +2086,11 @@ ESEMPI:
 
         # confidence None o >= threshold: procedi autonomamente
         if confidence is None or confidence >= threshold:
-            final_reply = await self._synthesize_reply(user_message, agent_name, result, autonomous=True)
+            # Canale vocale con reply_voice dedicata → non serve _synthesize_reply
+            if source == "orb_voice" and result.reply_voice:
+                final_reply = result.reply_voice
+            else:
+                final_reply = await self._synthesize_reply(user_message, agent_name, result, autonomous=True)
 
             # Wiki hook — Branch 2 (prima di _advance_pipeline, vedi Step 5.2.2a)
             if hasattr(self, "wiki") and self.wiki is not None:
@@ -1856,7 +2113,18 @@ ESEMPI:
 
         # confidence >= disclaimer threshold: procedi con disclaimer e proposta
         if confidence >= disclaimer:
-            final_reply = await self._synthesize_reply(user_message, agent_name, result)
+            # Canale vocale: il disclaimer confidence è inutile ad alta voce → usa reply_voice
+            if source == "orb_voice" and result.reply_voice:
+                final_reply = result.reply_voice
+            else:
+                final_reply = await self._synthesize_reply(user_message, agent_name, result)
+                disclaimer_text = (
+                    f"\n\n⚠️ **Nota**: analisi basata su dati parziali "
+                    f"(confidence {confidence:.0%}). "
+                    f"Dati mancanti: {', '.join(missing_data[:3])}.\n"
+                    f"Vuoi che proceda comunque o preferisci attendere dati migliori?"
+                )
+                final_reply += disclaimer_text
 
             # Wiki hook — Branch 3
             if hasattr(self, "wiki") and self.wiki is not None:
@@ -1865,13 +2133,6 @@ ESEMPI:
                     name="wiki_compile",
                 )
 
-            disclaimer = (
-                f"\n\n⚠️ **Nota**: analisi basata su dati parziali "
-                f"(confidence {confidence:.0%}). "
-                f"Dati mancanti: {', '.join(missing_data[:3])}.\n"
-                f"Vuoi che proceda comunque o preferisci attendere dati migliori?"
-            )
-            final_reply += disclaimer
             await self.memory.save_message(session_id, "assistant", final_reply, source)
             await self._broadcast_context_update(
                 confidence=confidence,
@@ -1963,6 +2224,31 @@ ESEMPI:
             logger.warning("_compile_wiki_entry (%s): %s", agent_name, exc)
 
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _voice_error_phrase(error_msg: str) -> str:
+        """Mappa un messaggio di errore tecnico in una frase vocale breve e umana.
+
+        Nessuna chiamata LLM — lookup sincrono per mantenere latenza minima
+        sul canale vocale. Il dettaglio completo viene inviato via WebSocket
+        come campo 'detail' per la green card sul frontend.
+        """
+        msg = error_msg.lower()
+        if any(k in msg for k in ("quando", "when")):
+            return "Non ho capito quando, puoi ripetere?"
+        if any(k in msg for k in ("testo mancante", "missing", "manca", "campo")):
+            return "Non ho capito bene, puoi ripetere?"
+        if any(k in msg for k in ("timeout", "timed out", "ci ha messo")):
+            return "Ci ho messo troppo, riprova."
+        if any(k in msg for k in ("connect", "network", "unreachable", "connessione")):
+            return "C'è un problema di connessione, riprova tra un momento."
+        if any(k in msg for k in ("duplicat", "già un reminder", "già present")):
+            return "Hai già qualcosa di simile, vuoi aggiungerlo lo stesso?"
+        if any(k in msg for k in ("notion", "calendar", "sincronizzazione")):
+            return "Fatto, anche se la sincronizzazione esterna non è riuscita."
+        if any(k in msg for k in ("auth", "api key", "unauthorized", "credenziali")):
+            return "C'è un problema con le credenziali, controlla la configurazione."
+        return "Non sono riuscito, puoi ripetere?"
 
     async def _synthesize_error(
         self,

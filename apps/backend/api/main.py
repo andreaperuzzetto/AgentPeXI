@@ -57,6 +57,7 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # niente spam GET 200 OK
+logging.getLogger("faster_whisper").setLevel(logging.WARNING)  # niente spam VAD/language detection
 
 logger = logging.getLogger("agentpexi.api")
 
@@ -162,11 +163,17 @@ async def lifespan(app: FastAPI):
     # 2. Pepe orchestratore
     pepe = Pepe(memory=memory, ws_broadcaster=ws_manager.broadcast)
 
+    # Funzione broadcast Telegram — definita subito dopo Pepe (usata da tutti gli agenti)
+    async def telegram_broadcast(msg: str) -> None:
+        if pepe and hasattr(pepe, "notify_telegram"):
+            await pepe.notify_telegram(msg, priority=True)
+
     # 2b. Registra agenti disponibili
     research_agent = ResearchAgent(
         anthropic_client=pepe.client,
         memory=memory,
         ws_broadcaster=ws_manager.broadcast,
+        telegram_broadcaster=telegram_broadcast,
     )
     pepe.register_agent("research", research_agent)
 
@@ -205,11 +212,6 @@ async def lifespan(app: FastAPI):
     # 2d. EtsyAPI
     etsy_api = EtsyAPI(memory=memory, pepe=pepe)
     logger.info("EtsyAPI inizializzato")
-
-    # Funzione broadcast Telegram (usata dallo scheduler)
-    async def telegram_broadcast(msg: str) -> None:
-        if pepe and hasattr(pepe, "notify_telegram"):
-            await pepe.notify_telegram(msg, priority=True)
 
     # 2e. Publisher Agent
     publisher_agent = PublisherAgent(
@@ -255,6 +257,7 @@ async def lifespan(app: FastAPI):
         memory=memory,
         ws_broadcaster=ws_manager.broadcast,
         notion_calendar=notion_calendar,
+        telegram_broadcaster=telegram_broadcast,
     )
     pepe.register_agent("remind", remind_agent)
 
@@ -264,6 +267,7 @@ async def lifespan(app: FastAPI):
         memory=memory,
         ws_broadcaster=ws_manager.broadcast,
         text_extractor=text_extractor,
+        telegram_broadcaster=telegram_broadcast,
     )
     pepe.register_agent("summarize", summarize_agent)
 
@@ -273,22 +277,24 @@ async def lifespan(app: FastAPI):
         memory=memory,
         ws_broadcaster=ws_manager.broadcast,
         web_search=web_search,
+        telegram_broadcaster=telegram_broadcast,
     )
     pepe.register_agent("research_personal", research_personal_agent)
 
-    # 2i. ScreenWatcher — avviato solo se pyobjc/mss disponibili
+    # 2i. ScreenWatcher — TEMPORANEAMENTE DISABILITATO per debug event loop
     _screen_watcher_error: str | None = None
-    screen_watcher = ScreenWatcher(
-        memory=memory,
-        ws_broadcaster=ws_manager.broadcast,
-    )
-    try:
-        await screen_watcher.start()
-        logger.info("ScreenWatcher avviato")
-    except Exception as exc:
-        logger.warning("ScreenWatcher non avviato: %s", exc)
-        _screen_watcher_error = str(exc)
-        screen_watcher = None
+    screen_watcher = None
+    # screen_watcher = ScreenWatcher(
+    #     memory=memory,
+    #     ws_broadcaster=ws_manager.broadcast,
+    # )
+    # try:
+    #     await screen_watcher.start()
+    #     logger.info("ScreenWatcher avviato")
+    # except Exception as exc:
+    #     logger.warning("ScreenWatcher non avviato: %s", exc)
+    #     _screen_watcher_error = str(exc)
+    #     screen_watcher = None
 
     # 3. Scheduler APScheduler
     scheduler = Scheduler(
@@ -550,20 +556,46 @@ async def get_screen_status() -> dict:
 
 @personal_router.get("/api/personal/reminders")
 async def get_personal_reminders(limit: Annotated[int, Query(ge=1, le=100)] = 10) -> dict:
-    """Prossimi reminder pending ordinati per trigger_at."""
+    """Prossimi reminder pending ordinati per trigger_at.
+
+    Restituisce `items` con shape attesa dal PersonalPanel:
+    {id, message, when (ISO8601), status}
+    """
     if not memory:
-        return {"reminders": []}
-    reminders = await memory.get_pending_reminders()
-    return {"reminders": reminders[:limit]}
+        return {"items": []}
+    raw = await memory.get_pending_reminders() or []
+    items = [
+        {
+            "id":      r.get("id"),
+            "message": r.get("text", ""),
+            "when":    r.get("trigger_at", ""),
+            "status":  r.get("status", "pending"),
+        }
+        for r in raw[:limit]
+    ]
+    return {"items": items}
 
 
 @personal_router.get("/api/personal/recalls")
 async def get_personal_recalls(limit: Annotated[int, Query(ge=1, le=100)] = 10) -> dict:
-    """Ultimi N recall completati: query + risposta troncata + timestamp."""
+    """Ultimi N recall completati.
+
+    Restituisce `items` con shape attesa dal PersonalPanel:
+    {timestamp, agent, query, status}
+    """
     if not memory:
-        return {"recalls": []}
-    recalls = await memory.get_personal_recalls(limit)
-    return {"recalls": recalls}
+        return {"items": []}
+    raw = await memory.get_personal_recalls(limit) or []
+    items = [
+        {
+            "timestamp": r.get("created_at") or r.get("timestamp", ""),
+            "agent":     r.get("agent", "recall"),
+            "query":     r.get("query") or r.get("text", ""),
+            "status":    "ok" if r.get("status") != "failed" else "error",
+        }
+        for r in raw
+    ]
+    return {"items": items}
 
 
 @personal_router.get("/api/personal/mcp/status")
@@ -651,6 +683,33 @@ async def get_ollama_status() -> dict:
         pass
 
     return result
+
+
+@personal_router.post("/api/personal/voice/collect")
+async def set_collect_mode(body: dict) -> dict:
+    """Attiva/disattiva modalità raccolta campioni wake word.
+
+    Body: {"mode": "positive" | "negative" | "off"}
+    - positive: salva ogni blob WebM in training_data/positive/real_*.wav
+    - negative: salva ogni blob WebM in training_data/negative/real_*.wav
+    - off: disattiva la raccolta
+
+    Dopo aver raccolto abbastanza campioni (>=20 per classe):
+      python scripts/train_wake_word.py
+    """
+    from apps.backend.voice import collector
+    mode = (body or {}).get("mode", "off")
+    if mode not in ("positive", "negative", "off"):
+        return JSONResponse(status_code=400, content={"error": "mode deve essere positive | negative | off"})
+    collector.set_mode(mode)
+    return collector.get_status()
+
+
+@personal_router.get("/api/personal/voice/collect/status")
+async def get_collect_status() -> dict:
+    """Stato corrente raccolta campioni: modalità attiva + conteggi per classe."""
+    from apps.backend.voice import collector
+    return collector.get_status()
 
 
 @personal_router.post("/api/personal/ask")
@@ -897,77 +956,250 @@ async def get_analytics_failures(limit: Annotated[int, Query(ge=1, le=500)] = 20
 
 @app.websocket("/ws/voice")
 async def ws_voice(websocket: WebSocket) -> None:
-    """WebSocket dedicato al canale voce Orb.
+    """WebSocket dedicato al canale voce Orb — wake word "Jarvis" via Whisper.
 
-    Protocollo a due fasi (vedi docs/changes.md §11.5):
+    Protocollo a due fasi:
 
-    Fase 1 — Wake word:
-      Client → Server: binario (chunk PCM 16kHz mono, ~500ms)
-      Server → Client: {"type": "wake"}  quando rilevato
+    Fase 1 — Wake word (Whisper-based keyword spotting):
+      Client → Server: binario (blob WebM 3s completo, da MediaRecorder monouso)
+      Ogni blob è un WebM auto-contenuto → Whisper trascrive → cerca "jarvis".
+      Se trovato:
+        Server → Client: {"type": "wake"}
 
-    Fase 2 — Utterance:
-      Client → Server: binario (blob audio completo, max 8s)
+    Fase 2 — Utterance (STT + Pepe + TTS):
+      Client → Server: binario (blob WebM completo, max 8s)
       Server → Client: {"type": "response", "text": "...", "audio_b64": "..."|null}
+        audio_b64: M4A/AAC base64 (macOS say+afconvert), null se TTS non disponibile
+        In assenza di audio_b64 il frontend usa il browser SpeechSynthesis come fallback.
 
     Dopo la risposta il ciclo riparte dalla Fase 1.
     Canale separato da /ws/chat — non interferisce con gli eventi UI.
     """
     from apps.backend.voice.stt import transcribe
-    from apps.backend.voice.tts import synthesize
-    from apps.backend.voice.wake import detect_wake_word
+    from apps.backend.voice.tts import play_via_say
+    from apps.backend.voice.wake import detect_wake_word_in_text
+    from apps.backend.voice import wake_oww
+    from apps.backend.voice import collector as voice_collector
 
     await websocket.accept()
     logger.info("WebSocket /ws/voice connesso")
-    phase = "wakeword"  # "wakeword" | "utterance"
+
+    phase = "wakeword"              # "wakeword" | "utterance"
+    _post_reply_timeout: float | None = None  # secondi, None = nessun timeout
+
+    # Durata della finestra di ascolto post-risposta (Step 6)
+    _POST_REPLY_S: float = 20.0
 
     try:
         while True:
-            data = await websocket.receive_bytes()
+            # ── Receive con timeout opzionale (post-reply window) ────────────
+            try:
+                if _post_reply_timeout is not None:
+                    data = await asyncio.wait_for(
+                        websocket.receive_bytes(), timeout=_post_reply_timeout
+                    )
+                    _post_reply_timeout = None
+                else:
+                    data = await websocket.receive_bytes()
+            except asyncio.TimeoutError:
+                # L'utente non ha parlato nella finestra post-reply → torna al wake word
+                logger.info("Voice: post-reply window scaduto → ritorno in ascolto wake word")
+                await websocket.send_json({"type": "done"})
+                phase = "wakeword"
+                _post_reply_timeout = None
+                continue
 
+            # ── Fase 1: ogni messaggio è un blob WebM completo da 3s ──────────
+            # Il frontend avvia un nuovo MediaRecorder per ogni finestra da 3s
+            # → ogni blob ha l'header EBML e può essere decodificato da Whisper.
             if phase == "wakeword":
-                detected = detect_wake_word(data)
-                if detected:
-                    await websocket.send_json({"type": "wake"})
-                    phase = "utterance"
+                try:
+                    # ── Raccolta campioni (se attiva) ────────────────────────
+                    # Salva il blob PRIMA del classifier — non blocca il flusso normale.
+                    if voice_collector.is_active():
+                        await asyncio.get_running_loop().run_in_executor(
+                            None, voice_collector.save_sample, data
+                        )
 
+                    # ── Wake word detection ──────────────────────────────────
+                    # Prova modello ML custom; se non disponibile o errore → Whisper.
+                    wake_detected = False
+
+                    _use_whisper = True
+                    try:
+                        oww_score = await wake_oww.predict(data)
+                        if oww_score is not None:
+                            # Modello ML attivo — Whisper NON viene usato
+                            _use_whisper = False
+                            wake_detected = wake_oww.is_wake_word(oww_score)
+                        else:
+                            # predict() ha ritornato None: ffmpeg fallito o altro errore
+                            # già loggato in wake_oww con WARNING
+                            logger.warning("wake_oww: predict() → None, uso Whisper (emergenza)")
+                    except Exception as oww_exc:
+                        logger.warning("wake_oww eccezione (%s) — uso Whisper (emergenza)", oww_exc)
+
+                    if _use_whisper:
+                        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+                            f.write(data)
+                            tmp_wake = f.name
+                        try:
+                            wake_text = await transcribe(tmp_wake, language=settings.WHISPER_LANGUAGE, vad_filter=True)
+                            if wake_text:
+                                logger.info("Wake Whisper fallback: '%s'", wake_text[:80])
+                            wake_detected = detect_wake_word_in_text(wake_text)
+                        finally:
+                            try:
+                                os.unlink(tmp_wake)
+                            except OSError:
+                                pass
+
+                    if wake_detected:
+                        # ── Wake ack via ElevenLabs ──────────────────────────
+                        # Riproduce l'ack PRIMA di mandare {"type": "wake"} al
+                        # frontend. Così quando il frontend riceve "wake" e manda
+                        # subito "utterance_ready", il backend è già nel drain loop.
+                        # L'ack è bloccante → zero echo sul microfono.
+                        import random
+                        _WAKE_ACKS = ["Dimmi.", "Sì?", "Ti ascolto.", "Dimmi pure.", "Eccomi."]
+                        await play_via_say(random.choice(_WAKE_ACKS))
+                        # Notifica frontend solo dopo che l'ack è terminato
+                        await websocket.send_json({"type": "wake"})
+                        # ── Drain handshake ─────────────────────────────────
+                        # Race condition: il frontend può aver già inviato il
+                        # blob successivo del loop wake PRIMA di ricevere il
+                        # messaggio "wake" e fermarsi. Dreniamo quei blob stale
+                        # finché il frontend non manda {"type": "utterance_ready"}.
+                        drained = 0
+                        while True:
+                            raw = await websocket.receive()
+                            if raw.get("bytes"):
+                                drained += 1
+                                logger.debug(
+                                    "Drenato blob stale #%d (%d bytes)",
+                                    drained, len(raw["bytes"]),
+                                )
+                            elif raw.get("text"):
+                                try:
+                                    ctrl = json.loads(raw["text"])
+                                    if ctrl.get("type") == "utterance_ready":
+                                        logger.debug(
+                                            "Frontend pronto per utterance (drenati %d blob stale)",
+                                            drained,
+                                        )
+                                        break
+                                except Exception:
+                                    pass
+                        phase = "utterance"
+                except Exception as exc:
+                    logger.warning("Errore wake word detection: %s", exc)
+
+            # ── Fase 2: trascrivi utterance → Pepe → TTS → risposta ──
             elif phase == "utterance":
-                # Scrive il blob in un file temporaneo → STT → Pepe → risposta
                 with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
                     f.write(data)
-                    tmp_path = f.name
+                    tmp_utt = f.name
                 try:
-                    text = await transcribe(tmp_path)
+                    # Utterance: forza lingua italiana per massima accuratezza
+                    text = await transcribe(tmp_utt, language=settings.WHISPER_LANGUAGE, vad_filter=True)
+                    logger.info("Voice utterance: '%s'", text[:120])
+
                     if text.strip():
-                        reply = await pepe.handle_user_message(
-                            message=text,
-                            session_id="voice_orb",
-                            source="orb_voice",
+                        # ── Step 5: Thinking ack (condizionale) ──────────────
+                        # Avvia handle_user_message in background. Se non risponde
+                        # entro _ACK_AFTER_S secondi, suona la frase di attesa.
+                        # Per agenti veloci (remind ~1s) l'ack non parte mai.
+                        # Per agenti lenti (research, finance) riempie il silenzio.
+                        import random
+                        _THINK_ACKS = [
+                            "Vediamo.",
+                            "Un attimo.",
+                            "Ci penso.",
+                            "Dammi un secondo.",
+                            "Mmh, vediamo.",
+                        ]
+                        _ACK_AFTER_S = 1.5   # secondi di attesa prima di suonare l'ack
+
+                        handle_task = asyncio.create_task(
+                            pepe.handle_user_message(
+                                message=text,
+                                session_id="voice_orb",
+                                source="orb_voice",
+                            )
                         )
-                        # TTS: ElevenLabs se API key configurata, altrimenti None
-                        audio_b64: str | None = None
-                        if getattr(settings, "ELEVENLABS_API_KEY", None):
-                            try:
-                                audio_bytes = await synthesize(reply)
-                                audio_b64 = base64.b64encode(audio_bytes).decode()
-                            except Exception as tts_exc:
-                                logger.warning("TTS ElevenLabs fallito: %s", tts_exc)
-                        await websocket.send_json({
-                            "type": "response",
-                            "text": reply,
-                            "audio_b64": audio_b64,
-                        })
+
+                        # Aspetta _ACK_AFTER_S — se ancora in corso, suona l'ack
+                        _VOICE_TIMEOUT_S = 45.0  # timeout massimo per handle_user_message
+                        done, _ = await asyncio.wait({handle_task}, timeout=_ACK_AFTER_S)
+                        if not done:
+                            # Pepe sta ancora elaborando → ack mentre aspettiamo
+                            await play_via_say(random.choice(_THINK_ACKS))
+
+                        # Timeout globale: evita Think perenne se LLM/Ollama non risponde
+                        try:
+                            reply = await asyncio.wait_for(
+                                asyncio.shield(handle_task), timeout=_VOICE_TIMEOUT_S
+                            )
+                        except asyncio.TimeoutError:
+                            handle_task.cancel()
+                            reply = "Ci ho messo troppo, riprova."
+                            logger.warning("Voice: handle_user_message timeout (%ss)", _VOICE_TIMEOUT_S)
+                        logger.info("Voice response → '%s'", reply[:120] if reply else '<VUOTO>')
+
+                        if not reply or not reply.strip():
+                            reply = "Scusa, puoi ripetere?"
+                            logger.warning("Voice: Pepe ha restituito risposta vuota — fallback attivo")
+
+                        # Controlla se Pepe ha una domanda in sospeso (clarification)
+                        # In quel caso rimaniamo in fase "utterance" — il mic si riapre
+                        # subito dopo la risposta, senza tornare al wake word.
+                        is_clarification = await pepe.has_pending_voice_clarification()
+
+                        await websocket.send_json({"type": "speaking", "text": reply})
+                        await play_via_say(reply)
+
+                        if is_clarification:
+                            # Rimane in utterance — manda "clarify" invece di "done"
+                            await websocket.send_json({"type": "clarify"})
+                            logger.info("Voice: Pepe in attesa di risposta, fase utterance mantenuta")
+                            # phase rimane "utterance", nessun timeout
+                        else:
+                            # ── Step 6: post-reply listen window ─────────────
+                            # Apre una finestra di 8s senza wake word: l'utente può
+                            # rispondere direttamente a Pepe. Se non parla entro il
+                            # timeout il loop torna in ascolto wake word.
+                            await websocket.send_json({
+                                "type": "post_reply_listen",
+                                "timeout_ms": int(_POST_REPLY_S * 1000),
+                            })
+                            _post_reply_timeout = _POST_REPLY_S
+                            logger.info("Voice: post-reply window aperto (%.0fs)", _POST_REPLY_S)
+                            # phase rimane "utterance"
                     else:
-                        # Trascrizione vuota — nessun testo rilevato
-                        await websocket.send_json({"type": "response", "text": "", "audio_b64": None})
+                        # Nessun testo rilevato — torna in ascolto
+                        await websocket.send_json({"type": "done"})
+                        phase = "wakeword"
+
                 except Exception as stt_exc:
                     logger.exception("Errore STT/Pepe in /ws/voice: %s", stt_exc)
-                    await websocket.send_json({"type": "error", "message": "Errore trascrizione"})
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Errore elaborazione",
+                        "detail": str(stt_exc),          # full detail → green card (Step 3)
+                        "agent": "stt/pepe",
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    })
+                    # In caso di errore: azzera il post-reply window e torna al wake word
+                    _post_reply_timeout = None
+                    phase = "wakeword"
                 finally:
                     try:
-                        os.unlink(tmp_path)
+                        os.unlink(tmp_utt)
                     except OSError:
                         pass
-                phase = "wakeword"  # torna in ascolto wake word
+                # NOTA: NON c'è più un "phase = 'wakeword'" incondizionale qui.
+                # La fase viene gestita esplicitamente nei branch above (clarify /
+                # post_reply_listen / silent utterance / exception).
 
     except WebSocketDisconnect:
         logger.info("WebSocket /ws/voice disconnesso")

@@ -87,7 +87,10 @@ class WebSearchTool:
     @staticmethod
     def _ddgs_sync(query: str, max_results: int) -> list[dict]:
         """Esecuzione sincrona di DDGS (da run_in_executor)."""
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS  # fallback pacchetto vecchio
         results = []
         with DDGS() as ddgs:
             for r in ddgs.text(query, max_results=max_results):

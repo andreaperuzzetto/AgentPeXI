@@ -1,0 +1,28 @@
+{
+  "response": "Mi dispiace, ma i risultati forniti non contengono i dati specifici sulle **top 5 repository con più stelle questa settimana**.\n\nI risultati linkano a:\n- Pagine di ranking generale (non settimanale) [1][3][4][5]\n- Strumenti per tracciare stelle nel tempo [2]\n- Guide su repository più popolari in assoluto [6]\n\n**Per trovare le top 5 questa settimana:**\n\nVisita direttamente [GitHub Trending](https://github.com/trending) [1] e seleziona il filtro temporale \"This week\" nella sezione \"Spoken language\" del menu.\n\nOppure usa [Star History](https://www.star-history.com/) [2] per confrontare la crescita settimanale di repository specifiche.\n\nI risultati non forniscono un elenco aggiornato delle top 5 attuali di questa settimana.",
+  "sources": [
+    {
+      "title": "Trending repositories on GitHub today · GitHub",
+      "url": "https://github.com/trending"
+    },
+    {
+      "title": "GitHub Star History — Track & Compare Open Source Star Growth",
+      "url": "https://www.star-history.com/"
+    },
+    {
+      "title": "Top 10 Most Popular GitHub Repos Leaderboard | by Alex Streza",
+      "url": "https://javascript.plainenglish.io/top-10-most-popular-github-repos-leaderboard-f7c5b6ab3908"
+    },
+    {
+      "title": "The Ten Most Starred Github Repositories | HackerNoon",
+      "url": "https://hackernoon.com/the-ten-most-starred-github-repositories-mo19343d"
+    },
+    {
+      "title": "hostinger.com/tutorials/most-popular-github-repos",
+      "url": "https://www.hostinger.com/tutorials/most-popular-github-repos"
+    }
+  ],
+  "query": "top 5 GitHub repositories with most stars this week",
+  "depth": "quick",
+  "confidence": 0.75
+}

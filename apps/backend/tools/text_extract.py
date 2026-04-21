@@ -42,11 +42,19 @@ SUPPORTED_MIME_TYPES = {
 }
 SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}
 
-# Directory consentite per from_file (temp di sistema + storage progetto)
-_ALLOWED_ROOTS: tuple[Path, ...] = (
-    Path(tempfile.gettempdir()).resolve(),
-    Path("/Volumes/Progetti/agentpexi-storage").resolve(),
-)
+# Directory consentite per from_file (temp di sistema + storage progetto).
+# STORAGE_PATH viene da settings/.env — non hardcoded.
+def _build_allowed_roots() -> tuple[Path, ...]:
+    from apps.backend.core.config import settings
+    roots = [Path(tempfile.gettempdir()).resolve()]
+    try:
+        storage = Path(settings.STORAGE_PATH).resolve()
+        roots.append(storage)
+    except Exception:
+        pass  # settings non disponibili al momento dell'import — verrà risolto al primo uso
+    return tuple(roots)
+
+_ALLOWED_ROOTS: tuple[Path, ...] = _build_allowed_roots()
 
 # Reti private/riservate bloccate per SSRF
 _BLOCKED_NETWORKS = [

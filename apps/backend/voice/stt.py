@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Optional
 
 from apps.backend.core.config import settings
 
@@ -34,16 +35,47 @@ def _get_model():
     return _model
 
 
-def _transcribe_sync(audio_path: str) -> str:
-    """Trascrizione sincrona (eseguita in thread pool)."""
+def _transcribe_sync(audio_path: str, language: Optional[str], vad_filter: bool = False) -> str:
+    """Trascrizione sincrona (eseguita in thread pool).
+
+    Args:
+        audio_path: percorso al file audio (webm, wav, mp3…).
+        language: codice lingua ISO 639-1 oppure None per auto-detect.
+        vad_filter: se True, usa silero-VAD integrato in faster-whisper per
+                    ignorare i segmenti di silenzio. Riduce drasticamente le
+                    allucinazioni di Whisper su audio vuoto o rumore di fondo
+                    (es. "Horses Horses", "Thank you very much" su silenzio).
+                    Usare True per wake word detection, False per utterance.
+    """
     model = _get_model()
-    segments, info = model.transcribe(audio_path, language=settings.WHISPER_LANGUAGE)
+    kwargs: dict = {"language": language, "vad_filter": vad_filter}
+    if vad_filter:
+        kwargs["vad_parameters"] = {"min_silence_duration_ms": 300}
+    segments, info = model.transcribe(audio_path, **kwargs)
     text = " ".join(segment.text.strip() for segment in segments)
-    logger.debug("STT: lingua=%s prob=%.2f testo='%s'", info.language, info.language_probability, text[:80])
+    logger.debug(
+        "STT: lingua=%s (forced=%s, vad=%s) prob=%.2f testo='%s'",
+        info.language,
+        language or "auto",
+        vad_filter,
+        info.language_probability,
+        text[:80],
+    )
     return text
 
 
-async def transcribe(audio_path: str) -> str:
-    """Trascrive un file audio in testo. Async wrapper attorno a faster-whisper."""
+async def transcribe(
+    audio_path: str,
+    language: Optional[str] = None,
+    vad_filter: bool = False,
+) -> str:
+    """Trascrive un file audio in testo. Async wrapper attorno a faster-whisper.
+
+    Args:
+        audio_path: percorso al file audio.
+        language: codice lingua ISO 639-1 o None per auto-detect.
+        vad_filter: True per wake word (elimina allucinazioni su silenzio),
+                    False per utterance (non troncare l'audio utente).
+    """
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _transcribe_sync, audio_path)
+    return await loop.run_in_executor(None, _transcribe_sync, audio_path, language, vad_filter)

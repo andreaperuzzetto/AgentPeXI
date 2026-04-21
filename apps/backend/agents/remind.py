@@ -42,7 +42,7 @@ import anthropic
 import dateparser
 
 from apps.backend.agents.base import AgentBase
-from apps.backend.core.config import settings
+from apps.backend.core.config import MODEL_HAIKU, settings
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 from apps.backend.tools.notion_calendar import NotionCalendar
@@ -50,18 +50,21 @@ from apps.backend.tools.notion_calendar import NotionCalendar
 logger = logging.getLogger("agentpexi.remind")
 
 # Step 1 — Estrazione strutturata (caveman)
-_REMIND_EXTRACT_SYSTEM = (
-    "Extract reminder info. Output ONLY valid JSON:\n"
-    '{"text": "cosa ricordare", "when": "stringa temporale", "recurring": null}\n'
-    "recurring values: null | \"daily\" | \"weekly:MON\" | \"weekly:MON,WED,FRI\" "
-    "| \"monthly:15\" | \"weekdays\"\n"
-    "Days: MON TUE WED THU FRI SAT SUN"
+_REMIND_EXTRACT_SYSTEM_TMPL = (
+    "Extract reminder info from the user message. Output ONLY valid JSON, no markdown, no extra text.\n"
+    '{{"text": "<cosa ricordare, senza riferimenti temporali>", "recurring": null}}\n\n'
+    "RULES:\n"
+    "- 'text': the WHAT to remember — strip all time expressions (e.g. 'stendere la lavatrice', not 'stendere la lavatrice tra dieci minuti')\n"
+    "- 'recurring' values: null | \"daily\" | \"weekly:MON\" | \"weekly:MON,WED,FRI\" | \"monthly:15\" | \"weekdays\"\n"
+    "  Set 'recurring' only for repeating patterns like 'ogni giorno', 'ogni lunedì', etc.\n"
+    "- Days: MON TUE WED THU FRI SAT SUN\n"
+    "- If no recurring pattern, set recurring to null"
 )
 
 _DATEPARSER_SETTINGS = {
     "PREFER_DATES_FROM": "future",
     "RETURN_AS_TIMEZONE_AWARE": False,
-    "LANGUAGES": ["it", "en"],
+    "DEFAULT_LANGUAGES": ["it", "en"],
     "PREFER_DAY_OF_MONTH": "first",
 }
 
@@ -71,10 +74,17 @@ class RemindAgent(AgentBase):
 
     card: ClassVar[AgentCard] = AgentCard(
         name="remind",
-        description="Crea, lista, cancella e conferma reminder tramite APScheduler",
-        input_schema={"message": "str", "when": "stringa data naturale"},
+        description=(
+            "Gestisce reminder. "
+            "Per CREARE: action='create', message=cosa, when=quando. "
+            "Per LISTARE/VEDERE reminder esistenti: action='list' (niente when). "
+            "Per CANCELLARE: action='cancel', reminder_id=N. "
+            "Usa action='list' per domande come 'quali sono i miei reminder', "
+            "'cosa devo fare', 'mostrami i promemoria'."
+        ),
+        input_schema={"action": "create|list|cancel|ack", "message": "str", "when": "stringa data naturale"},
         layer="personal",
-        llm="ollama",
+        llm="haiku",
         requires_clarification=["when"],
         confidence_threshold=0.90,
     )
@@ -86,10 +96,11 @@ class RemindAgent(AgentBase):
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
         notion_calendar: NotionCalendar | None = None,
+        telegram_broadcaster: Callable | None = None,
     ) -> None:
         super().__init__(
             name="remind",
-            model=settings.OLLAMA_MODEL,
+            model=MODEL_HAIKU,
             anthropic_client=anthropic_client,
             memory=memory,
             ws_broadcaster=ws_broadcaster,
@@ -97,6 +108,14 @@ class RemindAgent(AgentBase):
         # Se iniettato da lifespan (già ensure_database chiamato), usa direttamente
         self._notion: NotionCalendar | None = notion_calendar
         self._notion_ready: bool = notion_calendar is not None
+        self._telegram_broadcast = telegram_broadcaster
+
+    async def _notify_telegram(self, message: str) -> None:
+        if self._telegram_broadcast:
+            try:
+                await self._telegram_broadcast(message)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Init Notion (lazy, una volta sola)
@@ -144,85 +163,107 @@ class RemindAgent(AgentBase):
     # ------------------------------------------------------------------
 
     async def _create(self, inp: dict) -> AgentResult:
-        raw_input: str = inp.get("text", "").strip()
+        # Haiku può usare chiavi diverse — proviamo in ordine di probabilità
+        raw_input: str = (
+            inp.get("text")
+            or inp.get("message")
+            or inp.get("query")
+            or inp.get("reminder")
+            or inp.get("content")
+            or ""
+        ).strip()
         if not raw_input:
             return self._fail(
                 "Testo mancante. Es: /remind chiamare Mario domani alle 15"
             )
 
-        # Step 1 — Estrazione strutturata via Ollama caveman
-        await self._step("Estrazione strutturata (Ollama)")
-        extracted = await self._extract_reminder_json(raw_input)
-        if extracted is None:
-            return self._fail(
-                "Non ho capito, puoi riformulare? "
-                "Es: 'ricordami di X [quando] [ogni Y]'"
-            )
-
-        text: str = extracted.get("text", raw_input).strip()
-        when_raw: str = (extracted.get("when") or "").strip()
-        recurring: str | None = extracted.get("recurring") or None
-
-        if not when_raw:
-            return self._fail(
-                "Non ho capito quando. Puoi essere più specifico? "
-                "Es: 'domani alle 15', 'ogni lunedì alle 9'"
-            )
-
-        # Step 2 — Parse datetime via dateparser
-        await self._step("Parse datetime")
-        trigger_at: datetime | None = dateparser.parse(when_raw, settings=_DATEPARSER_SETTINGS)
-
-        if trigger_at is None:
-            return self._fail(
-                "Non ho capito quando. Puoi essere più specifico? "
-                "Es: 'domani alle 15', 'ogni lunedì alle 9'"
-            )
-
+        # Step 1 — Estrazione testo e ricorrenza via LLM, tempo via dateparser
+        await self._step("Estrazione strutturata")
         now = datetime.now()
-        delta = trigger_at - now
+        parse_settings = {**_DATEPARSER_SETTINGS, "RELATIVE_BASE": now}
 
-        # Caso: data nel passato
-        if delta.total_seconds() < 0:
-            suggested = trigger_at + timedelta(days=1)
-            suggested_str = suggested.strftime("%d/%m/%Y %H:%M")
-            return self._fail(
-                f"Sembra una data passata ({trigger_at.strftime('%d/%m/%Y %H:%M')}). "
-                f"Intendevi {suggested_str}? Rispondi sì/no oppure specifica di nuovo."
-            )
+        # Dateparser in cascata — prova più candidati finché uno ha successo:
+        # 1. inp["when"]         — campo estratto dal routing (es. "tra dieci minuti")
+        # 2. inp["_user_message"] — messaggio originale completo (iniettato da Pepe)
+        # 3. raw_input           — testo estratto (fallback, di solito senza orario)
+        _candidates: list[str] = []
+        if inp.get("when"):
+            _candidates.append(str(inp["when"]).strip())
+        if inp.get("_user_message"):
+            _candidates.append(str(inp["_user_message"]).strip())
+        if raw_input:
+            _candidates.append(raw_input)
 
-        # Caso: entro 5 minuti — avvisa ma procede
+        trigger_at: datetime | None = None
+        _matched_candidate: str = ""
+        for _cand in _candidates:
+            if not _cand:
+                continue
+            trigger_at = dateparser.parse(_cand, settings=parse_settings)
+            if trigger_at:
+                _matched_candidate = _cand
+                break
+
+        logger.info(
+            "Remind dateparser → %s (candidato: %r)",
+            trigger_at, _matched_candidate or None,
+        )
+
+        # LLM estrae solo 'text' (cosa ricordare) e 'recurring'
+        extracted = await self._extract_reminder_json(raw_input)
+        text: str = (extracted.get("text") if extracted else None) or raw_input
+        text = text.strip()
+        recurring: str | None = (extracted.get("recurring") if extracted else None) or None
+
+        logger.info("Remind extracted: text='%s' recurring=%s trigger_at=%s", text, recurring, trigger_at)
+
+        if trigger_at is None and not recurring:
+            return self._fail("Quando?")
+
+        # Caso: data nel passato → chiede conferma
         soon_warning = ""
-        if 0 < delta.total_seconds() < 300:
-            soon_warning = "⚠️ Il reminder è tra meno di 5 minuti.\n"
+        if trigger_at is not None:
+            delta = trigger_at - now
+            if delta.total_seconds() < -60:
+                suggested = trigger_at + timedelta(days=1)
+                suggested_str = suggested.strftime("%d/%m/%Y %H:%M")
+                return self._fail(
+                    f"Sembra una data passata ({trigger_at.strftime('%d/%m/%Y %H:%M')}). "
+                    f"Intendevi {suggested_str}?"
+                )
+            # Caso: entro 5 minuti — avvisa ma procede
+            if 0 < delta.total_seconds() < 300:
+                soon_warning = "⚠️ Il reminder è tra meno di 5 minuti.\n"
 
-        # Step 3 — Check duplicati
+        # Step 3 — Check duplicati (solo se abbiamo un trigger_at)
         await self._step("Check duplicati")
-        duplicate = await self._check_duplicate(text, trigger_at)
-        if duplicate:
-            dup_time = duplicate.get("trigger_at", "?")
-            try:
-                dup_dt = datetime.fromisoformat(dup_time).strftime("%d/%m %H:%M")
-            except (ValueError, TypeError):
-                dup_dt = dup_time
-            return self._fail(
-                f"Hai già un reminder simile: «{duplicate['text']}» alle {dup_dt}. "
-                f"Vuoi aggiungerlo lo stesso? Rispondi sì/no."
-            )
+        if trigger_at is not None:
+            duplicate = await self._check_duplicate(text, trigger_at)
+            if duplicate:
+                dup_time = duplicate.get("trigger_at", "?")
+                try:
+                    dup_dt = datetime.fromisoformat(dup_time).strftime("%d/%m %H:%M")
+                except (ValueError, TypeError):
+                    dup_dt = dup_time
+                return self._fail(
+                    f"Hai già un reminder simile: «{duplicate['text']}» alle {dup_dt}. "
+                    f"Vuoi aggiungerlo lo stesso? Rispondi sì/no."
+                )
 
         # Step 4 — Salva su DB
         await self._step("Salvataggio reminder su DB")
         reminder_id = await self.memory.add_reminder(
             text=text,
-            trigger_at=trigger_at.isoformat(),
+            trigger_at=trigger_at.isoformat() if trigger_at else None,
             recurring_rule=recurring,
         )
         if reminder_id is None:
             return self._fail("Errore salvataggio reminder su DB")
 
-        # Step 5 — Notion (fail-safe)
+        # Step 5 — Notion (fail-safe, solo se token configurato)
         notion_page_id: str | None = None
-        if self._notion:
+        _notion_token = getattr(settings, "NOTION_API_TOKEN", "")
+        if self._notion and trigger_at is not None and _notion_token:
             await self._step("Creazione pagina su Notion Calendar")
             try:
                 notion_page_id = await self._notion.create_reminder(
@@ -235,9 +276,11 @@ class RemindAgent(AgentBase):
             except Exception as exc:
                 logger.warning("Notion create_reminder fallito (fail-safe): %s", exc)
 
-        # Step 6 — Risposta
-        when_str = trigger_at.strftime("%d/%m/%Y %H:%M")
+        # Step 6 — Notifica Telegram + Risposta
+        when_str = trigger_at.strftime("%d/%m/%Y %H:%M") if trigger_at else "orario ricorrente"
         recur_str = f" (ricorrente: {recurring})" if recurring else ""
+        _tg_msg = f"⏰ Reminder impostato:\n«{text}»\n📅 {when_str}{recur_str}"
+        await self._notify_telegram(_tg_msg)
         notion_str = "🗒 Sincronizzato su Notion." if notion_page_id else "⚠️ Notion non disponibile, reminder salvato localmente."
         reply = (
             f"{soon_warning}"
@@ -259,6 +302,12 @@ class RemindAgent(AgentBase):
         except Exception:
             pass
 
+        if trigger_at:
+            _voice_when = self._format_rel_time(trigger_at)
+            _reply_voice = f"Ok, ti ricordo di {text} {_voice_when}."
+        else:
+            _reply_voice = f"Salvato come promemoria ricorrente: {text}."
+
         return AgentResult(
             agent_name=self.name,
             task_id=self._task_id,
@@ -266,12 +315,13 @@ class RemindAgent(AgentBase):
             output_data={
                 "reminder_id": reminder_id,
                 "text": text,
-                "trigger_at": trigger_at.isoformat(),
+                "trigger_at": trigger_at.isoformat() if trigger_at else None,
                 "recurring": recurring,
                 "notion_page_id": notion_page_id,
                 "reply": reply,
                 "confidence": 1.0,
             },
+            reply_voice=_reply_voice,
         )
 
     # ------------------------------------------------------------------
@@ -290,6 +340,7 @@ class RemindAgent(AgentBase):
 
         if not all_items:
             reply = "Nessun reminder attivo."
+            _reply_voice = "Nessun promemoria attivo."
         else:
             lines = ["📋 Reminder attivi:\n"]
             for r in all_items:
@@ -303,6 +354,11 @@ class RemindAgent(AgentBase):
                 recur = f" [{r['recurring_rule']}]" if r.get("recurring_rule") else ""
                 lines.append(f"{status_icon} [{r['id']}] {dt_str}{recur} — {r['text']}")
             reply = "\n".join(lines)
+            n = len(all_items)
+            first_text = all_items[0].get("text", "")
+            _label = "promemoria" if n == 1 else "promemoria"
+            _verb  = "attivo" if n == 1 else "attivi"
+            _reply_voice = f"Hai {n} {_label} {_verb}. Il prossimo è {first_text}."
 
         return AgentResult(
             agent_name=self.name,
@@ -313,6 +369,7 @@ class RemindAgent(AgentBase):
                 "reply": reply,
                 "confidence": 1.0,
             },
+            reply_voice=_reply_voice,
         )
 
     # ------------------------------------------------------------------
@@ -342,6 +399,7 @@ class RemindAgent(AgentBase):
                 "reply": f"✅ Reminder {reminder_id} cancellato.",
                 "confidence": 1.0,
             },
+            reply_voice="Fatto, promemoria cancellato.",
         )
 
     # ------------------------------------------------------------------
@@ -374,6 +432,7 @@ class RemindAgent(AgentBase):
                 "reply": "✅ Reminder confermato come visto.",
                 "confidence": 1.0,
             },
+            reply_voice="Confermato.",
         )
 
     # ------------------------------------------------------------------
@@ -381,28 +440,29 @@ class RemindAgent(AgentBase):
     # ------------------------------------------------------------------
 
     async def _extract_reminder_json(self, raw_input: str) -> dict | None:
-        """Step 1: Ollama caveman estrae JSON strutturato dal testo naturale.
+        """Estrae 'text' (cosa ricordare) e 'recurring' via Haiku.
 
+        Il parsing temporale è delegato a dateparser in _create.
         Strategia first_brace/last_brace. 2 tentativi prima di fallire.
-        Ritorna dict con chiavi text/when/recurring, oppure None.
+        Ritorna dict con chiavi text/recurring, oppure None.
         """
+        system = _REMIND_EXTRACT_SYSTEM_TMPL
+
         for attempt in range(2):
             try:
-                result = await self._call_llm_ollama(
-                    system=_REMIND_EXTRACT_SYSTEM,
-                    user=raw_input,
-                    max_tokens=120,
-                    temperature=0.0,
+                result = await self._call_llm(
+                    messages=[{"role": "user", "content": raw_input}],
+                    system_prompt=system,
+                    max_tokens=150,
                 )
                 raw = (result or "").strip()
-                # first_brace/last_brace strategy
                 start = raw.find("{")
                 end = raw.rfind("}")
                 if start == -1 or end == -1 or end <= start:
-                    logger.debug("_extract_reminder_json tentativo %d: nessun JSON trovato", attempt + 1)
+                    logger.debug("_extract_reminder_json tentativo %d: nessun JSON trovato in: %s", attempt + 1, raw[:200])
                     continue
                 parsed = json.loads(raw[start : end + 1])
-                if isinstance(parsed, dict) and ("text" in parsed or "when" in parsed):
+                if isinstance(parsed, dict) and ("text" in parsed or "recurring" in parsed):
                     return parsed
             except (json.JSONDecodeError, Exception) as exc:
                 logger.debug("_extract_reminder_json tentativo %d fallito: %s", attempt + 1, exc)

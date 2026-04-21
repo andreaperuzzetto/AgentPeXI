@@ -6,13 +6,13 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 import openai
 
-from apps.backend.core.config import MODEL_SONNET, settings
+from apps.backend.core.config import MODEL_HAIKU, MODEL_SONNET, settings
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 
@@ -210,12 +210,12 @@ class AgentBase(ABC):
         max_tokens: int = 4096,
         domain_name: str = "etsy_store",
     ) -> str:
-        """Chiama LLM con routing automatico: Ollama per dominio personal, Anthropic altrimenti.
+        """Chiama LLM con routing automatico: Haiku per dominio personal, Sonnet altrimenti.
 
         Args:
             domain_name: Nome del dominio attivo (es. 'personal', 'etsy_store').
-                         Se 'personal' → Ollama locale (costo zero, privacy totale).
-                         Altrimenti → Anthropic Claude (comportamento invariato).
+                         Se 'personal' → Haiku (economico, affidabile).
+                         Altrimenti → Anthropic Sonnet (comportamento invariato).
         """
         use_ollama = domain_name == "personal"
 
@@ -309,14 +309,15 @@ class AgentBase(ABC):
         user: str | None = None,
         temperature: float | None = None,
     ) -> str:
-        """Chiama Ollama via API compatibile OpenAI. Costo zero, privacy totale.
+        """Wrapper compatibile con la vecchia interfaccia Ollama — ora usa Claude Haiku.
+
+        Mantiene la stessa firma per non modificare remind, research_personal,
+        summarize e qualsiasi altro agente che la chiama. Internamente passa
+        su Anthropic Haiku, che è affidabile, veloce ed economico (~€0,001/call).
 
         Supporta due convenzioni di chiamata:
           1. messages/system_prompt (stile _call_llm)
           2. system/user/temperature (stile caveman, usato dagli agenti Personal)
-
-        Ollama deve essere avviato con OLLAMA_KEEP_ALIVE=-1 per tenere il modello
-        permanentemente in RAM (configurato in .env e nel plist launchd).
         """
         # Risolve i parametri convenience (system/user) in messages/system_prompt
         effective_system = system_prompt or system
@@ -328,46 +329,30 @@ class AgentBase(ABC):
             effective_messages = messages
 
         t0 = time.monotonic()
-        model = settings.OLLAMA_MODEL
+        model = MODEL_HAIKU
 
-        # Costruisci messages list per OpenAI SDK (system come primo messaggio)
-        ollama_messages: list[dict] = []
-        if effective_system:
-            ollama_messages.append({"role": "system", "content": effective_system})
-        ollama_messages.extend(effective_messages)
-
-        # Aggiorna le variabili usate nel log a fine metodo
-        system_prompt = effective_system
-        messages = effective_messages
-
-        ollama_client = self._get_ollama_client()
-
-        create_kwargs: dict = {
-            "model": model,
-            "messages": ollama_messages,
-            "max_tokens": max_tokens,
-        }
-        if temperature is not None:
-            create_kwargs["temperature"] = temperature
-
-        try:
-            response = await ollama_client.chat.completions.create(**create_kwargs)
-        except Exception as exc:
-            raise RuntimeError(f"Ollama non disponibile ({model}): {exc}") from exc
+        response = await self._llm_with_retry(
+            model=model,
+            messages=effective_messages,
+            system_prompt=effective_system,
+            max_tokens=max_tokens,
+        )
 
         duration_ms = int((time.monotonic() - t0) * 1000)
-
-        response_text = response.choices[0].message.content or "" if response.choices else ""
         usage = response.usage
-        input_tokens = usage.prompt_tokens if usage else 0
-        output_tokens = usage.completion_tokens if usage else 0
-        cost_usd = 0.0  # Ollama locale = €0
+        input_tokens = usage.input_tokens
+        output_tokens = usage.output_tokens
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        cost_usd = self._estimate_cost(model, input_tokens, output_tokens, cache_read, cache_write)
+
+        response_text = response.content[0].text if response.content else ""
 
         # Log step
         step_id = await self._log_step(
             step_type="llm_call",
-            description=f"Ollama {model} ({input_tokens}+{output_tokens} tok)",
-            input_data={"system_prompt": system_prompt, "messages": messages},
+            description=f"Haiku {model} ({input_tokens}+{output_tokens} tok)",
+            input_data={"system_prompt": effective_system, "messages": effective_messages},
             output_data={"response": response_text[:500]},
             duration_ms=duration_ms,
         )
@@ -378,16 +363,16 @@ class AgentBase(ABC):
             step_id=step_id,
             agent_name=self.name,
             model=model,
-            system_prompt=system_prompt,
-            messages=messages,
+            system_prompt=effective_system,
+            messages=effective_messages,
             response=response_text,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cache_read_tokens=0,
-            cache_write_tokens=0,
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
             cost_usd=cost_usd,
             duration_ms=duration_ms,
-            provider="ollama",
+            provider="haiku",
         )
 
         # WebSocket event
@@ -397,7 +382,7 @@ class AgentBase(ABC):
             "task_id": self._task_id,
             "step_id": step_id,
             "model": model,
-            "provider": "ollama",
+            "provider": "haiku",
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cost_usd": cost_usd,
@@ -591,6 +576,53 @@ class AgentBase(ABC):
                 await self._ws_broadcast(event)
             except Exception:
                 pass  # Non bloccare l'agente per errori WS
+
+    @staticmethod
+    def _format_rel_time(dt: datetime) -> str:
+        """Restituisce una stringa italiana che descrive il momento del trigger rispetto ad ora.
+
+        Esempi:
+          'tra pochi secondi'  'tra un minuto'   'tra 8 minuti'
+          'tra un'ora'         'tra 2 ore e 30 minuti'
+          'oggi alle 20:30'    'domani alle 9:00'
+          'venerdì alle 15:00' 'il 25/04 alle 10:00'
+        """
+        now = datetime.now()
+        total_seconds = (dt - now).total_seconds()
+
+        if total_seconds < 0:
+            return dt.strftime("il %d/%m alle %H:%M")
+        if total_seconds < 60:
+            return "tra pochi secondi"
+
+        minutes = int(total_seconds // 60)
+        hours   = int(total_seconds // 3600)
+
+        if minutes < 60:
+            return "tra un minuto" if minutes == 1 else f"tra {minutes} minuti"
+
+        if hours < 24:
+            remaining_minutes = int((total_seconds % 3600) // 60)
+            if remaining_minutes == 0:
+                return "tra un'ora" if hours == 1 else f"tra {hours} ore"
+            if hours == 1:
+                return f"tra un'ora e {remaining_minutes} minuti"
+            return f"tra {hours} ore e {remaining_minutes} minuti"
+
+        today       = now.date()
+        target_date = dt.date()
+        time_str    = dt.strftime("%H:%M")
+
+        if target_date == today:
+            return f"oggi alle {time_str}"
+        if target_date == today + timedelta(days=1):
+            return f"domani alle {time_str}"
+
+        days_ahead = (target_date - today).days
+        if days_ahead < 7:
+            _DAYS_IT = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
+            return f"{_DAYS_IT[dt.weekday()]} alle {time_str}"
+        return f"il {dt.strftime('%d/%m')} alle {time_str}"
 
     @staticmethod
     def _task_description(task: AgentTask) -> str:

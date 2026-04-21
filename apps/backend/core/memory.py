@@ -38,7 +38,6 @@ CREATE TABLE IF NOT EXISTS conversations (
     timestamp TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_conv_session ON conversations(session_id);
-CREATE INDEX IF NOT EXISTS idx_conv_domain ON conversations(domain);
 
 CREATE TABLE IF NOT EXISTS agent_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,7 +187,6 @@ CREATE TABLE IF NOT EXISTS production_queue (
 
 CREATE INDEX IF NOT EXISTS idx_agent_logs_task_id ON agent_logs(task_id);
 CREATE INDEX IF NOT EXISTS idx_agent_logs_agent_name ON agent_logs(agent_name);
-CREATE INDEX IF NOT EXISTS idx_agent_logs_domain ON agent_logs(domain);
 CREATE INDEX IF NOT EXISTS idx_agent_steps_task_id ON agent_steps(task_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_task_id ON llm_calls(task_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_task_id ON tool_calls(task_id);
@@ -1183,19 +1181,26 @@ class MemoryManager:
         status: str,
         last_synced_at: str,
     ) -> None:
-        # Salva views correnti come views_prev prima dell'aggiornamento
-        await self._db.execute(
-            "UPDATE etsy_listings SET views_prev = views WHERE listing_id = ?",
-            (listing_id,),
-        )
-        await self._db.execute(
-            """UPDATE etsy_listings SET
-               views = ?, favorites = ?, sales = ?,
-               revenue_eur = ?, status = ?, last_synced_at = ?
-               WHERE listing_id = ?""",
-            (views, favorites, sales, revenue_eur, status, last_synced_at, listing_id),
-        )
-        await self._db.commit()
+        # Aggiornamento atomico: views_prev e stats nella stessa transazione.
+        # BEGIN IMMEDIATE blocca writer concorrenti — nessuna coroutine può
+        # leggere uno stato parziale (views_prev aggiornato, views vecchio).
+        await self._db.execute("BEGIN IMMEDIATE")
+        try:
+            await self._db.execute(
+                "UPDATE etsy_listings SET views_prev = views WHERE listing_id = ?",
+                (listing_id,),
+            )
+            await self._db.execute(
+                """UPDATE etsy_listings SET
+                   views = ?, favorites = ?, sales = ?,
+                   revenue_eur = ?, status = ?, last_synced_at = ?
+                   WHERE listing_id = ?""",
+                (views, favorites, sales, revenue_eur, status, last_synced_at, listing_id),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def get_etsy_listings(self, status: str | None = None, limit: int | None = None) -> list[dict]:
         limit_clause = f" LIMIT {int(limit)}" if limit else ""

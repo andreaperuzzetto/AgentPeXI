@@ -138,6 +138,8 @@ export const useStore = create<AgentPeXIStore>((set) => ({
   agentSteps: {},
   addAgentStep: (step) => set((state) => {
     const current = state.agentSteps[step.agent] ?? []
+    // Dedup: ignora step con stesso id già presente (hydration + WS)
+    if (current.some((s) => s.id === step.id)) return state
     const updated = [...current, step].slice(-50)
     return { agentSteps: { ...state.agentSteps, [step.agent]: updated } }
   }),

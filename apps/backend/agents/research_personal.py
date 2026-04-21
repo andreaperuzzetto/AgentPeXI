@@ -87,15 +87,34 @@ _MAX_URLS_TO_FETCH = 3
 _MAX_CHARS_PER_URL = 5_000
 
 
+def _voice_summary(synthesis: str, max_chars: int = 300) -> str:
+    """Estrae le prime 1-2 frasi significative dalla sintesi per la risposta vocale.
+
+    Rimuove markdown (**, ##, bullet •/-) e tronca a max_chars.
+    """
+    import re
+    text = re.sub(r'\*{1,2}|#{1,6}\s*|`{1,3}', '', synthesis)
+    text = re.sub(r'^\s*[•\-]\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\[\d+\]', '', text)          # rimuove citazioni [1], [2]
+    text = re.sub(r'\s+', ' ', text).strip()
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    result = ''
+    for s in sentences:
+        if len(result) + len(s) > max_chars:
+            break
+        result += (' ' if result else '') + s
+    return result.strip() or "Ricerca completata, controlla Telegram per i dettagli."
+
+
 class ResearchPersonalAgent(AgentBase):
     """Ricerca web + sintesi strutturata per dominio Personal. DuckDuckGo, mai Tavily."""
 
     card: ClassVar[AgentCard] = AgentCard(
         name="research_personal",
-        description="Ricerca web con Tavily, sintesi locale via Ollama, nessun contesto business",
+        description="Ricerca web con DuckDuckGo, sintesi via Claude Haiku, nessun contesto business",
         input_schema={"query": "str", "depth": "quick|deep"},
         layer="personal",
-        llm="ollama",
+        llm="haiku",
         requires_clarification=["query"],   # chiede "cosa cerco?" se LLM non estrae query
         confidence_threshold=0.90,
     )
@@ -107,6 +126,7 @@ class ResearchPersonalAgent(AgentBase):
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
         web_search: WebSearchTool | None = None,
+        telegram_broadcaster: Callable | None = None,
     ) -> None:
         super().__init__(
             name="research_personal",
@@ -117,6 +137,14 @@ class ResearchPersonalAgent(AgentBase):
         )
         self._search = web_search or WebSearchTool()
         self._extractor = TextExtractor(max_chars=_MAX_CHARS_PER_URL)
+        self._telegram_broadcast = telegram_broadcaster
+
+    async def _notify_telegram(self, message: str) -> None:
+        if self._telegram_broadcast:
+            try:
+                await self._telegram_broadcast(message)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # run()
@@ -158,6 +186,9 @@ class ResearchPersonalAgent(AgentBase):
         # Step 7 — personal_learning
         await self._update_learning(query)
 
+        _tg_msg = f"🔍 Ricerca: {query}\n{'─' * 28}\n{synthesis}"
+        await self._notify_telegram(_tg_msg)
+
         return AgentResult(
             task_id=task_id,
             agent_name=self.name,
@@ -169,6 +200,7 @@ class ResearchPersonalAgent(AgentBase):
                 "depth": "quick",
                 "confidence": 0.75,
             },
+            reply_voice=_voice_summary(synthesis),
         )
 
     # ------------------------------------------------------------------
@@ -245,6 +277,9 @@ class ResearchPersonalAgent(AgentBase):
 
         confidence = min(0.92, 0.6 + len(relevant) * 0.04)
 
+        _tg_msg = f"🔍 Ricerca approfondita: {query}\n{'─' * 28}\n{synthesis}"
+        await self._notify_telegram(_tg_msg)
+
         return AgentResult(
             task_id=task_id,
             agent_name=self.name,
@@ -257,6 +292,7 @@ class ResearchPersonalAgent(AgentBase):
                 "depth": "deep",
                 "confidence": round(confidence, 2),
             },
+            reply_voice=_voice_summary(synthesis),
         )
 
     # ------------------------------------------------------------------

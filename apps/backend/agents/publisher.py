@@ -192,6 +192,7 @@ class PublisherAgent(AgentBase):
             output_data=output,
             confidence=confidence,
             missing_data=missing_data,
+            reply_voice="Pubblicazione completata, controlla il pannello e Telegram.",
         )
 
     # ------------------------------------------------------------------

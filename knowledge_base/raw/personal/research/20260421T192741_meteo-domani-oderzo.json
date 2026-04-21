@@ -1,0 +1,28 @@
+{
+  "response": "**Meteo Oderzo domani** [1]\n\n- **Mattino**: 13°C, nuvoloso con locali aperture\n- **Pomeriggio**: 21°C, nubi sparse e schiarite\n- **Sera**: 16°C, nubi sparse con ampie schiarite\n- **Notte**: temperatura non disponibile\n\nIn sintesi: giornata variabile con temperature miti (13-21°C) e progressivo miglioramento verso sera con schiarite.",
+  "sources": [
+    {
+      "title": "Meteo Oderzo Domani - Dettagli Orari e Esa 3B Meteo",
+      "url": "https://www.3bmeteo.com/meteo/oderzo/1"
+    },
+    {
+      "title": "Previsioni meteo Oderzo domani | METEO.IT",
+      "url": "https://www.meteo.it/meteo/oderzo-domani-26051"
+    },
+    {
+      "title": "ilmeteo.it/meteo/oderzo/domani",
+      "url": "https://www.ilmeteo.it/meteo/oderzo/domani"
+    },
+    {
+      "title": "Previsioni meteo Oderzo domani - MeteoLive.it",
+      "url": "https://www.meteolive.it/previsione-meteo/italia/Veneto/Oderzo/1/"
+    },
+    {
+      "title": "Tempo Oderzo per 3 giorni, previsioni orarie Oderzo (Venezia) oggi...",
+      "url": "https://meteo33.it/meteo-oderzo"
+    }
+  ],
+  "query": "meteo domani Oderzo",
+  "depth": "quick",
+  "confidence": 0.75
+}

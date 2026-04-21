@@ -66,19 +66,55 @@ function generateParticles(container: HTMLDivElement) {
 
 /* ── Constants ───────────────────────────────────────────────── */
 const UTTERANCE_TIMEOUT_MS = 8_000   // max durata registrazione utterance (§11.4)
-const CHUNK_INTERVAL_MS    =   500   // intervallo chunk wake word
+const WAKE_SAMPLE_MS       = 3_000   // durata ogni finestra di registrazione per wake word
+
+/* ── Wake acknowledgment ─────────────────────────────────────── */
+const WAKE_ACKS = [
+  'Dimmi.',
+  'Sì?',
+  'Ti ascolto.',
+  'Dimmi pure.',
+  'Eccomi.',
+]
+
+/**
+ * Risponde vocalmente con una breve frase italiana per confermare
+ * che il wake word è stato sentito e Pepe è in ascolto.
+ * Risolve il Promise al termine del parlato, così la mic si apre
+ * solo dopo — evitando di catturare la voce di Pepe nell'utterance.
+ */
+function playWakeAck(): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      window.speechSynthesis.cancel()
+      const phrase = WAKE_ACKS[Math.floor(Math.random() * WAKE_ACKS.length)]
+      const utter  = new SpeechSynthesisUtterance(phrase)
+      utter.lang   = 'it-IT'
+      utter.rate   = 1.05
+      utter.pitch  = 1.0
+      utter.volume = 0.9
+      utter.onend   = () => resolve()
+      utter.onerror = () => resolve()   // se TTS non disponibile, va avanti lo stesso
+      window.speechSynthesis.speak(utter)
+    } catch {
+      resolve()
+    }
+  })
+}
 
 /* ── Component ───────────────────────────────────────────────── */
 export function PepeOrb() {
-  const orbState    = useUiStore((s) => s.orbState)
-  const setOrbState = useUiStore((s) => s.setOrbState)
+  const orbState         = useUiStore((s) => s.orbState)
+  const setOrbState      = useUiStore((s) => s.setOrbState)
+  const pushNotification = useUiStore((s) => s.pushNotification)
 
   /* ── Refs ── */
-  const innerRef  = useRef<HTMLDivElement>(null)
-  const wsRef     = useRef<WebSocket | null>(null)
-  const mediaRef  = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const timerRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const innerRef      = useRef<HTMLDivElement>(null)
+  const wsRef         = useRef<WebSocket | null>(null)
+  const mediaRef      = useRef<MediaRecorder | null>(null)
+  const chunksRef     = useRef<Blob[]>([])
+  const timerRef      = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wakeActiveRef = useRef<boolean>(false)  // controlla il loop di wake word
 
   /* ── Particle sphere — generata una sola volta ── */
   useEffect(() => {
@@ -87,6 +123,7 @@ export function PepeOrb() {
 
   /* ── Helpers audio ── */
   const stopMedia = useCallback(() => {
+    wakeActiveRef.current = false          // ferma il loop di wake word
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
     if (mediaRef.current && mediaRef.current.state !== 'inactive') {
       mediaRef.current.stop()
@@ -101,21 +138,49 @@ export function PepeOrb() {
     setOrbState('wakeword')
   }, [stopMedia, setOrbState])
 
-  /** Streaming chunk → WebSocket per wake word detection */
+  /**
+   * Loop di registrazioni da 3s per wake word detection.
+   *
+   * Ogni iterazione avvia un NUOVO MediaRecorder → blob WebM completo e valido
+   * (con header EBML) → inviato al server → Whisper trascrive → cerca "jarvis".
+   *
+   * Questo risolve il problema WebM: i chunk timesliced da un MediaRecorder
+   * continuo non sono WebM indipendenti (mancano dell'header dopo il primo),
+   * rendendo ffmpeg/Whisper incapace di decodificarli. Sessioni discrete
+   * producono sempre file WebM validi e auto-contenuti.
+   */
   const startChunkStream = useCallback(async (ws: WebSocket) => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mr = new MediaRecorder(stream, { timeslice: CHUNK_INTERVAL_MS })
-      mediaRef.current = mr
+    wakeActiveRef.current = true
 
-      mr.ondataavailable = (e) => {
-        if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-          e.data.arrayBuffer().then((buf) => ws.send(buf))
-        }
+    while (wakeActiveRef.current && ws.readyState === WebSocket.OPEN) {
+      let stream: MediaStream | null = null
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        const chunks: Blob[] = []
+        const mr = new MediaRecorder(stream)
+        mediaRef.current = mr
+
+        mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+
+        await new Promise<void>((resolve) => {
+          mr.onstop = () => {
+            stream?.getTracks().forEach((t) => t.stop())
+            const blob = new Blob(chunks, { type: 'audio/webm' })
+            if (blob.size > 0 && wakeActiveRef.current && ws.readyState === WebSocket.OPEN) {
+              blob.arrayBuffer().then((buf) => {
+                if (wakeActiveRef.current && ws.readyState === WebSocket.OPEN) ws.send(buf)
+              })
+            }
+            resolve()
+          }
+          mr.start()
+          setTimeout(() => { if (mr.state === 'recording') mr.stop() }, WAKE_SAMPLE_MS)
+        })
+      } catch (err) {
+        console.warn('[PepeOrb] Microfono non disponibile:', err)
+        stream?.getTracks().forEach((t) => t.stop())
+        break
       }
-      mr.start(CHUNK_INTERVAL_MS)
-    } catch (err) {
-      console.warn('[PepeOrb] Microfono non disponibile:', err)
     }
   }, [])
 
@@ -175,41 +240,60 @@ export function PepeOrb() {
       catch { return }
 
       if (msg.type === 'wake') {
-        // Wake word rilevato → avvia utterance recording
-        stopMedia()
+        // Wake word rilevato → il backend riproduce l'ack via ElevenLabs (bloccante).
+        // Il frontend manda subito utterance_ready e apre il mic — il drain loop
+        // sul server aspetta che l'audio finisca prima di processare l'utterance.
+        stopMedia()          // wakeActiveRef = false, ferma MediaRecorder corrente
+        setOrbState('listening')
+        ws.send(JSON.stringify({ type: 'utterance_ready' }))
+        startUtteranceRecording(ws)
+
+      } else if (msg.type === 'speaking') {
+        // Pepe sta parlando dagli speaker del Mac (say in corso sul server).
+        // Mostriamo lo stato "speaking" — il backend manderà "done" quando finisce.
+        setOrbState('speaking')
+
+      } else if (msg.type === 'clarify') {
+        // Pepe ha fatto una domanda e aspetta risposta — rimane in ascolto
+        // diretto senza tornare al wake word.
         setOrbState('listening')
         startUtteranceRecording(ws)
 
+      } else if (msg.type === 'post_reply_listen') {
+        // Step 6: post-reply window — l'utente può rispondere senza wake word.
+        // Il server chiuderà la finestra con "done" se non arriva nulla entro timeout_ms.
+        setOrbState('listening')
+        startUtteranceRecording(ws)
+
+      } else if (msg.type === 'done') {
+        // Risposta completata → torna in ascolto wake word
+        returnToWakeword()
+        startChunkStream(ws)
+
       } else if (msg.type === 'response') {
+        // Ramo legacy — mantenuto per compatibilità futura
         setOrbState('speaking')
-
-        if (msg.audio_b64) {
-          // ElevenLabs audio → decode → play
-          const bytes = Uint8Array.from(atob(msg.audio_b64), (c) => c.charCodeAt(0))
-          const blob  = new Blob([bytes], { type: 'audio/mpeg' })
-          const url   = URL.createObjectURL(blob)
-          const audio = new Audio(url)
-          audio.onended = () => { URL.revokeObjectURL(url); returnToWakeword(); startChunkStream(ws) }
-          audio.onerror = () => { URL.revokeObjectURL(url); returnToWakeword(); startChunkStream(ws) }
-          audio.play().catch(() => { returnToWakeword(); startChunkStream(ws) })
-
-        } else if (msg.text) {
-          // Fallback browser TTS
+        if (msg.text) {
           const utter   = new SpeechSynthesisUtterance(msg.text)
           utter.lang    = 'it-IT'
           utter.rate    = 0.95
           utter.onend   = () => { returnToWakeword(); startChunkStream(ws) }
           utter.onerror = () => { returnToWakeword(); startChunkStream(ws) }
           window.speechSynthesis.speak(utter)
-
         } else {
-          // Risposta vuota
           returnToWakeword()
           startChunkStream(ws)
         }
 
-      } else if (msg.type === 'error') {
-        console.warn('[PepeOrb] Errore voice backend:', msg)
+      } else if (msg.type === 'error' || msg.type === 'warning') {
+        console.warn('[PepeOrb] Notifica voice backend:', msg)
+        pushNotification({
+          type:    msg.type === 'warning' ? 'warning' : 'error',
+          message: (msg as { message?: string }).message ?? '',
+          detail:  (msg as { detail?: string }).detail  ?? '',
+          agent:   (msg as { agent?: string }).agent    ?? 'pepe',
+          ts:      (msg as { ts?: string }).ts          ?? new Date().toISOString(),
+        })
         returnToWakeword()
         startChunkStream(ws)
       }

@@ -9,6 +9,7 @@ import { DomainCard } from './components/DomainCard/DomainCard'
 import { AnalyticsOverlay } from './components/AnalyticsOverlay/AnalyticsOverlay'
 import { SystemOverlay } from './components/SystemOverlay/SystemOverlay'
 import { ToolActivityChip } from './components/ToolActivityChip/ToolActivityChip'
+import { VoiceNotificationStack } from './components/VoiceNotification/VoiceNotificationStack'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useStore } from './store'
 
@@ -137,6 +138,7 @@ export default function App() {
             <div className="orb-zone">
               <PepeOrb />
               <ToolActivityChip />
+              <VoiceNotificationStack />
             </div>
             <div className="reasoning">
               <ReasoningPanel />

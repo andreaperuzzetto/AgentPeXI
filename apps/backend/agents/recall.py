@@ -143,6 +143,7 @@ class RecallAgent(AgentBase):
                     "results_found": 0,
                     "confidence": 0.3,
                 },
+                reply_voice="Non ho trovato nulla nella memoria recente.",
             )
 
         # ── Step 3: sintesi ──────────────────────────────────────────
@@ -178,6 +179,13 @@ class RecallAgent(AgentBase):
 
         confidence = min(0.95, 0.5 + len(relevant) * 0.03)
 
+        # Estrai la prima frase della sintesi per la risposta vocale
+        _first_sentence = (synthesis.split(".")[0].strip() + ".") if synthesis else ""
+        _n = len(relevant)
+        _reply_voice = (
+            f"Ho trovato {'un risultato' if _n == 1 else f'{_n} risultati'}. {_first_sentence}"
+        ).strip()
+
         return AgentResult(
             task_id=task.task_id,
             agent_name=self.name,
@@ -189,6 +197,7 @@ class RecallAgent(AgentBase):
                 "results_found": len(relevant),
                 "confidence": round(confidence, 2),
             },
+            reply_voice=_reply_voice,
         )
 
     # ------------------------------------------------------------------

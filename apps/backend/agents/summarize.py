@@ -93,6 +93,7 @@ class SummarizeAgent(AgentBase):
         memory: MemoryManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
         text_extractor: TextExtractor | None = None,
+        telegram_broadcaster: Callable | None = None,
     ) -> None:
         super().__init__(
             name="summarize",
@@ -104,6 +105,14 @@ class SummarizeAgent(AgentBase):
         self._extractor = text_extractor or TextExtractor(
             max_chars=settings.SUMMARIZE_MAX_CHARS
         )
+        self._telegram_broadcast = telegram_broadcaster
+
+    async def _notify_telegram(self, message: str) -> None:
+        if self._telegram_broadcast:
+            try:
+                await self._telegram_broadcast(message)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # run()
@@ -213,6 +222,8 @@ class SummarizeAgent(AgentBase):
         trunc_warn = "\n⚠️ Documento molto lungo, ho processato i primi ~15.000 caratteri." if (n_chars > _CHUNK_THRESHOLD and len(chunks) == _MAX_CHUNKS) else ""
         reply = f"📄 Riassunto da: {source_label}\n{'─' * 30}\n{summary}{action_note}{trunc_warn}"
 
+        await self._notify_telegram(reply)
+
         return AgentResult(
             task_id=task.task_id,
             agent_name=self.name,
@@ -226,6 +237,7 @@ class SummarizeAgent(AgentBase):
                 "action_items": action_items,
                 "confidence": 1.0,
             },
+            reply_voice="Riassunto pronto, controlla il pannello.",
         )
 
     # ------------------------------------------------------------------

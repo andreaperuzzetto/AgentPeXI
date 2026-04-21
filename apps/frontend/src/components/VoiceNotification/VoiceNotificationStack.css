@@ -1,0 +1,137 @@
+/* ── Stack container ─────────────────────────────────────────── */
+.vn-stack {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+  pointer-events: none;
+}
+
+/* ── Single card ─────────────────────────────────────────────── */
+.vn-card {
+  width: 290px;
+  background: rgba(8, 18, 10, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(27, 255, 94, 0.22);
+  border-radius: 10px;
+  box-shadow:
+    0 4px 28px rgba(0, 0, 0, 0.6),
+    0 0 18px rgba(27, 255, 94, 0.06);
+  overflow: hidden;
+  pointer-events: all;
+  animation: vn-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes vn-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.vn-card.vn-leaving {
+  animation: vn-out 0.2s ease-in forwards;
+}
+
+@keyframes vn-out {
+  to { opacity: 0; transform: translateX(-10px); height: 0; margin: 0; padding: 0; }
+}
+
+/* ── Header row ──────────────────────────────────────────────── */
+.vn-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px 6px;
+}
+
+.vn-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--acc, #1BFF5E);
+  box-shadow: 0 0 5px rgba(27, 255, 94, 0.7);
+  flex-shrink: 0;
+}
+
+.vn-agent {
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--acc, #1BFF5E);
+  opacity: 0.75;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vn-ts {
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 9px;
+  color: rgba(27, 255, 94, 0.3);
+  white-space: nowrap;
+}
+
+.vn-close {
+  background: none;
+  border: none;
+  color: rgba(27, 255, 94, 0.3);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 0 0 4px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.vn-close:hover { color: rgba(27, 255, 94, 0.8); }
+
+/* ── Body ────────────────────────────────────────────────────── */
+.vn-body {
+  padding: 0 11px 10px;
+}
+
+.vn-message {
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  color: rgba(27, 255, 94, 0.85);
+  line-height: 1.45;
+  margin-bottom: 6px;
+}
+
+.vn-detail {
+  font-family: var(--fmo, 'JetBrains Mono', monospace);
+  font-size: 9.5px;
+  color: rgba(27, 255, 94, 0.38);
+  line-height: 1.5;
+  max-height: 72px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(27, 255, 94, 0.15) transparent;
+  word-break: break-all;
+}
+
+/* ── Progress bar ────────────────────────────────────────────── */
+.vn-progress {
+  height: 2px;
+  background: rgba(27, 255, 94, 0.08);
+  position: relative;
+  overflow: hidden;
+}
+
+.vn-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: rgba(27, 255, 94, 0.45);
+  animation: vn-drain var(--vn-duration, 15s) linear forwards;
+}
+
+@keyframes vn-drain {
+  from { width: 100%; }
+  to   { width: 0%; }
+}

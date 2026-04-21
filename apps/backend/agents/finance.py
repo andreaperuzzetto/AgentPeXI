@@ -296,6 +296,7 @@ class FinanceAgent(AgentBase):
             output_data=report,
             confidence=confidence,
             missing_data=missing_data,
+            reply_voice="Report finanziario pronto, controlla il pannello e Telegram.",
         )
 
     # ------------------------------------------------------------------

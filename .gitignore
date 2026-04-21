@@ -46,6 +46,7 @@ logs/
 
 # Notes private
 docs/
+training_data/
 
 # Fonts (downloaded at setup)
 apps/backend/assets/fonts/*.ttf
