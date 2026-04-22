@@ -98,29 +98,36 @@
   height: 16px;
 }
 
-/* ── State controls (bottom-left) ─────────────────────────── */
+/* ── State controls (top-left) ────────────────────────────── */
 .orb-controls {
   position: absolute;
-  bottom: 14px;
+  top: 14px;
   left: 14px;
   display: flex;
   gap: 5px;
+  z-index: 4;
 }
 .orb-btn {
   background: rgba(27,255,94,.04);
   border: 1px solid rgba(27,255,94,.10);
   border-radius: 3px;
-  color: rgba(27,255,94,.35);
+  color: rgba(27,255,94,.28);
   font-family: var(--fmo, 'JetBrains Mono', monospace);
   font-size: 9px;
   letter-spacing: .1em;
   text-transform: uppercase;
   padding: 4px 9px;
-  cursor: pointer;
+  cursor: default;
   transition: all .15s;
   outline: none;
+  pointer-events: none;
 }
-.orb-btn:hover {
+/* solo listen è cliccabile */
+.orb-btn.listen {
+  cursor: pointer;
+  pointer-events: auto;
+}
+.orb-btn.listen:hover {
   background: rgba(27,255,94,.09);
   color: rgba(27,255,94,.70);
   border-color: rgba(27,255,94,.28);

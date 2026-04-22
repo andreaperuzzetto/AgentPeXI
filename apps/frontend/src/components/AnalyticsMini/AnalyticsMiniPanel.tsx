@@ -1,5 +1,12 @@
 import { useStore } from '../../store'
 
+/* ── helpers ─────────────────────────────────────────────────── */
+function fmtTok(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000)     return `${(n / 1_000).toFixed(0)}K`
+  return String(n)
+}
+
 /* ── Sparkline ───────────────────────────────────────────────── */
 function Sparkline({ perDay }: { perDay: Record<string, number> }) {
   const days   = Object.keys(perDay).sort().slice(-14)
@@ -34,7 +41,6 @@ function Sparkline({ perDay }: { perDay: Record<string, number> }) {
   )
 }
 
-/* ── helpers ─────────────────────────────────────────────────── */
 const costStr = (n: number) =>
   n === 0 ? '€0' : n < 0.01 ? `€${n.toFixed(4)}` : `€${n.toFixed(3)}`
 
@@ -51,8 +57,11 @@ export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
   const running   = Object.values(agents).filter((a) => a?.status === 'running').length
   const completed = summary?.completed ?? 0
   const failed    = summary?.failed    ?? 0
+  const hasGlow   = running > 0
 
-  const hasGlow = running > 0
+  const totalTok   = llm.tokenStats.total
+  const cachePct   = llm.cacheStats.efficiencyPct
+  const topAgent   = Object.entries(llm.perAgent).sort(([, a], [, b]) => b - a)[0]
 
   return (
     <>
@@ -100,14 +109,38 @@ export function AnalyticsMiniPanel({ onOpen }: { onOpen?: () => void }) {
           </div>
         )}
 
+        {/* Token + cache row */}
+        {totalTok > 0 && (
+          <div className="a-agents-row" style={{ justifyContent: 'space-between' }}>
+            <span className="a-agents-txt">{fmtTok(totalTok)} token</span>
+            {cachePct > 0 && (
+              <span style={{ fontFamily: 'var(--fmo)', fontSize: 10, color: 'var(--ok)' }}>
+                {cachePct.toFixed(0)}% cache
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Top agent cost */}
+        {topAgent && topAgent[1] > 0 && (
+          <div className="a-agents-row" style={{ justifyContent: 'space-between' }}>
+            <span className="a-agents-txt" style={{ textTransform: 'uppercase', fontSize: 10, letterSpacing: '.04em' }}>
+              {topAgent[0]}
+            </span>
+            <span style={{ fontFamily: 'var(--fmo)', fontSize: 10, color: 'var(--tm)' }}>
+              ${topAgent[1].toFixed(3)}
+            </span>
+          </div>
+        )}
+
         {/* Agents row */}
         <div className="a-agents-row">
           <span
             className="a-agents-dot"
             style={{
-              background:  hasGlow ? 'var(--ok)' : 'var(--tf)',
-              boxShadow:   hasGlow ? '0 0 6px rgba(27,255,94,.6)' : 'none',
-              animation:   hasGlow ? 'pdot 1.6s ease-in-out infinite' : 'none',
+              background: hasGlow ? 'var(--ok)' : 'var(--tf)',
+              boxShadow:  hasGlow ? '0 0 6px rgba(27,255,94,.6)' : 'none',
+              animation:  hasGlow ? 'pdot 1.6s ease-in-out infinite' : 'none',
             }}
           />
           <span className="a-agents-txt">

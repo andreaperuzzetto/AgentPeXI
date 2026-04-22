@@ -348,17 +348,21 @@ export function PepeOrb() {
       {/* state label */}
       <div className="orb-state-lbl">{LABEL[orbState]}</div>
 
-      {/* debug buttons — bottom-left */}
+      {/* state buttons — top-left; solo LISTEN è cliccabile */}
       <div className="orb-controls">
-        {DEBUG_STATES.map((s) => (
-          <button
-            key={s}
-            className={`orb-btn${orbState === s ? ' active' : ''}`}
-            onClick={() => setOrbState(s)}
-          >
-            {DEBUG_LABELS[s]}
-          </button>
-        ))}
+        {DEBUG_STATES.map((s) => {
+          const isListen = s === 'listening'
+          return (
+            <button
+              key={s}
+              className={`orb-btn${isListen ? ' listen' : ''}${orbState === s ? ' active' : ''}`}
+              onClick={isListen ? handleOrbClick : undefined}
+              title={isListen ? 'Avvia ascolto' : undefined}
+            >
+              {DEBUG_LABELS[s]}
+            </button>
+          )
+        })}
       </div>
     </>
   )

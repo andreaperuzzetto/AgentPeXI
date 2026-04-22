@@ -1,14 +1,15 @@
 import { useEffect, useState, Component, type ReactNode, type ErrorInfo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Header } from './components/Header'
-import { ReasoningPanel } from './components/ReasoningPanel/ReasoningPanel'
 import { PepeOrb } from './components/PepeOrb/PepeOrb'
 import { PersonalQuickCard } from './components/PersonalQuickCard/PersonalQuickCard'
 import { AnalyticsMiniPanel } from './components/AnalyticsMini/AnalyticsMiniPanel'
 import { DomainCard } from './components/DomainCard/DomainCard'
 import { AnalyticsOverlay } from './components/AnalyticsOverlay/AnalyticsOverlay'
+import { ContextOverlay } from './components/ContextOverlay/ContextOverlay'
 import { SystemOverlay } from './components/SystemOverlay/SystemOverlay'
-import { ToolActivityChip } from './components/ToolActivityChip/ToolActivityChip'
+import { StepCards } from './components/OrbOverlay/StepCards'
+import { StepDrawer } from './components/OrbOverlay/StepDrawer'
 import { VoiceNotificationStack } from './components/VoiceNotification/VoiceNotificationStack'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useStore } from './store'
@@ -33,9 +34,10 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrState> {
 
 export default function App() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
-  const { setOverlaySystem, setCostsData, addAgentStep, setAnalyticsSummary, setChromaStats } = useStore(
+  const [contextOpen,   setContextOpen]   = useState(false)
+  const [drawerOpen,    setDrawerOpen]    = useState(false)
+  const { setCostsData, addAgentStep, setAnalyticsSummary, setChromaStats } = useStore(
     useShallow((s) => ({
-      setOverlaySystem:    s.setOverlaySystem,
       setCostsData:        s.setCostsData,
       addAgentStep:        s.addAgentStep,
       setAnalyticsSummary: s.setAnalyticsSummary,
@@ -92,12 +94,31 @@ export default function App() {
         .then((data) => {
           if (!data?.breakdown) return
           const b = data.breakdown
-          const budgetUsd = b.budget_threshold_eur ? b.budget_threshold_eur / 0.92 : undefined
+          // Usa il tasso dal backend (settings.USD_EUR_RATE), fallback 0.92 se API vecchia
+          const usdEurRate = b.usd_eur_rate ?? 0.92
+          const budgetUsd = b.budget_threshold_eur ? b.budget_threshold_eur / usdEurRate : undefined
+          // Ancora runCost al valore DB del giorno corrente: resiste a disconnessioni WS
+          const today = new Date().toISOString().split('T')[0]
+          const todayFromDb = (b.per_day as Record<string, number>)?.[today] ?? 0
+          // Cache savings dal backend
+          const c = b.cache as { read_tokens: number; write_tokens: number; savings_usd: number; efficiency_pct: number } | undefined
+          // Token totals dal backend
+          const t  = b.tokens as { input: number; output: number; total: number } | undefined
+          const td = b.tokens_per_day as Record<string, { input: number; output: number; cache_read: number }> | undefined
           setCostsData({
             total:    b.total    ?? 0,
             perAgent: b.per_agent ?? {},
             perDay:   b.per_day   ?? {},
             budgetMonthlyUsd: budgetUsd,
+            runCost: todayFromDb,
+            cacheStats: c ? {
+              readTokens:    c.read_tokens,
+              writeTokens:   c.write_tokens,
+              savingsUsd:    c.savings_usd,
+              efficiencyPct: c.efficiency_pct,
+            } : undefined,
+            tokenStats:   t  ?? undefined,
+            tokensPerDay: td ?? undefined,
           })
         })
         .catch(() => {})
@@ -133,22 +154,20 @@ export default function App() {
         {/* ── Content: main (1fr) + right col (360px) ── */}
         <div className="content">
 
-          {/* ── Main: orb-zone (1fr) + reasoning (200px) ── */}
+          {/* ── Main: orb-zone (1fr) ── */}
           <main className="main">
             <div className="orb-zone">
               <PepeOrb />
-              <ToolActivityChip />
+              <StepCards hidden={drawerOpen} />
+              <StepDrawer open={drawerOpen} onToggle={() => setDrawerOpen((v) => !v)} />
               <VoiceNotificationStack />
-            </div>
-            <div className="reasoning">
-              <ReasoningPanel />
             </div>
           </main>
 
           {/* ── Right col: personal qcard + analytics qcard (50/50) ── */}
           <aside className="right-col">
             <div className="qcard">
-              <PersonalQuickCard onOpen={() => setOverlaySystem('personal')} />
+              <PersonalQuickCard onOpen={() => setContextOpen(true)} />
             </div>
             <div className="qcard">
               <AnalyticsMiniPanel onOpen={() => setAnalyticsOpen(true)} />
@@ -164,6 +183,7 @@ export default function App() {
 
       {/* ── Overlays ── */}
       <AnalyticsOverlay open={analyticsOpen} onClose={() => setAnalyticsOpen(false)} />
+      <ContextOverlay   open={contextOpen}   onClose={() => setContextOpen(false)} />
       <SystemOverlay />
     </ErrorBoundary>
   )

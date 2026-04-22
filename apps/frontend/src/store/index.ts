@@ -1,6 +1,17 @@
 import { create } from 'zustand'
 import type { AgentState, ToolEvent, SystemState, AgentStep, ContextUpdateEvent } from '../types'
 
+export interface CacheStats {
+  /** Token serviti dalla cache (cache_read_tokens) */
+  readTokens: number
+  /** Token scritti in cache (cache_write_tokens) */
+  writeTokens: number
+  /** Risparmio in USD rispetto a pagare full input price */
+  savingsUsd: number
+  /** % dei token input serviti da cache (0–100) */
+  efficiencyPct: number
+}
+
 export interface LlmStats {
   /** Tokens accumulated in this session from WS llm_call events */
   inputTokens: number
@@ -13,6 +24,12 @@ export interface LlmStats {
   perAgent: Record<string, number>
   /** Fetched from /api/costs — per-day totals (key = YYYY-MM-DD) */
   perDay: Record<string, number>
+  /** Fetched from /api/costs — prompt cache stats */
+  cacheStats: CacheStats
+  /** Fetched from /api/costs — token totals for the period */
+  tokenStats: { input: number; output: number; total: number }
+  /** Fetched from /api/costs — token breakdown per day (key = YYYY-MM-DD) */
+  tokensPerDay: Record<string, { input: number; output: number; cache_read: number }>
 }
 
 export interface AnalyticsSummary {
@@ -77,7 +94,7 @@ interface AgentPeXIStore {
   /* LLM Stats */
   llmStats: LlmStats
   addLlmCall: (input: number, output: number, cost: number) => void
-  setCostsData: (data: { total: number; perAgent: Record<string, number>; perDay: Record<string, number>; budgetMonthlyUsd?: number; runCost?: number }) => void
+  setCostsData: (data: { total: number; perAgent: Record<string, number>; perDay: Record<string, number>; budgetMonthlyUsd?: number; runCost?: number; cacheStats?: CacheStats; tokenStats?: { input: number; output: number; total: number }; tokensPerDay?: Record<string, { input: number; output: number; cache_read: number }> }) => void
 
   /* Context state (from WS context_update) */
   contextState: ContextUpdateEvent | null
@@ -153,7 +170,13 @@ export const useStore = create<AgentPeXIStore>((set) => ({
   selectedAgent: null,
   setSelectedAgent: (name) => set({ selectedAgent: name }),
 
-  llmStats: { inputTokens: 0, outputTokens: 0, runCost: 0, totalCost: 0, perAgent: {}, perDay: {} },
+  llmStats: {
+    inputTokens: 0, outputTokens: 0, runCost: 0, totalCost: 0,
+    perAgent: {}, perDay: {},
+    cacheStats: { readTokens: 0, writeTokens: 0, savingsUsd: 0, efficiencyPct: 0 },
+    tokenStats: { input: 0, output: 0, total: 0 },
+    tokensPerDay: {},
+  },
   addLlmCall: (input, output, cost) =>
     set((s) => ({
       llmStats: {
@@ -163,15 +186,17 @@ export const useStore = create<AgentPeXIStore>((set) => ({
         runCost: s.llmStats.runCost + cost,
       },
     })),
-  setCostsData: ({ total, perAgent, perDay, budgetMonthlyUsd, runCost }) =>
+  setCostsData: ({ total, perAgent, perDay, budgetMonthlyUsd, runCost, cacheStats, tokenStats, tokensPerDay }) =>
     set((s) => ({
       llmStats: {
         ...s.llmStats,
         totalCost: total,
         perAgent,
         perDay,
-        // runCost: usa il valore passato se > di quello accumulato in sessione
         runCost: runCost !== undefined ? Math.max(runCost, s.llmStats.runCost) : s.llmStats.runCost,
+        cacheStats: cacheStats ?? s.llmStats.cacheStats,
+        tokenStats: tokenStats ?? s.llmStats.tokenStats,
+        tokensPerDay: tokensPerDay ?? s.llmStats.tokensPerDay,
       },
       budgetMonthlyUsd: budgetMonthlyUsd ?? s.budgetMonthlyUsd,
     })),

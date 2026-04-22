@@ -513,6 +513,7 @@ async def get_costs(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
         return {"breakdown": {}}
     breakdown = await memory.get_cost_breakdown(period_days=days)
     breakdown["budget_threshold_eur"] = settings.COST_ALERT_THRESHOLD_EUR
+    breakdown["usd_eur_rate"] = settings.USD_EUR_RATE
     return {"days": days, "breakdown": breakdown}
 
 

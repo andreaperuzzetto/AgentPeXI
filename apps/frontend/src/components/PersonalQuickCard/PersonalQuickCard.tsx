@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
+import { useStore } from '../../store'
 
-/* ── types ──────────────────────────────────────────────────── */
+/* ── types ──────────────────────────────────────────────────────── */
 interface Reminder {
   id: number
   message: string
@@ -21,13 +23,11 @@ interface McpStatus {
   calendar: 'ok' | 'error' | 'unknown'
 }
 
-interface OllamaStatus {
-  model:      string
-  loaded:     boolean
-  latency_ms: number | null
-}
+type ConnStatus = 'ok' | 'error' | 'unknown'
 
-/* ── helpers ─────────────────────────────────────────────────── */
+const ETSY_AGENTS = ['research', 'design', 'publisher', 'analytics', 'finance']
+
+/* ── helpers ─────────────────────────────────────────────────────── */
 function relTime(iso: string): string {
   try {
     const ms = Date.now() - new Date(iso).getTime()
@@ -46,8 +46,8 @@ function nextReminderLabel(reminders: Reminder[]): string {
     .sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
   if (!pending.length) return 'nessuno in attesa'
   const next = pending[0]
-  const d = new Date(next.when)
-  const now = new Date()
+  const d    = new Date(next.when)
+  const now  = new Date()
   const diffMs = d.getTime() - now.getTime()
   if (diffMs < 0) return 'scaduto'
   const m = Math.round(diffMs / 60_000)
@@ -57,28 +57,48 @@ function nextReminderLabel(reminders: Reminder[]): string {
   return d.toLocaleDateString('it-IT', { weekday: 'short', day: '2-digit', month: 'short' })
 }
 
-type ConnStatus = 'ok' | 'error' | 'unknown'
-
 function ConnDot({ status }: { status: ConnStatus }) {
   return (
-    <span
-      className={`conn-dot ${status === 'ok' ? 'ok' : status === 'error' ? 'err' : 'unk'}`}
-    />
+    <span className={`conn-dot ${status === 'ok' ? 'ok' : status === 'error' ? 'err' : 'unk'}`} />
   )
 }
 
-/* ── component ───────────────────────────────────────────────── */
+/* ── section label ───────────────────────────────────────────────── */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      fontFamily:    'var(--fmo)',
+      fontSize:      9,
+      fontWeight:    700,
+      letterSpacing: '.1em',
+      textTransform: 'uppercase',
+      color:         'var(--tf)',
+      paddingTop:    4,
+      paddingBottom: 2,
+      borderBottom:  '1px solid var(--bs)',
+    }}>
+      {children}
+    </div>
+  )
+}
+
+/* ── component ───────────────────────────────────────────────────── */
 export function PersonalQuickCard({ onOpen }: { onOpen?: () => void }) {
-  const [reminders, setReminders] = useState<Reminder[]>([])
+  const { agentSteps, analyticsSummary } = useStore(
+    useShallow((s) => ({
+      agentSteps:       s.agentSteps,
+      analyticsSummary: s.analyticsSummary,
+    }))
+  )
+
+  const [reminders,  setReminders]  = useState<Reminder[]>([])
   const [lastRecall, setLastRecall] = useState<RecallItem | null>(null)
-  const [mcp, setMcp]             = useState<McpStatus | null>(null)
-  const [ollama, setOllama]       = useState<OllamaStatus | null>(null)
+  const [mcp,        setMcp]        = useState<McpStatus | null>(null)
 
   useEffect(() => {
     let cancelled = false
 
     const fetchAll = async () => {
-      // reminders
       try {
         const r = await fetch('/api/personal/reminders?limit=10')
         if (!cancelled) {
@@ -86,7 +106,6 @@ export function PersonalQuickCard({ onOpen }: { onOpen?: () => void }) {
           setReminders(Array.isArray(d.items) ? d.items : [])
         }
       } catch {
-        // offline: inject dev mock
         if (!cancelled && import.meta.env.DEV) {
           setReminders([
             { id: 1, message: 'Check analytics dashboard', when: new Date(Date.now() + 2 * 3600_000).toISOString(), status: 'pending' },
@@ -95,7 +114,6 @@ export function PersonalQuickCard({ onOpen }: { onOpen?: () => void }) {
         }
       }
 
-      // recalls
       try {
         const r = await fetch('/api/personal/recalls?limit=1')
         if (!cancelled) {
@@ -108,21 +126,11 @@ export function PersonalQuickCard({ onOpen }: { onOpen?: () => void }) {
         }
       }
 
-      // mcp status
       try {
         const r = await fetch('/api/personal/mcp/status')
         if (!cancelled) {
           const d = r.ok ? await r.json() : null
           if (d) setMcp(d)
-        }
-      } catch { /* stay null = unknown */ }
-
-      // ollama
-      try {
-        const r = await fetch('/api/ollama/status')
-        if (!cancelled) {
-          const d = r.ok ? await r.json() : null
-          if (d) setOllama(d)
         }
       } catch { /* stay null */ }
     }
@@ -132,22 +140,47 @@ export function PersonalQuickCard({ onOpen }: { onOpen?: () => void }) {
     return () => { cancelled = true; clearInterval(id) }
   }, [])
 
+  /* ── Etsy: last pipeline step ── */
+  const lastEtsyStep = useMemo(() => {
+    let latest = null as { agent: string; description: string; timestamp: string } | null
+    for (const ag of ETSY_AGENTS) {
+      for (const step of agentSteps[ag] ?? []) {
+        if (!latest || step.timestamp > latest.timestamp) {
+          latest = { agent: ag, description: step.description, timestamp: step.timestamp }
+        }
+      }
+    }
+    return latest
+  }, [agentSteps])
+
+  /* ── Etsy: production queue ── */
+  const pq      = analyticsSummary?.production_queue ?? {}
+  const pending = (pq['pending'] ?? 0) + (pq['queued'] ?? 0)
+  const inCorso = pq['running'] ?? 0
+  const oggiStr = (() => {
+    if (!analyticsSummary) return '—'
+    const today = new Date().toISOString().split('T')[0]
+    const pd = analyticsSummary.per_day?.[today]
+    return pd ? String(Object.values(pd).reduce((a, b) => a + b, 0)) : '—'
+  })()
+
+  /* ── Reminder ── */
   const pendingCount = reminders.filter((r) => r.status === 'pending').length
 
   return (
     <>
       {/* ── header ── */}
       <div className="qcard-head">
-        <span className="qcard-title">Personal</span>
+        <span className="qcard-title">Brief</span>
         <button className="qcard-action" onClick={onOpen}>Espandi →</button>
       </div>
 
       {/* ── body ── */}
       <div className="qcard-body">
 
-        {/* Reminder row */}
+        {/* Reminder — condiviso, cross-domain */}
         <div className="p-item" onClick={onOpen} style={{ cursor: 'pointer' }}>
-          <span className="p-item-icon">⏰</span>
+          <span className={`dc-adot${pendingCount > 0 ? ' run' : ''}`} style={{ flexShrink: 0 }} />
           <div className="p-item-body">
             <div className="p-item-lbl">Reminder</div>
             <div className="p-item-val">
@@ -156,25 +189,24 @@ export function PersonalQuickCard({ onOpen }: { onOpen?: () => void }) {
                 : 'nessuno in attesa'}
             </div>
           </div>
-          {pendingCount > 0 && (
-            <span className="p-item-badge">{pendingCount}</span>
-          )}
+          {pendingCount > 0 && <span className="p-item-badge">{pendingCount}</span>}
         </div>
 
-        {/* Recall row */}
-        <div className="p-item" onClick={onOpen} style={{ cursor: 'pointer' }}>
-          <span className="p-item-icon">🔍</span>
+        {/* ── Personal ── */}
+        <SectionLabel>Personal</SectionLabel>
+
+        <div className="p-item">
+          <span className="dc-adot" style={{ flexShrink: 0 }} />
           <div className="p-item-body">
             <div className="p-item-lbl">Recall — ultima query</div>
             <div className="p-item-val">
               {lastRecall
-                ? `Ricerca "${lastRecall.query}" · ${relTime(lastRecall.timestamp)}`
+                ? `"${lastRecall.query}" · ${relTime(lastRecall.timestamp)}`
                 : 'nessuna query recente'}
             </div>
           </div>
         </div>
 
-        {/* Connections row */}
         <div className="conn-row-qc">
           <ConnDot status={mcp?.gmail    ?? 'unknown'} />
           <span className="conn-lbl">Gmail</span>
@@ -184,16 +216,34 @@ export function PersonalQuickCard({ onOpen }: { onOpen?: () => void }) {
           <span className="conn-sep">·</span>
           <ConnDot status={mcp?.calendar ?? 'unknown'} />
           <span className="conn-lbl">Calendar</span>
-          <span style={{
-            marginLeft: 'auto',
-            fontFamily: 'var(--fmo)',
-            fontSize: 10,
-            color: ollama?.loaded ? 'var(--tf)' : 'var(--tf)',
-          }}>
-            {ollama
-              ? `Ollama ${ollama.loaded ? 'warm' : 'cold'}${ollama.latency_ms !== null ? ` · ${ollama.latency_ms}ms` : ''}`
-              : 'Ollama —'}
+        </div>
+
+        {/* ── Etsy Store ── */}
+        <SectionLabel>Etsy Store</SectionLabel>
+
+        <div className="p-item">
+          <span className={`dc-adot${lastEtsyStep ? ' run' : ''}`} style={{ flexShrink: 0 }} />
+          <div className="p-item-body">
+            <div className="p-item-lbl">
+              {lastEtsyStep ? lastEtsyStep.agent.toUpperCase() : 'Pipeline'}
+            </div>
+            <div className="p-item-val">
+              {lastEtsyStep
+                ? `${lastEtsyStep.description.slice(0, 46)}${lastEtsyStep.description.length > 46 ? '…' : ''} · ${relTime(lastEtsyStep.timestamp)}`
+                : 'nessuna attività recente'}
+            </div>
+          </div>
+        </div>
+
+        <div className="conn-row-qc">
+          <span className="conn-lbl" style={{ color: pending > 0 ? 'var(--acc)' : 'var(--tm)' }}>
+            {pending} pending
           </span>
+          <span className="conn-sep">·</span>
+          <span className={`dc-adot${inCorso > 0 ? ' run' : ''}`} style={{ flexShrink: 0 }} />
+          <span className="conn-lbl">{inCorso} in corso</span>
+          <span className="conn-sep">·</span>
+          <span className="conn-lbl">{oggiStr} oggi</span>
         </div>
 
       </div>

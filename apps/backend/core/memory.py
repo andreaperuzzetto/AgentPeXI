@@ -766,14 +766,96 @@ class MemoryManager:
         )
         per_day = {row["day"]: row["cost"] or 0.0 for row in await cursor.fetchall()}
 
+        # Token per giorno (input + output + cache_read per giorno)
+        cursor = await self._db.execute(
+            """SELECT DATE(timestamp) as day,
+                      COALESCE(SUM(input_tokens), 0)       AS input,
+                      COALESCE(SUM(output_tokens), 0)      AS output,
+                      COALESCE(SUM(cache_read_tokens), 0)  AS cache_read
+               FROM llm_calls WHERE timestamp >= ?
+               GROUP BY DATE(timestamp) ORDER BY day""",
+            (since,),
+        )
+        tokens_per_day = {
+            row["day"]: {
+                "input":      int(row["input"]),
+                "output":     int(row["output"]),
+                "cache_read": int(row["cache_read"]),
+            }
+            for row in await cursor.fetchall()
+        }
+
         # Totale
         total = sum(per_agent.values())
+
+        # Cache savings — per ogni modello calcola quanto si è risparmiato
+        # rispetto a pagare il full input price al posto del cache_read price.
+        # Formula: savings = cache_read_tokens × (input_price - cache_read_price) / 1_000_000
+        cursor = await self._db.execute(
+            """SELECT model,
+                      SUM(cache_read_tokens)  AS total_cache_read,
+                      SUM(cache_write_tokens) AS total_cache_write,
+                      SUM(input_tokens)       AS total_input,
+                      SUM(output_tokens)      AS total_output
+               FROM llm_calls WHERE timestamp >= ?
+               GROUP BY model""",
+            (since,),
+        )
+        rows = await cursor.fetchall()
+
+        total_cache_read: int = 0
+        total_cache_write: int = 0
+        total_input: int = 0
+        total_output: int = 0
+        savings_usd: float = 0.0
+
+        for row in rows:
+            model: str = row["model"] or ""
+            cr: int = row["total_cache_read"] or 0
+            cw: int = row["total_cache_write"] or 0
+            inp: int = row["total_input"] or 0
+            out: int = row["total_output"] or 0
+            total_output += out
+
+            # Identifica tier pricing dal nome modello
+            if "haiku" in model.lower():
+                in_price = settings.LLM_HAIKU_INPUT_PRICE
+                cr_price = settings.LLM_HAIKU_CACHE_READ_PRICE
+            else:  # sonnet o altro modello non-haiku
+                in_price = settings.LLM_SONNET_INPUT_PRICE
+                cr_price = settings.LLM_SONNET_CACHE_READ_PRICE
+
+            savings_usd += cr * (in_price - cr_price) / 1_000_000
+
+            total_cache_read += cr
+            total_cache_write += cw
+            total_input += inp
+
+        # Efficienza cache: % dei token di input serviti da cache vs pagati full
+        denominator = total_cache_read + total_input
+        efficiency_pct = round(total_cache_read / denominator * 100, 1) if denominator > 0 else 0.0
+
+        cache = {
+            "read_tokens": total_cache_read,
+            "write_tokens": total_cache_write,
+            "savings_usd": round(savings_usd, 6),
+            "efficiency_pct": efficiency_pct,
+        }
+
+        tokens = {
+            "input": total_input,
+            "output": total_output,
+            "total": total_input + total_output,
+        }
 
         return {
             "per_agent": per_agent,
             "per_tool": per_tool,
             "per_day": per_day,
+            "tokens_per_day": tokens_per_day,
             "total": total,
+            "cache": cache,
+            "tokens": tokens,
         }
 
     async def get_agent_logs_summary(self, period_days: int = 14) -> dict:

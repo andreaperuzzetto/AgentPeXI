@@ -59,9 +59,9 @@ export function DomainCard() {
           <div className="dc-icon">PSN</div>
           <div>
             <div className="dc-title">Personale </div>
-            <div className="dc-sub">Ollama locale · {personalCost}</div>
+            <div className="dc-sub">Claude API · {personalCost}</div>
           </div>
-          <span className="dc-badge">LOCALE</span>
+          <span className="dc-badge">CLAUDE</span>
         </div>
         <AgentGrid agentList={PERSONAL_AGENTS} />
         <div className="dc-cta">Agenti e servizi personal →</div>
