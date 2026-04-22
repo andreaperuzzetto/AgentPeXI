@@ -217,6 +217,8 @@ class PublisherAgent(AgentBase):
         result: dict[str, Any] = {
             "niche": niche,
             "file_type": product_type,
+            "template": template,
+            "color_scheme": color_scheme,
             "ab_variant": ab_variant,
             "listing_id": None,
             "images_uploaded": 0,
@@ -224,7 +226,24 @@ class PublisherAgent(AgentBase):
             "price_source": "fallback_hardcoded",
         }
 
-        # 3a. Thumbnail check — blocca se mancanti
+        # 3a. File size check — Etsy rifiuta file digitali > 20MB
+        ETSY_MAX_FILE_BYTES = 20 * 1024 * 1024  # 20MB
+        file_size = Path(file_path).stat().st_size
+        if file_size > ETSY_MAX_FILE_BYTES:
+            file_size_mb = file_size / (1024 * 1024)
+            logger.error(
+                "SKIP: %s non pubblicato — file troppo grande (%.1fMB, max 20MB)",
+                niche, file_size_mb,
+            )
+            result["status"] = "skipped_file_too_large"
+            result["error"] = (
+                f"File {Path(file_path).name} è {file_size_mb:.1f}MB — "
+                "Etsy accetta max 20MB per file digitale. "
+                "Ridurre il numero di pagine o la complessità del template."
+            )
+            return result
+
+        # 3b. Thumbnail check — blocca se mancanti
         thumbnails_ok, thumbnail_paths = await self._check_thumbnails(
             niche, product_type,
             pdf_path=file_path,

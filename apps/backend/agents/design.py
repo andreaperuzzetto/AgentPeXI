@@ -619,8 +619,9 @@ class DesignAgent(AgentBase):
         niche: str,
         template: str,
         research_context: dict | None,
+        failure_patterns: dict | None = None,
     ) -> str:
-        """Stage 1: Keyword scoring veloce. Stage 2: LLM per casi ambigui."""
+        """Stage 1: Keyword scoring veloce. Stage 2: LLM per casi ambigui con contesto storico."""
         text = f"{niche} {template}".lower()
 
         scores = {preset: 0 for preset in PRESET_KEYWORDS}
@@ -644,12 +645,41 @@ Research context:
 - Competition level: {research_context.get('competition_level', 'unknown')}
 """
 
+        history_summary = ""
+        if failure_patterns:
+            lines = []
+            winners = failure_patterns.get("winners", [])
+            if winners:
+                lines.append("⭐ Winning combinations for this niche (real sales data):")
+                for w in winners:
+                    lines.append(
+                        f"  - template '{w['template']}' | scheme '{w['color_scheme']}' | "
+                        f"{w['sales']} sales, {w['views']} views ({w['date']})"
+                    )
+                lines.append("Strongly prefer these combinations — they have proven conversion.")
+            outcomes = failure_patterns.get("recent_outcomes", [])
+            if outcomes:
+                lines.append("Design history for this niche (most recent first):")
+                for o in outcomes:
+                    valid = "✓" if o.get("pdf_valid") == "True" else "✗"
+                    lines.append(
+                        f"  - preset '{o['preset']}' | template '{o['template']}' | "
+                        f"scheme '{o['color_scheme']}' | PDF {valid} | {o['date']}"
+                    )
+                lines.append("Prefer variety: avoid repeating the exact same preset+template combo.")
+            issues = failure_patterns.get("known_issues", [])
+            if issues:
+                lines.append("Known issues to consider:")
+                for issue in issues[:2]:
+                    lines.append(f"  - {issue[:120]}")
+            if lines:
+                history_summary = "\n" + "\n".join(lines) + "\n"
+
         prompt = f"""Select the best visual style preset for this Etsy digital product.
 
 Product niche: {niche}
 Template type: {template}
-{research_summary}
-
+{research_summary}{history_summary}
 Available presets:
 - minimal: Clean, professional, whitespace-focused. For planners, budgets, productivity tools.
 - decorative: Elegant, ornamental, serif fonts. For weddings, botanical, vintage, luxury products.
@@ -730,8 +760,9 @@ Return exactly:
         niche: str,
         product_type: str,
         research_context: dict | None,
+        failure_patterns: dict | None = None,
     ) -> str:
-        """Seleziona il template più adatto alla nicchia tramite LLM."""
+        """Seleziona il template più adatto alla nicchia tramite LLM con contesto storico."""
         templates = AVAILABLE_TEMPLATES.get(product_type, ["weekly_planner"])
 
         research_info = ""
@@ -745,12 +776,34 @@ Research insights:
 - Avg price: {research_context.get('avg_price', 'unknown')}
 """
 
+        history_info = ""
+        if failure_patterns:
+            lines = []
+            winners = failure_patterns.get("winners", [])
+            if winners:
+                winning_templates = [w["template"] for w in winners if w.get("template")]
+                if winning_templates:
+                    lines.append(f"⭐ Templates with proven sales for this niche: {', '.join(winning_templates)}")
+                    lines.append("These templates have real conversion data — consider reusing them with a different color scheme.")
+            outcomes = failure_patterns.get("recent_outcomes", [])
+            if outcomes:
+                used_templates = [o["template"] for o in outcomes if o.get("template")]
+                if used_templates:
+                    lines.append(f"Templates already used (no sales data yet): {', '.join(used_templates)}")
+                    lines.append("If no winner exists, prefer a template not yet used to increase variety.")
+            issues = failure_patterns.get("known_issues", [])
+            if issues:
+                lines.append("Known performance issues:")
+                for issue in issues[:2]:
+                    lines.append(f"  - {issue[:120]}")
+            if lines:
+                history_info = "\n" + "\n".join(lines) + "\n"
+
         prompt = f"""Select the best template for this Etsy digital product.
 
 Niche: {niche}
 Product type: {product_type}
-{research_info}
-
+{research_info}{history_info}
 Available templates:
 {chr(10).join(f'- {t}' for t in templates)}
 
@@ -758,6 +811,7 @@ Choose the template that:
 1. Best matches what buyers in this niche actually search for
 2. Has the highest commercial potential
 3. Is coherent with the niche identity
+4. Adds variety to existing products (avoid repeating already-used templates)
 
 Respond with ONLY the template name, exactly as listed."""
 
@@ -883,9 +937,15 @@ Respond with ONLY: dated or undated"""
     # ------------------------------------------------------------------
 
     async def _lookup_failure_patterns(self, niche: str, template: str) -> dict | None:
-        """Cerca in ChromaDB pattern di fallimento e design outcome precedenti."""
+        """Cerca in ChromaDB pattern di fallimento, design outcome e winner precedenti.
+
+        Fonti:
+        - failure_analysis: scritto da Analytics (no_views, no_conversion)
+        - design_outcome:   scritto da Level 1 (ogni generazione Design)
+        - design_winner:    scritto da Level 3 (listing con vendite reali)
+        """
         try:
-            # Failure analysis recenti
+            # Failure analysis recenti (Analytics)
             failures = await self.memory.query_chromadb_recent(
                 query=f"FAILURE niche {niche} template {template}",
                 n_results=3,
@@ -893,13 +953,21 @@ Respond with ONLY: dated or undated"""
                 primary_days=90,
                 fallback_days=180,
             )
-            # Design outcome recenti
+            # Design outcome recenti (Level 1 — ogni generazione)
             outcomes = await self.memory.query_chromadb_recent(
                 query=f"DESIGN_OUTCOME niche {niche}",
                 n_results=5,
                 where={"type": "design_outcome"},
                 primary_days=90,
                 fallback_days=180,
+            )
+            # Design winner (Level 3 — listing che hanno convertito)
+            winners = await self.memory.query_chromadb_recent(
+                query=f"DESIGN_WINNER niche {niche} success",
+                n_results=3,
+                where={"type": "design_winner"},
+                primary_days=180,
+                fallback_days=365,
             )
 
             known_issues = [r["document"] for r in failures[:2]] if failures else []
@@ -909,19 +977,40 @@ Respond with ONLY: dated or undated"""
                 if meta.get("failure_type"):
                     avoid.append(meta["failure_type"])
 
-            if known_issues or outcomes:
+            # Estrai preset/template/color_scheme dai metadati strutturati (Level 1)
+            structured_outcomes = []
+            for o in outcomes[:5]:
+                meta = o.get("metadata", {})
+                structured_outcomes.append({
+                    "preset": meta.get("preset", ""),
+                    "template": meta.get("template", ""),
+                    "color_scheme": meta.get("color_scheme", ""),
+                    "pdf_valid": meta.get("pdf_valid", ""),
+                    "pages": meta.get("pages", ""),
+                    "date": meta.get("date", ""),
+                })
+
+            # Estrai template/color_scheme dai winner (Level 3)
+            structured_winners = []
+            for w in winners[:3]:
+                meta = w.get("metadata", {})
+                structured_winners.append({
+                    "template": meta.get("template", ""),
+                    "color_scheme": meta.get("color_scheme", ""),
+                    "views": meta.get("views", ""),
+                    "sales": meta.get("sales", ""),
+                    "date": meta.get("date", ""),
+                })
+
+            if known_issues or structured_outcomes or structured_winners:
                 result: dict = {}
                 if known_issues:
                     result["known_issues"] = known_issues
                     result["avoid"] = avoid
-                if outcomes:
-                    result["recent_outcomes"] = [
-                        {
-                            "document": o["document"],
-                            "performance": o.get("metadata", {}).get("performance", ""),
-                        }
-                        for o in outcomes[:3]
-                    ]
+                if structured_outcomes:
+                    result["recent_outcomes"] = structured_outcomes
+                if structured_winners:
+                    result["winners"] = structured_winners
                 return result
         except Exception:
             pass
@@ -977,11 +1066,11 @@ Respond with ONLY: dated or undated"""
 
         # --- 5. Seleziona template via LLM (Intervento 5) ---
         template = normalized_input.get("template") or await self._select_template_llm(
-            niche, product_type, research_context,
+            niche, product_type, research_context, failure_patterns,
         )
 
         # --- 6. Seleziona preset 2-stage (Intervento 3) ---
-        preset = await self._select_preset(niche, template, research_context)
+        preset = await self._select_preset(niche, template, research_context, failure_patterns)
 
         # --- 7. Decide dated/undated (Intervento 7) ---
         include_dates = await self._should_include_dates(template, niche)

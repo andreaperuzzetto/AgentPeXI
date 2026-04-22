@@ -71,8 +71,8 @@ async def generate_pdf_thumbnail(
         browser = await p.chromium.launch(headless=True)
 
         try:
-            # 1. Cover image (1500x2000)
-            page = await browser.new_page(viewport={"width": 1500, "height": 2000})
+            # 1. Cover image (2000x2667 — ratio 3:4, lato corto 2000px per zoom Etsy)
+            page = await browser.new_page(viewport={"width": 2000, "height": 2667})
             await page.set_content(cover_html)
             await page.wait_for_timeout(500)
             cover_path = output_dir / "thumbnail_cover.png"
@@ -80,8 +80,8 @@ async def generate_pdf_thumbnail(
             results["cover"] = cover_path
             await page.close()
 
-            # 2. Interior preview (1500x2000)
-            page = await browser.new_page(viewport={"width": 1500, "height": 2000})
+            # 2. Interior preview (2000x2667 — ratio 3:4, lato corto 2000px per zoom Etsy)
+            page = await browser.new_page(viewport={"width": 2000, "height": 2667})
             await page.set_content(interior_html)
             await page.wait_for_timeout(500)
             interior_path = output_dir / "thumbnail_interior.png"
@@ -148,7 +148,7 @@ def _build_cover_html(
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
-    width: 1500px; height: 2000px;
+    width: 2000px; height: 2667px;
     background: {bg};
     font-family: '{font_family}', sans-serif;
     display: flex; align-items: center; justify-content: center;
@@ -248,7 +248,7 @@ def _build_interior_html(
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
-    width: 1500px; height: 2000px;
+    width: 2000px; height: 2667px;
     background: white;
     font-family: '{font_family}', sans-serif;
     padding: 60px;

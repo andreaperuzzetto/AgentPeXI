@@ -2203,9 +2203,108 @@ ESEMPI:
                     await self.wiki.compile_niche(niche, "analytics", output, llm)
 
             elif agent_name == "publisher":
+                # Publisher restituisce N risultati (uno per file) — iteriamo su publish_details
+                for detail in output.get("publish_details", []):
+                    niche = detail.get("niche", "")
+                    if not niche:
+                        continue
+
+                    status = detail.get("status", "")
+                    listing_id = detail.get("listing_id")
+
+                    # Raw sempre — successo o fallimento
+                    await self.wiki.store_raw("etsy", "publisher", detail)
+
+                    # Wiki compile solo se listing creato (dati significativi)
+                    if listing_id:
+                        await self.wiki.compile_niche(niche, "publisher", detail, llm)
+
+                    # ChromaDB — successo
+                    if listing_id:
+                        text = (
+                            f"Publisher: listing creato per niche '{niche}'. "
+                            f"Template: {detail.get('file_type', '')} | "
+                            f"Schema: {detail.get('color_scheme', '') or 'N/A'} | "
+                            f"Prezzo: {detail.get('price_source', '')} | "
+                            f"Variante A/B: {detail.get('ab_variant', '')} | "
+                            f"SEO validata: {detail.get('seo_validated', False)} | "
+                            f"Immagini: {detail.get('images_uploaded', 0)}/3."
+                        )
+                        await self.memory.store_insight(text, {
+                            "type": "publish_success",
+                            "niche": niche,
+                            "template": detail.get("file_type", ""),
+                            "color_scheme": detail.get("color_scheme", ""),
+                            "ab_variant": detail.get("ab_variant", ""),
+                            "seo_validated": str(detail.get("seo_validated", False)),
+                            "images_uploaded": str(detail.get("images_uploaded", 0)),
+                            "price_source": detail.get("price_source", ""),
+                            "date": datetime.now(timezone.utc).date().isoformat(),
+                        })
+
+                    # ChromaDB — fallimento (skipped o error)
+                    elif status in ("skipped_file_too_large", "skipped_no_thumbnails", "error"):
+                        error_msg = detail.get("error", "")
+                        text = (
+                            f"Publisher: listing NON creato per niche '{niche}'. "
+                            f"Motivo: {status}. "
+                            f"Template: {detail.get('file_type', '')} | "
+                            f"Schema: {detail.get('color_scheme', '') or 'N/A'}. "
+                            f"Errore: {error_msg[:200] if error_msg else 'nessuno'}."
+                        )
+                        await self.memory.store_insight(text, {
+                            "type": "publish_failure",
+                            "niche": niche,
+                            "failure_type": status,
+                            "template": detail.get("file_type", ""),
+                            "color_scheme": detail.get("color_scheme", ""),
+                            "date": datetime.now(timezone.utc).date().isoformat(),
+                        })
+
+            elif agent_name == "design":
                 niche = output.get("niche", "")
-                if niche:
-                    await self.wiki.compile_niche(niche, "publisher", output, llm)
+                preset = output.get("preset", "")
+                template = output.get("template", "")
+                variants = output.get("variants", [])
+
+                # Raw sempre — una entry per variante generata
+                for variant in variants:
+                    await self.wiki.store_raw("etsy", "design", {
+                        "niche": niche,
+                        "preset": preset,
+                        "template": template,
+                        "color_scheme": variant.get("color_scheme", ""),
+                        "colors": variant.get("colors", {}),
+                        "validation": variant.get("validation", {}),
+                        "pages": variant.get("pages", 0),
+                        "include_dates": output.get("include_dates", False),
+                    })
+
+                # ChromaDB — design_outcome per variante (letto da _lookup_failure_patterns)
+                for variant in variants:
+                    if not niche or not preset or not template:
+                        continue
+                    validation = variant.get("validation", {})
+                    color_scheme = variant.get("color_scheme", "")
+                    text = (
+                        f"Design: variante generata per niche '{niche}'. "
+                        f"Preset: {preset} | Template: {template} | "
+                        f"Schema colore: {color_scheme or 'N/A'} | "
+                        f"PDF valido: {validation.get('valid', False)} | "
+                        f"Pagine: {variant.get('pages', 0)} | "
+                        f"Dimensione: {validation.get('file_size_kb', 0):.0f}KB."
+                    )
+                    await self.memory.store_insight(text, {
+                        "type": "design_outcome",
+                        "niche": niche,
+                        "preset": preset,
+                        "template": template,
+                        "color_scheme": color_scheme,
+                        "pdf_valid": str(validation.get("valid", False)),
+                        "pages": str(variant.get("pages", 0)),
+                        "file_size_kb": str(round(validation.get("file_size_kb", 0))),
+                        "date": datetime.now(timezone.utc).date().isoformat(),
+                    })
 
             elif agent_name == "finance":
                 content = json.dumps(output, ensure_ascii=False)
@@ -2605,6 +2704,33 @@ ESEMPI:
             )
             return False
 
+    async def _store_design_winner(
+        self, niche: str, template: str, color_scheme: str, views: int, sales: int
+    ) -> None:
+        """Scrive design_winner su ChromaDB quando un listing converte bene.
+
+        Letto da DesignAgent._lookup_failure_patterns per guidare la scelta
+        di preset e template nelle run successive sulla stessa niche.
+        """
+        try:
+            text = (
+                f"Design winner per niche '{niche}': "
+                f"template '{template}', schema colore '{color_scheme or 'N/A'}'. "
+                f"Performance: {sales} vendite, {views} views."
+            )
+            await self.memory.store_insight(text, {
+                "type": "design_winner",
+                "niche": niche,
+                "template": template,
+                "color_scheme": color_scheme,
+                "views": str(views),
+                "sales": str(sales),
+                "date": datetime.now(timezone.utc).date().isoformat(),
+            })
+            logger.info("Design winner salvato: niche=%s template=%s sales=%d", niche, template, sales)
+        except Exception as exc:
+            logger.warning("Errore salvataggio design_winner niche=%s: %s", niche, exc)
+
     async def _handle_learning_loop(self, analytics_output: dict) -> None:
         """Processa i risultati dell'Analytics Agent e triggera azioni autonome.
 
@@ -2621,6 +2747,14 @@ ESEMPI:
             sales = listing.get("sales", 0)
             days_live = listing.get("days_live", 0)
             failure_type = listing.get("failure_type")
+            template = listing.get("template", "")
+            color_scheme = listing.get("color_scheme", "")
+
+            # --- Design winner — indipendente dal segnale primario ---
+            # Criteri: almeno 1 vendita, almeno 10 views, metadati design presenti.
+            # Viene scritto su ChromaDB e letto da DesignAgent al prossimo run sulla niche.
+            if sales >= 1 and views >= 10 and template and niche:
+                await self._store_design_winner(niche, template, color_scheme, views, sales)
 
             # Determina segnale dal dato
             signal = None
