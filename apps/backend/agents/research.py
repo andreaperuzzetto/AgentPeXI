@@ -156,7 +156,6 @@ class ResearchAgent(AgentBase):
                 for doc in roi_docs:
                     meta = doc.get("metadata", {})
                     doc_niche = meta.get("niche", "")
-                    # Filtra per pertinenza (stessa nicchia o simile)
                     if doc_niche.lower() in niche.lower() or niche.lower() in doc_niche.lower():
                         roi_pct = meta.get("roi_pct", "n/d")
                         sales = meta.get("total_sales", "0")
@@ -164,6 +163,40 @@ class ResearchAgent(AgentBase):
                         lines.append(
                             f"  - Niche '{doc_niche}': ROI {roi_pct}%, "
                             f"{sales} vendite, €{margin} margine netto"
+                        )
+        except Exception:
+            pass
+
+        # 2. Finance insight — economia di pricing (break-even, costo per listing)
+        #    Critico per la pricing analysis: Research deve sapere il costo reale
+        #    per listing e quante vendite servono per coprirlo.
+        try:
+            insight_docs = await self.memory.query_chromadb_recent(
+                query=f"Finance insight nicchia {niche} break-even costo listing pricing",
+                n_results=3,
+                where={"type": {"$eq": "finance_insight"}},
+                primary_days=30,
+                fallback_days=90,
+            )
+            if insight_docs:
+                lines.append("## Economia reale per listing (Finance)")
+                for doc in insight_docs:
+                    meta = doc.get("metadata", {})
+                    doc_niche = meta.get("niche", "")
+                    if doc_niche.lower() in niche.lower() or niche.lower() in doc_niche.lower():
+                        avg_price = meta.get("avg_price_eur", "n/d")
+                        break_even = meta.get("break_even_units", "n/d")
+                        cost_pl = meta.get("cost_per_listing_eur", "n/d")
+                        roi = meta.get("roi_pct", "n/d")
+                        lines.append(
+                            f"  - Niche '{doc_niche}': prezzo medio reale €{avg_price}, "
+                            f"break-even a {break_even} vendite, "
+                            f"costo LLM/listing €{cost_pl}, ROI attuale {roi}%"
+                        )
+                        lines.append(
+                            f"    → Il tuo pricing deve garantire almeno {break_even} vendite "
+                            f"per coprire i costi di produzione. "
+                            f"Raccomanda prezzi che rendano questo realistico."
                         )
         except Exception:
             pass

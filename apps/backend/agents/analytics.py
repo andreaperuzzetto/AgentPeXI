@@ -622,21 +622,10 @@ class AnalyticsAgent(AgentBase):
                 "revenue_eur": lst.get("revenue_eur", 0),
             })
 
-            # Salva success_pattern in ChromaDB per il learning loop
-            await self.memory.store_insight(
-                text=(
-                    f"SUCCESS niche: {niche} | template: {template} | "
-                    f"color_scheme: {color_scheme} | sales: {lst.get('sales', 0)} | "
-                    f"revenue: {lst.get('revenue_eur', 0)}"
-                ),
-                metadata={
-                    "type": "success_pattern",
-                    "niche": niche,
-                    "template": template,
-                    "color_scheme": color_scheme,
-                    "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                },
-            )
+            # Nota: il segnale ChromaDB per template/colore vincenti viene scritto da
+            # pepe.py (_store_design_winner via _handle_learning_loop) come tipo
+            # "design_winner" — effettivamente letto da Design e Finance.
+            # "success_pattern" era ridondante e non letto da nessun agente.
 
             # Controlla se già esiste un pending_action per questo listing
             existing = await self.memory.get_pending_action("production_queue_proposal")

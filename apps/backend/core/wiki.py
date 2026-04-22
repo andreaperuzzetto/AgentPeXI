@@ -477,6 +477,123 @@ class WikiManager:
         except Exception as exc:
             return f"Lint fallito: {exc}"
 
+    async def cleanup_orphan_raw(self, domain: str, llm) -> dict:
+        """Cleanup settimanale raw orfani: compiled_at=null da più di 30 giorni.
+
+        Per ogni orfano nel dominio:
+        1. Tenta compile_niche forzata (solo se domain='etsy' e il raw ha campo 'niche')
+        2. Se la compilazione riesce → manifest aggiornato da compile_niche stesso
+        3. Se fallisce o non compilabile → elimina file raw + rimuove da manifest + log
+
+        File mancanti nel filesystem ma ancora in manifest → rimossi da manifest direttamente.
+
+        Returns:
+            {
+                "compiled": int,    # orfani compilati forzatamente
+                "deleted":  int,    # orfani eliminati
+                "skipped":  int,    # orfani < 30 giorni (non ancora orfani)
+                "errors":   list[str],
+            }
+        """
+        manifest  = self._read_manifest()
+        now       = datetime.now(timezone.utc)
+        threshold = timedelta(days=30)
+
+        stats: dict = {"compiled": 0, "deleted": 0, "skipped": 0, "errors": []}
+        to_remove_from_manifest: list[str] = []
+
+        for raw_rel, entry in list(manifest.items()):
+            # Considera solo raw non compilati del dominio richiesto
+            if entry.get("compiled_at") is not None:
+                continue
+            if domain not in raw_rel:
+                continue
+
+            raw_path = self.base_path / raw_rel
+
+            # File mancante — pulisci solo manifest (file già sparito, entry stale)
+            if not raw_path.exists():
+                to_remove_from_manifest.append(raw_rel)
+                logger.info(
+                    "cleanup_orphan_raw [%s]: file mancante, rimosso da manifest: %s",
+                    domain, raw_rel,
+                )
+                stats["deleted"] += 1
+                continue
+
+            # Determina età dal nome file (formato: YYYYMMDDTHHMMSS_slug.json)
+            try:
+                ts_str  = raw_path.name.split("_")[0]      # "20240101T120000"
+                file_dt = datetime.strptime(ts_str, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+            except (ValueError, IndexError):
+                # Fallback su mtime se il nome non segue il formato atteso
+                file_dt = datetime.fromtimestamp(raw_path.stat().st_mtime, tz=timezone.utc)
+
+            age_days = (now - file_dt).days
+            if age_days < 30:
+                stats["skipped"] += 1
+                continue
+
+            # Leggi payload del raw
+            try:
+                data = json.loads(raw_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.error("cleanup_orphan_raw [%s]: errore lettura %s: %s", domain, raw_rel, exc)
+                stats["errors"].append(f"read:{raw_rel}:{exc}")
+                continue
+
+            # Determina agente dal path (raw/etsy/research/…  →  agent="research")
+            parts = Path(raw_rel).parts          # ("raw", "etsy", "research", "file.json")
+            agent = parts[2] if len(parts) > 2 else "unknown"
+            niche = data.get("niche", "")
+
+            compiled = False
+
+            # Tentativo di compilazione forzata (solo etsy + niche presente)
+            if domain == "etsy" and niche:
+                try:
+                    await self.compile_niche(niche, agent, data, llm)
+                    stats["compiled"] += 1
+                    compiled = True
+                    logger.info(
+                        "cleanup_orphan_raw [%s]: compilato forzatamente '%s' "
+                        "(agent=%s, age=%dd, raw=%s)",
+                        domain, niche, agent, age_days, raw_rel,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "cleanup_orphan_raw [%s]: compile_niche fallito per '%s': %s",
+                        domain, niche, exc,
+                    )
+                    stats["errors"].append(f"compile:{raw_rel}:{exc}")
+
+            if not compiled:
+                # Nessuna compilazione possibile → elimina file e pulisci manifest
+                try:
+                    raw_path.unlink(missing_ok=True)
+                    to_remove_from_manifest.append(raw_rel)
+                    stats["deleted"] += 1
+                    logger.warning(
+                        "cleanup_orphan_raw [%s]: eliminato orfano (niche=%r, agent=%s, age=%dd): %s",
+                        domain, niche or "n/a", agent, age_days, raw_rel,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "cleanup_orphan_raw [%s]: errore eliminazione %s: %s",
+                        domain, raw_rel, exc,
+                    )
+                    stats["errors"].append(f"delete:{raw_rel}:{exc}")
+
+        # Rimuovi dal manifest le entry per file eliminati o mancanti
+        if to_remove_from_manifest:
+            async with self._manifest_lock:
+                manifest = self._read_manifest()
+                for key in to_remove_from_manifest:
+                    manifest.pop(key, None)
+                self._write_manifest(manifest)
+
+        return stats
+
     async def get_stats(self) -> dict:
         """Statistiche rapide per il report Telegram del health check."""
         manifest     = self._read_manifest()

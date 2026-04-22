@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, ClassVar, Coroutine
@@ -149,26 +150,51 @@ class FinanceAgent(AgentBase):
             output_data={"niche_roi": niche_roi[:5]},
         )
 
-        # Scrivi niche_roi_snapshot per nicchia — leggibili da Research
+        # Scrivi niche_roi_snapshot + finance_insight per nicchia — leggibili da Research
         for niche_data in niche_roi:
-            if niche_data.get("niche"):
-                snap_text = (
-                    f"Finance ROI snapshot nicchia '{niche_data['niche']}': "
-                    f"ROI {niche_data['roi_pct']:.1f}%, "
-                    f"{niche_data['total_sales']} vendite, "
-                    f"€{niche_data['net_margin_eur']:.4f} margine netto, "
-                    f"{niche_data['listing_count']} listing."
-                )
-                await self.memory.store_insight(snap_text, {
-                    "type": "niche_roi_snapshot",
-                    "niche": niche_data["niche"],
-                    "roi_pct": str(round(niche_data["roi_pct"], 2)),
-                    "total_sales": str(niche_data["total_sales"]),
-                    "net_margin_eur": str(round(niche_data["net_margin_eur"], 4)),
-                    "listing_count": str(niche_data["listing_count"]),
-                    "date": today_str,
-                    "agent": "finance",
-                })
+            if not niche_data.get("niche"):
+                continue
+
+            niche_name = niche_data["niche"]
+
+            # 1. niche_roi_snapshot — overview ROI (già da Block 4)
+            snap_text = (
+                f"Finance ROI snapshot nicchia '{niche_name}': "
+                f"ROI {niche_data['roi_pct']:.1f}%, "
+                f"{niche_data['total_sales']} vendite, "
+                f"€{niche_data['net_margin_eur']:.4f} margine netto, "
+                f"{niche_data['listing_count']} listing."
+            )
+            await self.memory.store_insight(snap_text, {
+                "type": "niche_roi_snapshot",
+                "niche": niche_name,
+                "roi_pct": str(round(niche_data["roi_pct"], 2)),
+                "total_sales": str(niche_data["total_sales"]),
+                "net_margin_eur": str(round(niche_data["net_margin_eur"], 4)),
+                "listing_count": str(niche_data["listing_count"]),
+                "date": today_str,
+                "agent": "finance",
+            })
+
+            # 2. finance_insight — economia di pricing (Break-even, costo per listing)
+            #    Leggibile da Research durante la pricing analysis
+            insight_text = (
+                f"Finance insight nicchia '{niche_name}': "
+                f"prezzo medio €{niche_data['avg_price_eur']:.2f}, "
+                f"break-even a {niche_data['break_even_units']} vendite, "
+                f"costo LLM per listing €{niche_data['cost_per_listing_eur']:.4f}, "
+                f"ROI {niche_data['roi_pct']:.1f}%."
+            )
+            await self.memory.store_insight(insight_text, {
+                "type": "finance_insight",
+                "niche": niche_name,
+                "avg_price_eur": str(round(niche_data["avg_price_eur"], 4)),
+                "break_even_units": str(niche_data["break_even_units"]),
+                "cost_per_listing_eur": str(round(niche_data["cost_per_listing_eur"], 6)),
+                "roi_pct": str(round(niche_data["roi_pct"], 2)),
+                "date": today_str,
+                "agent": "finance",
+            })
 
         # ----------------------------------------------------------------
         # Passo 5 — ROI per product_type
@@ -439,6 +465,21 @@ class FinanceAgent(AgentBase):
             net_margin = net_rev - llm_cost_attributed
             roi = (net_margin / llm_cost_attributed * 100) if llm_cost_attributed > 0 else 0.0
 
+            avg_price = niche.get("avg_price_eur", 0.0)
+
+            # Break-even: quante vendite servono per coprire il costo LLM attribuito
+            # Revenue netta per vendita = prezzo * (1 - transaction_fee - payment_fee%) - fixed_fee
+            net_per_sale = (
+                avg_price * (1 - ETSY_TRANSACTION_FEE_PCT - ETSY_PAYMENT_FEE_PCT)
+                - ETSY_PAYMENT_FEE_FIXED_EUR
+            )
+            break_even = (
+                math.ceil(llm_cost_attributed / net_per_sale)
+                if net_per_sale > 0
+                else 0
+            )
+            cost_per_listing_val = llm_cost_attributed / count if count > 0 else 0.0
+
             result.append({
                 "niche": niche.get("niche", ""),
                 "listing_count": count,
@@ -448,7 +489,9 @@ class FinanceAgent(AgentBase):
                 "llm_cost_attributed_eur": round(llm_cost_attributed, 4),
                 "net_margin_eur": round(net_margin, 4),
                 "roi_pct": round(roi, 2),
-                "avg_price_eur": niche.get("avg_price_eur", 0.0),
+                "avg_price_eur": round(avg_price, 4),
+                "break_even_units": break_even,
+                "cost_per_listing_eur": round(cost_per_listing_val, 6),
             })
 
         # Ordina per ROI decrescente
@@ -681,6 +724,14 @@ class FinanceAgent(AgentBase):
                     f"schema '{w['color_scheme']}' — {w['sales']} vendite, {w['views']} views\n"
                 )
 
+        # Pricing context da Research (confronto prezzo raccomandato vs reale)
+        research_pricing = lc.get("research_pricing", [])
+        pricing_context_str = ""
+        if research_pricing:
+            pricing_context_str = "\n\n## Pricing raccomandato da Research (per confronto con prezzi reali)\n"
+            for rp in research_pricing[:5]:
+                pricing_context_str += f"  - Niche '{rp['niche']}': {rp['summary'][:200]}\n"
+
         publish_str = ""
         if failure_count + success_count > 0:
             publish_str = (
@@ -707,6 +758,7 @@ class FinanceAgent(AgentBase):
             f"Nicchie negative:\n{worst_str}\n\n"
             f"Product types:\n{pt_str}"
             f"{winners_str}"
+            f"{pricing_context_str}"
             f"{publish_str}\n\n"
             f'Rispondi SOLO con JSON:\n'
             f'{{\n'
@@ -891,11 +943,34 @@ class FinanceAgent(AgentBase):
         total_attempts = failure_count + success_count
         failure_rate = round(failure_count / total_attempts, 3) if total_attempts > 0 else 0.0
 
+        # 3. Research pricing recommendations (per confronto con prezzi reali)
+        research_pricing: list[dict] = []
+        try:
+            rp_docs = await self.memory.query_chromadb_recent(
+                query="research report pricing sweet spot niche digital products etsy",
+                n_results=10,
+                where={"type": {"$eq": "research_report"}},
+                primary_days=30,
+                fallback_days=90,
+            )
+            for doc in (rp_docs or []):
+                meta = doc.get("metadata", {})
+                niche_name = meta.get("niche", "")
+                if niche_name:
+                    research_pricing.append({
+                        "niche": niche_name,
+                        # Primo paragrafo significativo del summary
+                        "summary": doc.get("document", "")[:250],
+                    })
+        except Exception as exc:
+            logger.warning("Finance: errore lettura research_report pricing: %s", exc)
+
         return {
             "design_winners": design_winners,
             "failure_count": failure_count,
             "success_count": success_count,
             "failure_rate": failure_rate,
+            "research_pricing": research_pricing,
         }
 
     # ------------------------------------------------------------------

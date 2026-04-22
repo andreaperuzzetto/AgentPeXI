@@ -370,11 +370,27 @@ class Scheduler:
             ("personal", llm_personal),
         ]
 
-        compact_totals: dict[str, int] = {}
-        lint_reports:   dict[str, str] = {}
+        compact_totals: dict[str, int]  = {}
+        orphan_stats:   dict[str, dict] = {}
+        lint_reports:   dict[str, str]  = {}
 
         for domain, llm in domains:
-            # compact
+            # 0. Orphan raw cleanup (Block 5) — prima del lint per avere report aggiornato
+            try:
+                orphan_stats[domain] = await wiki.cleanup_orphan_raw(domain, llm)
+                logger.info(
+                    "wiki_health_check orphan_cleanup %s: compiled=%d deleted=%d skipped=%d errors=%d",
+                    domain,
+                    orphan_stats[domain]["compiled"],
+                    orphan_stats[domain]["deleted"],
+                    orphan_stats[domain]["skipped"],
+                    len(orphan_stats[domain]["errors"]),
+                )
+            except Exception as exc:
+                orphan_stats[domain] = {"compiled": 0, "deleted": 0, "skipped": 0, "errors": [str(exc)]}
+                logger.error("wiki_health_check orphan_cleanup %s: %s", domain, exc)
+
+            # 1. compact
             try:
                 compact_result = await wiki.compact_wiki(domain, llm)
                 compact_totals[domain] = compact_result.get("files_compacted", 0)
@@ -383,14 +399,14 @@ class Scheduler:
                 compact_totals[domain] = -1
                 logger.error("wiki_health_check compact %s: %s", domain, exc)
 
-            # lint
+            # 2. lint
             try:
                 lint_reports[domain] = await wiki.lint(domain, llm)
             except Exception as exc:
                 lint_reports[domain] = f"[errore lint: {exc}]"
                 logger.error("wiki_health_check lint %s: %s", domain, exc)
 
-            # update_index
+            # 3. update_index
             try:
                 await wiki.update_index(domain, llm)
                 logger.info("wiki update_index %s: completato", domain)
@@ -409,6 +425,18 @@ class Scheduler:
             compacted = compact_totals.get(domain, 0)
             symbol = "✅" if compacted >= 0 else "❌"
             lines.append(f"{symbol} *{domain.capitalize()}* — {compacted} file compattati")
+
+            # Orphan cleanup summary
+            ost = orphan_stats.get(domain, {})
+            compiled_n = ost.get("compiled", 0)
+            deleted_n  = ost.get("deleted",  0)
+            errors_n   = len(ost.get("errors", []))
+            if compiled_n or deleted_n or errors_n:
+                orphan_line = f"  🧹 Orfani: {compiled_n} compilati, {deleted_n} eliminati"
+                if errors_n:
+                    orphan_line += f", {errors_n} errori"
+                lines.append(orphan_line)
+
             lint = lint_reports.get(domain, "")
             if lint and lint != "OK":
                 # Tronca lint report a 300 char per non appesantire il messaggio
