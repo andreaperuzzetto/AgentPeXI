@@ -149,6 +149,27 @@ class FinanceAgent(AgentBase):
             output_data={"niche_roi": niche_roi[:5]},
         )
 
+        # Scrivi niche_roi_snapshot per nicchia — leggibili da Research
+        for niche_data in niche_roi:
+            if niche_data.get("niche"):
+                snap_text = (
+                    f"Finance ROI snapshot nicchia '{niche_data['niche']}': "
+                    f"ROI {niche_data['roi_pct']:.1f}%, "
+                    f"{niche_data['total_sales']} vendite, "
+                    f"€{niche_data['net_margin_eur']:.4f} margine netto, "
+                    f"{niche_data['listing_count']} listing."
+                )
+                await self.memory.store_insight(snap_text, {
+                    "type": "niche_roi_snapshot",
+                    "niche": niche_data["niche"],
+                    "roi_pct": str(round(niche_data["roi_pct"], 2)),
+                    "total_sales": str(niche_data["total_sales"]),
+                    "net_margin_eur": str(round(niche_data["net_margin_eur"], 4)),
+                    "listing_count": str(niche_data["listing_count"]),
+                    "date": today_str,
+                    "agent": "finance",
+                })
+
         # ----------------------------------------------------------------
         # Passo 5 — ROI per product_type
         # ----------------------------------------------------------------
@@ -205,6 +226,19 @@ class FinanceAgent(AgentBase):
         )
 
         # ----------------------------------------------------------------
+        # Passo 8.5 — Leggi segnali upstream da ChromaDB
+        # ----------------------------------------------------------------
+        learning_context = await self._read_learning_context()
+        await self._log_step(
+            "data_load",
+            f"Learning context: {len(learning_context['design_winners'])} design winner | "
+            f"tasso fallimento publish {learning_context['failure_rate']:.1%} "
+            f"({learning_context['failure_count']} falliti / "
+            f"{learning_context['failure_count'] + learning_context['success_count']} tentativi)",
+            output_data=learning_context,
+        )
+
+        # ----------------------------------------------------------------
         # Passo 9 — Analisi LLM: ROI e raccomandazioni (Sonnet)
         # ----------------------------------------------------------------
         roi_analysis = await self._generate_roi_analysis(
@@ -214,6 +248,7 @@ class FinanceAgent(AgentBase):
             net_margin_eur=net_margin_eur,
             roi_pct=roi_pct,
             period_days=period_days,
+            learning_context=learning_context,
         )
 
         await self._log_step(
@@ -221,6 +256,34 @@ class FinanceAgent(AgentBase):
             "ROI + raccomandazioni strategiche (Sonnet)",
             output_data={"analysis": str(roi_analysis)[:300]},
         )
+
+        # Scrivi finance_directive → ChromaDB (leggibile da Research)
+        niches_to_scale = [
+            n["niche"] for n in roi_analysis.get("top_niches_to_scale", []) if n.get("niche")
+        ]
+        niches_to_abandon = [
+            n["niche"] for n in roi_analysis.get("niches_to_abandon", []) if n.get("niche")
+        ]
+        if niches_to_scale or niches_to_abandon:
+            directive_text = (
+                f"Finance directive {today_str}: "
+                f"scale {' | '.join(niches_to_scale) if niches_to_scale else 'nessuna'}. "
+                f"Abandon {' | '.join(niches_to_abandon) if niches_to_abandon else 'nessuna'}. "
+                f"Strategia: {roi_analysis.get('strategic_recommendation', '')[:150]}"
+            )
+            await self.memory.store_insight(directive_text, {
+                "type": "finance_directive",
+                "niches_to_scale": "|".join(niches_to_scale),
+                "niches_to_abandon": "|".join(niches_to_abandon),
+                "date": today_str,
+                "period_days": str(period_days),
+                "agent": "finance",
+            })
+            await self._log_step(
+                "tool_call",
+                f"Finance directive salvata: scale={niches_to_scale}, abandon={niches_to_abandon}",
+                output_data={"niches_to_scale": niches_to_scale, "niches_to_abandon": niches_to_abandon},
+            )
 
         # ----------------------------------------------------------------
         # Passo 10 — Budget alert
@@ -573,6 +636,7 @@ class FinanceAgent(AgentBase):
         net_margin_eur: float,
         roi_pct: float,
         period_days: int,
+        learning_context: dict | None = None,
     ) -> dict:
         """
         Analisi strategica ROI con Sonnet: quali nicchie prioritizzare,
@@ -601,6 +665,32 @@ class FinanceAgent(AgentBase):
         rev_trend = "in crescita" if trend["revenue_delta_pct"] > 5 else \
                     "stabile" if abs(trend["revenue_delta_pct"]) <= 5 else "in calo"
 
+        # Sezione design winners (da learning context)
+        lc = learning_context or {}
+        winners = lc.get("design_winners", [])
+        failure_rate = lc.get("failure_rate", 0.0)
+        failure_count = lc.get("failure_count", 0)
+        success_count = lc.get("success_count", 0)
+
+        winners_str = ""
+        if winners:
+            winners_str = "\n\n## Design winner confermati (template/colore che hanno generato vendite)\n"
+            for w in winners[:6]:
+                winners_str += (
+                    f"  - Niche '{w['niche']}': template '{w['template']}', "
+                    f"schema '{w['color_scheme']}' — {w['sales']} vendite, {w['views']} views\n"
+                )
+
+        publish_str = ""
+        if failure_count + success_count > 0:
+            publish_str = (
+                f"\n\n## Efficienza deploy listing\n"
+                f"  Tentativi totali: {failure_count + success_count} | "
+                f"Successi: {success_count} | Fallimenti: {failure_count} | "
+                f"Tasso fallimento: {failure_rate:.1%}\n"
+                f"  Nota: i fallimenti riducono la revenue potenziale effettiva."
+            )
+
         system = (
             "Sei un consulente strategico e-commerce specializzato in Etsy e digital products. "
             "Analisi concisa, orientata all'azione. "
@@ -615,7 +705,9 @@ class FinanceAgent(AgentBase):
             f"Trend revenue: {rev_trend} ({trend['revenue_delta_pct']:+.1f}% vs periodo precedente)\n\n"
             f"TOP nicchie per ROI:\n{niches_str}\n\n"
             f"Nicchie negative:\n{worst_str}\n\n"
-            f"Product types:\n{pt_str}\n\n"
+            f"Product types:\n{pt_str}"
+            f"{winners_str}"
+            f"{publish_str}\n\n"
             f'Rispondi SOLO con JSON:\n'
             f'{{\n'
             f'  "top_niches_to_scale": [\n'
@@ -726,6 +818,85 @@ class FinanceAgent(AgentBase):
         )
 
         return True
+
+    # ------------------------------------------------------------------
+    # Learning context reader (upstream ChromaDB signals)
+    # ------------------------------------------------------------------
+
+    async def _read_learning_context(self) -> dict:
+        """
+        Legge da ChromaDB i segnali prodotti dagli agenti upstream.
+
+        Reads:
+          - design_winner: combinazioni template/colore che hanno venduto
+          - publish_failure / publish_success: tasso di fallimento deploy
+
+        Returns:
+            {
+                "design_winners": list[dict],   # niche, template, color_scheme, sales, views
+                "failure_count": int,
+                "success_count": int,
+                "failure_rate": float,           # 0.0-1.0
+            }
+        """
+        design_winners: list[dict] = []
+        failure_count = 0
+        success_count = 0
+
+        try:
+            winners_raw = await self.memory.query_chromadb_recent(
+                query="design winner best selling template niche",
+                n_results=10,
+                where={"type": {"$eq": "design_winner"}},
+                primary_days=30,
+                fallback_days=90,
+            )
+            for doc in (winners_raw or []):
+                meta = doc.get("metadata", {})
+                if meta.get("niche") and meta.get("template"):
+                    design_winners.append({
+                        "niche": meta["niche"],
+                        "template": meta["template"],
+                        "color_scheme": meta.get("color_scheme", ""),
+                        "sales": meta.get("sales", "0"),
+                        "views": meta.get("views", "0"),
+                    })
+        except Exception as exc:
+            logger.warning("Finance: errore lettura design_winner: %s", exc)
+
+        try:
+            failures_raw = await self.memory.query_chromadb_recent(
+                query="publish failure skipped error listing",
+                n_results=50,
+                where={"type": {"$eq": "publish_failure"}},
+                primary_days=30,
+                fallback_days=90,
+            )
+            failure_count = len(failures_raw or [])
+        except Exception as exc:
+            logger.warning("Finance: errore lettura publish_failure: %s", exc)
+
+        try:
+            successes_raw = await self.memory.query_chromadb_recent(
+                query="publish success listing published etsy",
+                n_results=50,
+                where={"type": {"$eq": "publish_success"}},
+                primary_days=30,
+                fallback_days=90,
+            )
+            success_count = len(successes_raw or [])
+        except Exception as exc:
+            logger.warning("Finance: errore lettura publish_success: %s", exc)
+
+        total_attempts = failure_count + success_count
+        failure_rate = round(failure_count / total_attempts, 3) if total_attempts > 0 else 0.0
+
+        return {
+            "design_winners": design_winners,
+            "failure_count": failure_count,
+            "success_count": success_count,
+            "failure_rate": failure_rate,
+        }
 
     # ------------------------------------------------------------------
     # Report builder

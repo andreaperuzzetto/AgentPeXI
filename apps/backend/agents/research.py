@@ -131,6 +131,86 @@ class ResearchAgent(AgentBase):
             except Exception:
                 pass
 
+    async def _read_finance_context(self, niche: str) -> str:
+        """
+        Legge da ChromaDB i segnali prodotti da Finance:
+          - niche_roi_snapshot: ROI storico per nicchia specifica
+          - finance_directive: nicchie da scalare / abbandonare per direttiva strategica
+
+        Ritorna una stringa pronta per essere iniettata nel prompt LLM.
+        Ritorna stringa vuota se non ci sono dati (cold-start safe).
+        """
+        lines: list[str] = []
+
+        # 1. ROI storico per questa nicchia
+        try:
+            roi_docs = await self.memory.query_chromadb_recent(
+                query=f"Finance ROI snapshot nicchia {niche}",
+                n_results=3,
+                where={"type": {"$eq": "niche_roi_snapshot"}},
+                primary_days=30,
+                fallback_days=90,
+            )
+            if roi_docs:
+                lines.append("## ROI storico (Finance)")
+                for doc in roi_docs:
+                    meta = doc.get("metadata", {})
+                    doc_niche = meta.get("niche", "")
+                    # Filtra per pertinenza (stessa nicchia o simile)
+                    if doc_niche.lower() in niche.lower() or niche.lower() in doc_niche.lower():
+                        roi_pct = meta.get("roi_pct", "n/d")
+                        sales = meta.get("total_sales", "0")
+                        margin = meta.get("net_margin_eur", "n/d")
+                        lines.append(
+                            f"  - Niche '{doc_niche}': ROI {roi_pct}%, "
+                            f"{sales} vendite, €{margin} margine netto"
+                        )
+        except Exception:
+            pass
+
+        # 2. Direttiva strategica Finance (nicchie da scalare / abbandonare)
+        try:
+            directive_docs = await self.memory.query_chromadb_recent(
+                query="finance directive scale abandon niche strategy",
+                n_results=1,
+                where={"type": {"$eq": "finance_directive"}},
+                primary_days=30,
+                fallback_days=90,
+            )
+            if directive_docs:
+                meta = directive_docs[0].get("metadata", {})
+                to_scale = meta.get("niches_to_scale", "")
+                to_abandon = meta.get("niches_to_abandon", "")
+                date = meta.get("date", "")
+
+                lines.append(f"## Direttiva strategica Finance (aggiornata {date})")
+
+                niche_lower = niche.lower()
+                abandon_list = [n.strip().lower() for n in to_abandon.split("|") if n.strip()]
+                scale_list = [n.strip().lower() for n in to_scale.split("|") if n.strip()]
+
+                if any(niche_lower in ab or ab in niche_lower for ab in abandon_list):
+                    lines.append(
+                        f"  ⛔ ATTENZIONE: Finance ha classificato questa nicchia come "
+                        f"'da abbandonare' (ROI negativo). Valuta con estrema cautela."
+                    )
+                elif any(niche_lower in sc or sc in niche_lower for sc in scale_list):
+                    lines.append(
+                        f"  ✅ Finance raccomanda di SCALARE questa nicchia (ROI positivo confermato)."
+                    )
+                else:
+                    if to_scale:
+                        lines.append(f"  Nicchie da scalare: {to_scale.replace('|', ', ')}")
+                    if to_abandon:
+                        lines.append(f"  Nicchie da abbandonare: {to_abandon.replace('|', ', ')}")
+        except Exception:
+            pass
+
+        if not lines:
+            return ""
+
+        return "\n\n## Contesto finanziario (Finance Agent)\n" + "\n".join(lines)
+
     @staticmethod
     def _sanitize_prompt_input(value: str, max_len: int = 300) -> str:
         """Sanifica input utente prima dell'inserimento in un prompt LLM.
@@ -214,6 +294,9 @@ class ResearchAgent(AgentBase):
             for fc in failure_context:
                 failure_text += f"- {fc['document']}\n"
 
+        # Step 0b — Contesto finanziario da Finance Agent
+        finance_text = await self._read_finance_context(query)
+
         # Step 1 — Ricerca parallela (4 chiamate)
         search_results, competitor_results, keyword_results, trend_data = await asyncio.gather(
             self._call_tool(
@@ -266,7 +349,8 @@ class ResearchAgent(AgentBase):
                     f"## Dati competitor\n{json.dumps(competitor_results, indent=2, default=str)}\n\n"
                     f"## Dati keyword SEO\n{json.dumps(keyword_results, indent=2, default=str)}\n\n"
                     f"## Google Trends\n{json.dumps(trend_data, indent=2, default=str)}"
-                    f"{failure_text}\n\n"
+                    f"{failure_text}"
+                    f"{finance_text}\n\n"
                     f"## Qualità dati disponibili\n{json.dumps(data_sources, indent=2)}\n"
                     f"Per i campi dove la fonte è 'llm_inference', indica uncertainty nella "
                     f"confidence e compila il campo con la migliore stima disponibile ma "
@@ -383,6 +467,9 @@ class ResearchAgent(AgentBase):
             for fc in failure_context:
                 failure_text += f"- {fc['document']}\n"
 
+        # Step 0c — Contesto finanziario da Finance Agent
+        finance_text = await self._read_finance_context(niche)
+
         if use_cache and cached_data:
             # Solo Google Trends fresco
             trend_data = await self._call_tool(
@@ -406,7 +493,8 @@ class ResearchAgent(AgentBase):
                         f"Aggiorna l'analisi della nicchia Etsy: **{niche}** (digital products).\n\n"
                         f"## Dati cache (< 7 giorni)\n{cached_data['document']}\n\n"
                         f"## Google Trends aggiornato\n{json.dumps(trend_data, indent=2, default=str)}"
-                        f"{failure_text}\n\n"
+                        f"{failure_text}"
+                        f"{finance_text}\n\n"
                         f"## Qualità dati disponibili\n{json.dumps(data_sources, indent=2)}\n\n"
                         f"Produci un report JSON completo seguendo la struttura indicata nel system prompt."
                     ),
@@ -467,7 +555,8 @@ class ResearchAgent(AgentBase):
                         f"## Dati competitor\n{json.dumps(competitor_results, indent=2, default=str)}\n\n"
                         f"## Dati keyword SEO\n{json.dumps(keyword_results, indent=2, default=str)}\n\n"
                         f"## Google Trends\n{json.dumps(trend_data, indent=2, default=str)}"
-                        f"{failure_text}\n\n"
+                        f"{failure_text}"
+                        f"{finance_text}\n\n"
                         f"## Qualità dati disponibili\n{json.dumps(data_sources, indent=2)}\n"
                         f"Per i campi dove la fonte è 'llm_inference', indica uncertainty nella "
                         f"confidence e compila il campo con la migliore stima disponibile ma "
