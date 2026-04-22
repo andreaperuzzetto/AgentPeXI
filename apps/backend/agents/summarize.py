@@ -2,10 +2,11 @@
 
 Input:
   {
-    "source_type": "text" | "url" | "file",
-    "content":     str,          # testo diretto, URL, o file_id Telegram
-    "length":      "brief" | "normal" | "detailed",   # default: "normal"
-    "save":        bool,         # default: True — salva summary in pepe_memory
+    "source_type":  "text" | "url" | "file",
+    "content":      str,          # testo diretto, URL, o file_id Telegram
+    "length":       "brief" | "normal" | "detailed",   # default: "normal"
+    "save":         bool,         # default: True — salva summary in ChromaDB
+    "domain_name":  "personal" | "etsy",               # default: "personal"
   }
 
 Pipeline:
@@ -13,7 +14,9 @@ Pipeline:
 2. Chunking se testo > 3.000 chars, max SUMMARIZE_MAX_CHUNKS (5)
 3. Sintesi progressiva (map-reduce se più chunk, diretta se singolo)
 4. Action item detection (caveman Ollama) → propone reminder se trovati
-5. Salvataggio pepe_memory (se save=True) via store_insight
+5. Salvataggio domain-aware (se save=True):
+     domain_name="personal" → personal_memory (store_personal_insight)
+     domain_name="etsy"     → pepe_memory     (store_insight)
 6. Risposta Telegram
 
 Usa Claude Haiku per velocità + cost control.
@@ -199,24 +202,31 @@ class SummarizeAgent(AgentBase):
             items_str = " | ".join(f"«{a}»" for a in action_items)
             action_note = f"\n\n⚡ Azioni trovate: {items_str}\nVuoi che imposti un reminder per una di queste?"
 
-        # ── Step 5: salvataggio pepe_memory ─────────────────────────
+        # ── Step 5: salvataggio domain-aware ────────────────────────
+        # personal → personal_memory (store_personal_insight)
+        # etsy     → pepe_memory     (store_insight)
         if save:
-            from datetime import datetime as _dt
+            from datetime import datetime as _dt, timezone as _tz
+            _now = _dt.now(_tz.utc)
+            _meta = {
+                "source_type": source_type,
+                "url":         content if source_type == "url" else None,
+                "tag":         "summary",
+                "length":      length,
+                "domain":      domain_name,
+                "agent":       "summarize",
+                "date":        _now.strftime("%Y-%m-%d"),
+                "created_at":  _now.isoformat(),
+            }
             try:
-                await self.memory.store_insight(
-                    summary,
-                    metadata={
-                        "source_type": source_type,
-                        "url": content if source_type == "url" else None,
-                        "tag": "summary",
-                        "length": length,
-                        "date": _dt.utcnow().strftime("%Y-%m-%d"),
-                        "created_at": _dt.utcnow().isoformat(),
-                    },
-                )
-                await self._log_step("save", "Salvato in pepe_memory")
+                if domain_name == "etsy":
+                    await self.memory.store_insight(summary, metadata=_meta)
+                    await self._log_step("save", "Salvato in pepe_memory (dominio etsy)")
+                else:
+                    await self.memory.store_personal_insight(summary, metadata=_meta)
+                    await self._log_step("save", "Salvato in personal_memory (dominio personal)")
             except Exception as exc:
-                logger.warning("store_insight fallito (fail-safe): %s", exc)
+                logger.warning("store summary fallito (fail-safe): %s", exc)
 
         # ── Step 6: risposta ─────────────────────────────────────────
         trunc_warn = "\n⚠️ Documento molto lungo, ho processato i primi ~15.000 caratteri." if (n_chars > _CHUNK_THRESHOLD and len(chunks) == _MAX_CHUNKS) else ""
@@ -229,13 +239,14 @@ class SummarizeAgent(AgentBase):
             agent_name=self.name,
             status=TaskStatus.COMPLETED,
             output_data={
-                "summary": summary,
-                "reply": reply,
-                "source": source_label,
+                "summary":         summary,
+                "reply":           reply,
+                "source":          source_label,
                 "chars_extracted": n_chars,
-                "length": length,
-                "action_items": action_items,
-                "confidence": 1.0,
+                "length":          length,
+                "domain":          domain_name,
+                "action_items":    action_items,
+                "confidence":      1.0,
             },
             reply_voice="Riassunto pronto, controlla il pannello.",
         )

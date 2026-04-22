@@ -106,6 +106,15 @@ export interface DomainSwitched {
   domain: string
 }
 
+export interface MemoryQueryEvent {
+  type: 'memory_query'
+  agent: string
+  collection: string
+  ids: string[]
+  query: string | null
+  ts: string
+}
+
 export type WSIncoming =
   | AgentStarted
   | AgentCompleted
@@ -118,6 +127,7 @@ export type WSIncoming =
   | WatcherStatus
   | WatcherCapture
   | DomainSwitched
+  | MemoryQueryEvent
 
 /* ── UI models ── */
 

@@ -70,14 +70,23 @@ export function Header() {
       <span className="h-sep">·</span>
 
       {/* uptime */}
-      <div className="h-item" style={{ color: 'var(--tf)', fontSize: 10 }}>
+      <div className="h-item" style={{ color: 'var(--tf)' }}>
         {uptime}
       </div>
 
-      {/* domain badge */}
+      {/* domain badge — zone-aware color */}
       <button
         className="h-badge"
         onClick={() => setActiveDomain(activeDomain === 'etsy' ? 'personal' : 'etsy')}
+        style={activeDomain === 'etsy' ? {
+          color:       'var(--zone-etsy)',
+          borderColor: 'rgba(245,166,35,.32)',
+          background:  'rgba(245,166,35,.09)',
+        } : {
+          color:       'var(--zone-personal)',
+          borderColor: 'rgba(27,255,94,.20)',
+          background:  'var(--adim)',
+        }}
       >
         {activeDomain === 'etsy' ? 'ETY' : 'PSN'}
       </button>

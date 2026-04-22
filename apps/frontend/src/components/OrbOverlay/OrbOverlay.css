@@ -36,30 +36,33 @@
 
 .sgc-tag {
   font-family: var(--fmo);
-  font-size: 8px;
-  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
   border-radius: 3px;
   letter-spacing: .04em;
   text-transform: uppercase;
   flex-shrink: 0;
   margin-top: 1px;
 }
-.sgc-tag.tool  { background: rgba(27,255,94,.08);  color: rgba(27,255,94,.7); }
-.sgc-tag.llm   { background: rgba(245,166,35,.08); color: rgba(245,166,35,.7); }
-.sgc-tag.think { background: rgba(107,140,112,.08);color: rgba(107,140,112,.7); }
+.sgc-tag.tool  { background: rgba(27,255,94,.08);   color: rgba(27,255,94,.85); }
+.sgc-tag.llm   { background: rgba(245,166,35,.08);  color: rgba(245,166,35,.85); }
+.sgc-tag.think { background: rgba(126,184,255,.08); color: rgba(126,184,255,.85); }
 
 .sgc-body { flex: 1; min-width: 0; }
 .sgc-agent {
   font-family: var(--fmo);
-  font-size: 9px;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: rgba(27,255,94,.5);
+  color: rgba(27,255,94,.60);
   margin-bottom: 2px;
 }
 .sgc-desc {
   font-family: var(--fmo);
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--tm);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -67,7 +70,8 @@
 }
 .sgc-time {
   font-family: var(--fmo);
-  font-size: 9px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--tf);
   flex-shrink: 0;
   margin-top: 2px;
@@ -106,7 +110,7 @@
 }
 .sd-title {
   font-family: var(--fmo);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: .12em;
   text-transform: uppercase;
@@ -115,7 +119,8 @@
 }
 .sd-close {
   font-family: var(--fmo);
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--tf);
   transition: color .15s;
   padding: 4px 6px;
@@ -134,10 +139,11 @@
 
 .sd-pill {
   font-family: var(--fmo);
-  font-size: 9px;
+  font-size: 11px;
+  font-weight: 500;
   letter-spacing: .06em;
   text-transform: uppercase;
-  padding: 3px 8px;
+  padding: 3px 9px;
   border-radius: 3px;
   border: 1px solid rgba(27,255,94,.10);
   color: var(--tf);
@@ -156,7 +162,8 @@
 .sd-count {
   margin-left: auto;
   font-family: var(--fmo);
-  font-size: 9px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--tf);
   flex-shrink: 0;
   align-self: center;
@@ -188,15 +195,17 @@
 .sd-step-body { flex: 1; min-width: 0; }
 .sd-step-agent {
   font-family: var(--fmo);
-  font-size: 8px;
+  font-size: 10px;
+  font-weight: 600;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: rgba(27,255,94,.45);
+  color: rgba(27,255,94,.55);
   margin-bottom: 2px;
 }
 .sd-step-desc {
   font-family: var(--fmo);
-  font-size: 10.5px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--tm);
   line-height: 1.4;
   overflow: hidden;
@@ -206,7 +215,8 @@
 }
 .sd-step-meta {
   font-family: var(--fmo);
-  font-size: 9px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--tf);
   margin-top: 3px;
 }

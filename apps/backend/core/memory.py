@@ -250,6 +250,18 @@ CREATE TABLE IF NOT EXISTS learning_evaluations (
 );
 CREATE INDEX IF NOT EXISTS idx_le_pattern ON learning_evaluations(pattern_id);
 CREATE INDEX IF NOT EXISTS idx_le_signal  ON learning_evaluations(signal_type);
+
+CREATE TABLE IF NOT EXISTS memory_queries (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent         TEXT    NOT NULL DEFAULT 'unknown',
+    collection    TEXT    NOT NULL,
+    doc_ids       TEXT    NOT NULL,
+    query_text    TEXT,
+    queried_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mq_collection ON memory_queries(collection);
+CREATE INDEX IF NOT EXISTS idx_mq_agent      ON memory_queries(agent);
+CREATE INDEX IF NOT EXISTS idx_mq_queried_at ON memory_queries(queried_at);
 """
 
 
@@ -273,8 +285,12 @@ class MemoryManager:
         self._chromadb_path = os.path.join(settings.STORAGE_PATH, "chromadb")
         self._db: aiosqlite.Connection | None = None
         self._chroma_collection = None          # pepe_memory — Etsy/knowledge base
-        self._screen_memory_collection = None   # screen_memory — Personal domain
+        self._screen_memory_collection = None   # screen_memory — OCR/watcher (Personal)
+        self._personal_memory_collection = None # personal_memory — Personal learning loop
+        self._shared_memory_collection = None   # shared_memory — bridge cross-domain
         self.__fernet: Fernet | None = None     # lazy-init in _fernet()
+        self._ws_broadcaster = None             # callable(event: dict) — impostato da lifespan
+        self._bridge_callback = None            # callable(text, domain) — impostato da lifespan
 
     # ------------------------------------------------------------------
     # Crypto helpers (OAuth token encryption)
@@ -351,16 +367,31 @@ class MemoryManager:
                 name="pepe_memory",
                 embedding_function=voyage_ef,
             )
-            # screen_memory: collection separata per il dominio Personal
+            # screen_memory: collection separata per OCR/watcher (dominio Personal)
             # Stessa embedding function, path ChromaDB condiviso
             self._screen_memory_collection = chroma_client.get_or_create_collection(
                 name="screen_memory",
+                embedding_function=voyage_ef,
+            )
+            # personal_memory: knowledge base strutturata del dominio Personal
+            # Separata da screen_memory (OCR raw) e da pepe_memory (Etsy)
+            self._personal_memory_collection = chroma_client.get_or_create_collection(
+                name="personal_memory",
+                embedding_function=voyage_ef,
+            )
+            # shared_memory: insight cross-domain sintetizzati dal bridge
+            # Contiene pattern che emergono dall'incrocio tra Etsy e Personal.
+            # Letta da entrambi i domini per arricchire il contesto LLM.
+            self._shared_memory_collection = chroma_client.get_or_create_collection(
+                name="shared_memory",
                 embedding_function=voyage_ef,
             )
         except Exception:
             # ChromaDB/Voyage non disponibile — continua solo con SQLite
             self._chroma_collection = None
             self._screen_memory_collection = None
+            self._personal_memory_collection = None
+            self._shared_memory_collection = None
 
         # Cleanup: chiudi agent_logs rimasti in 'running' da sessioni precedenti
         try:
@@ -939,6 +970,105 @@ class MemoryManager:
             return {"available": True, "count": count}
         except Exception as exc:
             return {"available": False, "count": 0, "error": str(exc)}
+
+    # ------------------------------------------------------------------
+    # Memory query tracking (neural brain)
+    # ------------------------------------------------------------------
+
+    def set_ws_broadcaster(self, broadcaster) -> None:
+        """Inietta il broadcaster WebSocket (callable async).
+
+        Chiamato da lifespan in main.py dopo la creazione di ws_manager.
+        Permette a MemoryManager di emettere eventi memory_query sul WS
+        senza dipendere direttamente da main.py (no circular import).
+        """
+        self._ws_broadcaster = broadcaster
+
+    def set_bridge_callback(self, callback) -> None:
+        """Inietta il callback del KnowledgeBridge (callable async).
+
+        Firma attesa: async def callback(text: str, source_domain: str) -> None
+
+        Chiamato da lifespan in main.py dopo l'inizializzazione del bridge.
+        Ogni store_insight / store_personal_insight triggera il bridge in modo
+        fire-and-forget (asyncio.create_task) senza bloccare la pipeline principale.
+        """
+        self._bridge_callback = callback
+
+    async def log_memory_query(
+        self,
+        doc_ids: list[str],
+        collection: str,
+        agent: str = "unknown",
+        query_text: str | None = None,
+    ) -> None:
+        """Registra una query ChromaDB nella tabella memory_queries e invia WS event.
+
+        Chiamata internamente da query_chromadb() e search_screen_memory().
+        Silente in caso di errore — non deve bloccare il flusso principale.
+        """
+        if not doc_ids:
+            return
+        try:
+            await self._db.execute(
+                """INSERT INTO memory_queries (agent, collection, doc_ids, query_text)
+                   VALUES (?, ?, ?, ?)""",
+                (agent, collection, json.dumps(doc_ids), query_text),
+            )
+            await self._db.commit()
+        except Exception as exc:
+            logger.warning("log_memory_query fallito: %s", exc)
+            return
+
+        # Broadcast WS event per il neural brain (live node activation)
+        if self._ws_broadcaster is not None:
+            try:
+                await self._ws_broadcaster({
+                    "type": "memory_query",
+                    "agent": agent,
+                    "collection": collection,
+                    "ids": doc_ids,
+                    "query": query_text,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                })
+            except Exception as exc:
+                logger.warning("log_memory_query WS broadcast fallito: %s", exc)
+
+    async def get_node_access_history(
+        self,
+        doc_id: str,
+        collection: str,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Restituisce le ultime `limit` query che hanno acceduto al doc_id specificato.
+
+        Filtra memory_queries dove doc_ids JSON contiene doc_id.
+        """
+        try:
+            cursor = await self._db.execute(
+                """SELECT agent, collection, doc_ids, query_text, queried_at
+                   FROM memory_queries
+                   WHERE collection = ?
+                     AND doc_ids LIKE ?
+                   ORDER BY queried_at DESC
+                   LIMIT ?""",
+                (collection, f'%"{doc_id}"%', limit),
+            )
+            rows = await cursor.fetchall()
+            out = []
+            for row in rows:
+                ids = _json_loads(row["doc_ids"]) or []
+                if doc_id in ids:
+                    out.append({
+                        "agent": row["agent"],
+                        "collection": row["collection"],
+                        "query_text": row["query_text"],
+                        "queried_at": row["queried_at"],
+                    })
+            return out
+        except Exception as exc:
+            logger.warning("get_node_access_history fallito: %s", exc)
+            return []
 
     # ------------------------------------------------------------------
     # Finance data helpers
@@ -1614,6 +1744,9 @@ class MemoryManager:
             metadatas=[metadata or {}],
             ids=[doc_id],
         )
+        # Fire-and-forget: notifica il KnowledgeBridge per analisi cross-domain
+        if self._bridge_callback and text:
+            asyncio.create_task(self._bridge_callback(text, "etsy"))
         return doc_id
 
     async def query_insights(self, query: str, n_results: int = 5) -> list[dict]:
@@ -1635,6 +1768,7 @@ class MemoryManager:
         query: str,
         n_results: int = 5,
         where: dict | None = None,
+        agent: str = "unknown",
     ) -> list[dict]:
         """Query ChromaDB con filtro where opzionale sui metadata."""
         if self._chroma_collection is None:
@@ -1644,10 +1778,18 @@ class MemoryManager:
             kwargs["where"] = where
         results = await asyncio.to_thread(lambda: self._chroma_collection.query(**kwargs))
         out = []
+        accessed_ids: list[str] = []
         for i, doc in enumerate(results.get("documents", [[]])[0]):
             meta = (results.get("metadatas", [[]])[0][i]) if results.get("metadatas") else {}
             doc_id = (results.get("ids", [[]])[0][i]) if results.get("ids") else None
+            if doc_id:
+                accessed_ids.append(doc_id)
             out.append({"document": doc, "metadata": meta, "id": doc_id})
+        # Log asincronamente — non blocca il caller
+        if accessed_ids:
+            asyncio.create_task(
+                self.log_memory_query(accessed_ids, "pepe_memory", agent=agent, query_text=query)
+            )
         return out
 
     async def query_chromadb_recent(
@@ -1751,6 +1893,7 @@ class MemoryManager:
         query: str,
         n_results: int = 10,
         where: dict | None = None,
+        agent: str = "unknown",
     ) -> list[dict]:
         """Similarity search sulla collection screen_memory.
 
@@ -1758,6 +1901,7 @@ class MemoryManager:
             query:     Query in linguaggio naturale.
             n_results: Numero massimo di risultati.
             where:     Filtro ChromaDB sui metadata (es. filtro temporale).
+            agent:     Nome agente chiamante (per memory_queries log).
 
         Returns lista di dict {document, metadata, id, distance}.
         """
@@ -1778,13 +1922,22 @@ class MemoryManager:
             metas = results.get("metadatas", [[]])[0] if results.get("metadatas") else []
             ids_list = results.get("ids", [[]])[0] if results.get("ids") else []
             dists = results.get("distances", [[]])[0] if results.get("distances") else []
+            accessed_ids: list[str] = []
             for i, doc in enumerate(docs):
+                doc_id = ids_list[i] if i < len(ids_list) else None
+                if doc_id:
+                    accessed_ids.append(doc_id)
                 out.append({
                     "document": doc,
                     "metadata": metas[i] if i < len(metas) else {},
-                    "id": ids_list[i] if i < len(ids_list) else None,
+                    "id": doc_id,
                     "distance": dists[i] if i < len(dists) else None,
                 })
+            # Log asincronamente
+            if accessed_ids:
+                asyncio.create_task(
+                    self.log_memory_query(accessed_ids, "screen_memory", agent=agent, query_text=query)
+                )
             return out
         except Exception as exc:
             logger.warning("search_screen_memory fallito: %s", exc)
@@ -1826,6 +1979,260 @@ class MemoryManager:
             return {"available": False, "count": 0, "error": str(exc)}
 
     # ------------------------------------------------------------------
+    # Personal memory — ChromaDB collection per il dominio Personal
+    #
+    # Separata sia da pepe_memory (Etsy knowledge base) che da
+    # screen_memory (OCR raw del watcher). Contiene insight strutturati
+    # prodotti da recall, research_personal, summarize (domain=personal).
+    # ------------------------------------------------------------------
+
+    async def store_personal_insight(
+        self,
+        text: str,
+        metadata: dict | None = None,
+    ) -> str | None:
+        """Scrive un insight strutturato nella collection personal_memory.
+
+        Speculare a store_insight() per pepe_memory.
+
+        Args:
+            text:     Testo dell'insight (sintesi, ricerca, riassunto personale).
+            metadata: Dizionario metadata ChromaDB. Campi consigliati:
+                        type, query, date (YYYY-MM-DD), created_at (ISO),
+                        agent, confidence, tag.
+
+        Returns l'ID univoco del documento, o None se ChromaDB non disponibile.
+        """
+        if self._personal_memory_collection is None:
+            return None
+        import uuid
+        doc_id = str(uuid.uuid4())
+        await asyncio.to_thread(
+            self._personal_memory_collection.add,
+            documents=[text],
+            metadatas=[metadata or {}],
+            ids=[doc_id],
+        )
+        # Fire-and-forget: notifica il KnowledgeBridge per analisi cross-domain
+        if self._bridge_callback and text:
+            asyncio.create_task(self._bridge_callback(text, "personal"))
+        return doc_id
+
+    async def query_personal_memory(
+        self,
+        query: str,
+        n_results: int = 5,
+        where: dict | None = None,
+        agent: str = "unknown",
+    ) -> list[dict]:
+        """Similarity search sulla collection personal_memory.
+
+        Speculare a query_chromadb() per pepe_memory.
+        Logga la query in memory_queries (col WS event per il NeuralBrain).
+
+        Returns lista di dict {document, metadata, id}.
+        """
+        if self._personal_memory_collection is None:
+            return []
+        try:
+            count = await asyncio.to_thread(self._personal_memory_collection.count)
+            if count == 0:
+                return []
+            n = min(n_results, count)
+            kwargs: dict = {"query_texts": [query], "n_results": n}
+            if where:
+                kwargs["where"] = where
+            results = await asyncio.to_thread(
+                lambda: self._personal_memory_collection.query(**kwargs)
+            )
+            out = []
+            accessed_ids: list[str] = []
+            for i, doc in enumerate(results.get("documents", [[]])[0]):
+                meta = (results.get("metadatas", [[]])[0][i]) if results.get("metadatas") else {}
+                doc_id = (results.get("ids", [[]])[0][i]) if results.get("ids") else None
+                if doc_id:
+                    accessed_ids.append(doc_id)
+                out.append({"document": doc, "metadata": meta, "id": doc_id})
+            if accessed_ids:
+                asyncio.create_task(
+                    self.log_memory_query(
+                        accessed_ids, "personal_memory", agent=agent, query_text=query
+                    )
+                )
+            return out
+        except Exception as exc:
+            logger.warning("query_personal_memory fallito: %s", exc)
+            return []
+
+    async def query_personal_memory_recent(
+        self,
+        query: str,
+        n_results: int = 5,
+        where: dict | None = None,
+        agent: str = "unknown",
+        primary_days: int = 90,
+        fallback_days: int = 180,
+    ) -> list[dict]:
+        """Come query_personal_memory() ma con filtro temporale a scalini.
+
+        1. Prova con finestra primary_days (default 90)
+        2. Se vuoto, prova con finestra fallback_days (default 180)
+        3. Se ancora vuoto, ritorna [] — non usare dati troppo vecchi
+
+        I documenti devono avere metadata["date"] in formato YYYY-MM-DD.
+        """
+
+        def _build_where(base_where: dict | None, cutoff_date: str) -> dict:
+            date_filter = {"date": {"$gte": cutoff_date}}
+            if base_where:
+                return {"$and": [base_where, date_filter]}
+            return date_filter
+
+        cutoff_primary = (
+            datetime.now(timezone.utc) - timedelta(days=primary_days)
+        ).strftime("%Y-%m-%d")
+
+        try:
+            results = await self.query_personal_memory(
+                query=query,
+                n_results=n_results,
+                where=_build_where(where, cutoff_primary),
+                agent=agent,
+            )
+            if results:
+                return results
+        except Exception:
+            pass
+
+        cutoff_fallback = (
+            datetime.now(timezone.utc) - timedelta(days=fallback_days)
+        ).strftime("%Y-%m-%d")
+
+        try:
+            results = await self.query_personal_memory(
+                query=query,
+                n_results=n_results,
+                where=_build_where(where, cutoff_fallback),
+                agent=agent,
+            )
+            if results:
+                logger.debug(
+                    "query_personal_memory_recent: dati primari vuoti, "
+                    "usata finestra fallback %d giorni per query '%s'",
+                    fallback_days, query[:50],
+                )
+                return results
+        except Exception:
+            pass
+
+        return []
+
+    async def get_personal_memory_stats(self) -> dict:
+        """Statistiche collection personal_memory."""
+        if self._personal_memory_collection is None:
+            return {"available": False, "count": 0}
+        try:
+            count = self._personal_memory_collection.count()
+            return {"available": True, "count": count}
+        except Exception as exc:
+            return {"available": False, "count": 0, "error": str(exc)}
+
+    # ------------------------------------------------------------------
+    # Shared memory — bridge cross-domain (Etsy ↔ Personal)
+    #
+    # Contiene insight sintetizzati dal KnowledgeBridge (Fase 6) quando
+    # rileva pattern semanticamente rilevanti in entrambi i domini.
+    # È l'unica collection letta da agenti di entrambi i domini.
+    # ------------------------------------------------------------------
+
+    async def store_shared_insight(
+        self,
+        text: str,
+        metadata: dict | None = None,
+    ) -> str | None:
+        """Scrive un insight cross-domain nella collection shared_memory.
+
+        Chiamato esclusivamente da KnowledgeBridge dopo aver identificato
+        un pattern rilevante sia in pepe_memory che in personal_memory.
+
+        Args:
+            text:     Testo sintetizzato del pattern cross-domain.
+            metadata: Campi consigliati: source_etsy (list[str]),
+                        source_personal (list[str]), similarity_score (float),
+                        topic (str), date (YYYY-MM-DD), created_at (ISO).
+
+        Returns l'ID univoco del documento, o None se ChromaDB non disponibile.
+        """
+        if self._shared_memory_collection is None:
+            return None
+        import uuid
+        doc_id = str(uuid.uuid4())
+        await asyncio.to_thread(
+            self._shared_memory_collection.add,
+            documents=[text],
+            metadatas=[metadata or {}],
+            ids=[doc_id],
+        )
+        return doc_id
+
+    async def query_shared_memory(
+        self,
+        query: str,
+        n_results: int = 3,
+        where: dict | None = None,
+        agent: str = "unknown",
+    ) -> list[dict]:
+        """Similarity search sulla collection shared_memory.
+
+        Usata da agenti di entrambi i domini per arricchire il proprio
+        contesto con insight cross-domain. n_results default basso (3)
+        per non diluire il contesto domain-specific principale.
+
+        Returns lista di dict {document, metadata, id}.
+        """
+        if self._shared_memory_collection is None:
+            return []
+        try:
+            count = await asyncio.to_thread(self._shared_memory_collection.count)
+            if count == 0:
+                return []
+            n = min(n_results, count)
+            kwargs: dict = {"query_texts": [query], "n_results": n}
+            if where:
+                kwargs["where"] = where
+            results = await asyncio.to_thread(
+                lambda: self._shared_memory_collection.query(**kwargs)
+            )
+            out = []
+            accessed_ids: list[str] = []
+            for i, doc in enumerate(results.get("documents", [[]])[0]):
+                meta = (results.get("metadatas", [[]])[0][i]) if results.get("metadatas") else {}
+                doc_id = (results.get("ids", [[]])[0][i]) if results.get("ids") else None
+                if doc_id:
+                    accessed_ids.append(doc_id)
+                out.append({"document": doc, "metadata": meta, "id": doc_id})
+            if accessed_ids:
+                asyncio.create_task(
+                    self.log_memory_query(
+                        accessed_ids, "shared_memory", agent=agent, query_text=query
+                    )
+                )
+            return out
+        except Exception as exc:
+            logger.warning("query_shared_memory fallito: %s", exc)
+            return []
+
+    async def get_shared_memory_stats(self) -> dict:
+        """Statistiche collection shared_memory."""
+        if self._shared_memory_collection is None:
+            return {"available": False, "count": 0}
+        try:
+            count = self._shared_memory_collection.count()
+            return {"available": True, "count": count}
+        except Exception as exc:
+            return {"available": False, "count": 0, "error": str(exc)}
+
+    # ------------------------------------------------------------------
     # Query pubbliche esposte da main.py
     # ------------------------------------------------------------------
 
@@ -1835,15 +2242,25 @@ class MemoryManager:
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
-    async def get_recent_agent_steps(self, limit: int = 50) -> list[dict]:
-        """Ultimi N step per agente, in ordine cronologico crescente."""
-        cursor = await self._db.execute(
-            """SELECT id, task_id, agent_name, step_number, step_type,
-                      description, duration_ms, timestamp
-               FROM agent_steps
-               ORDER BY id DESC LIMIT ?""",
-            (limit,),
-        )
+    async def get_recent_agent_steps(self, limit: int = 50, agent_name: str | None = None) -> list[dict]:
+        """Ultimi N step (opzionalmente filtrati per agente), in ordine cronologico crescente."""
+        if agent_name:
+            cursor = await self._db.execute(
+                """SELECT id, task_id, agent_name, step_number, step_type,
+                          description, duration_ms, timestamp
+                   FROM agent_steps
+                   WHERE agent_name = ?
+                   ORDER BY id DESC LIMIT ?""",
+                (agent_name, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                """SELECT id, task_id, agent_name, step_number, step_type,
+                          description, duration_ms, timestamp
+                   FROM agent_steps
+                   ORDER BY id DESC LIMIT ?""",
+                (limit,),
+            )
         rows = await cursor.fetchall()
         return list(reversed([dict(r) for r in rows]))
 

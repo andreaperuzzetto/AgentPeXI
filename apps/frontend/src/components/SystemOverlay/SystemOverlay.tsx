@@ -4,21 +4,15 @@ import { useStore } from '../../store'
 import { AgentOverlayCard } from './AgentOverlayCard'
 import { AgentDetailPanel } from './AgentDetailPanel'
 
-const SECTION_CONFIG: Record<string, {
-  title: string
-  badge?: string
-  agents: string[]
-}> = {
-  etsy_store: {
-    title:  'Etsy Store',
-    badge:  'PENDING APPROVAL',
-    agents: ['research', 'design', 'publisher', 'analytics'],
-  },
-  personal: {
-    title:  'Personale',
-    badge:  'LOCALE · OLLAMA',
-    agents: ['recall', 'remind', 'summarize', 'research_personal', 'watcher'],
-  },
+/* fallback se domainConfig non è ancora arrivato */
+const FALLBACK_AGENTS: Record<string, string[]> = {
+  etsy_store: ['research', 'design', 'publisher', 'analytics'],
+  personal:   ['recall', 'remind', 'summarize', 'research_personal', 'watcher'],
+}
+
+const SECTION_META: Record<string, { title: string; badge?: string }> = {
+  etsy_store: { title: 'Etsy Store', badge: 'PENDING APPROVAL' },
+  personal:   { title: 'Personale',  badge: 'CLAUDE API' },
 }
 
 export function SystemOverlay() {
@@ -26,8 +20,14 @@ export function SystemOverlay() {
   const setOverlaySystem = useStore((s) => s.setOverlaySystem)
   const selectedAgent    = useStore((s) => s.selectedAgent)
   const setSelectedAgent = useStore((s) => s.setSelectedAgent)
+  const domainConfig     = useStore((s) => s.domainConfig)
 
-  const section = overlaySystem ? (SECTION_CONFIG[overlaySystem] ?? SECTION_CONFIG['etsy_store']) : null
+  const meta    = overlaySystem ? (SECTION_META[overlaySystem] ?? SECTION_META['etsy_store']) : null
+  const agentKey = overlaySystem === 'etsy_store' ? 'etsy' : 'personal'
+  const agents  = overlaySystem
+    ? (domainConfig?.[agentKey as 'etsy' | 'personal']?.agents ?? FALLBACK_AGENTS[overlaySystem] ?? [])
+    : []
+  const section = meta ? { ...meta, agents } : null
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

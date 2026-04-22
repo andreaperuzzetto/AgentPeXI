@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useEffect, useRef } from 'react'
 import { useStore } from '../../store'
 
 const EMPTY_STEPS: never[] = []
@@ -20,9 +20,42 @@ const STEP_TAG_LABEL: Record<StepType, string> = {
 export function AgentDetailPanel() {
   const selectedAgent    = useStore((s) => s.selectedAgent)
   const setSelectedAgent = useStore((s) => s.setSelectedAgent)
+  const addAgentStep     = useStore((s) => s.addAgentStep)
   const agent = useStore((s) => s.agents[selectedAgent ?? ''])
   const steps = useStore((s) => s.agentSteps[selectedAgent ?? ''] ?? EMPTY_STEPS)
   const reversedSteps = useMemo(() => [...steps].reverse(), [steps])
+
+  // Fetch steps for this agent from backend if store is empty
+  const fetchedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!selectedAgent) return
+    if (steps.length > 0) return                           // già popolato — non ri-fetcha
+    if (fetchedRef.current.has(selectedAgent)) return     // già tentato in questa sessione
+    fetchedRef.current.add(selectedAgent)
+
+    fetch(`/api/agents/steps/recent?limit=100&agent_name=${encodeURIComponent(selectedAgent)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!Array.isArray(data?.steps)) return
+        data.steps.forEach((s: {
+          id: number; task_id: string; agent_name: string;
+          step_number: number; step_type: string; description: string;
+          duration_ms: number; timestamp: string
+        }) => {
+          addAgentStep({
+            id:         String(s.id),
+            agent:      s.agent_name,
+            taskId:     s.task_id,
+            stepNumber: s.step_number,
+            stepType:   s.step_type,
+            description: s.description ?? '',
+            durationMs:  s.duration_ms ?? 0,
+            timestamp:   s.timestamp,
+          })
+        })
+      })
+      .catch(() => {})
+  }, [selectedAgent, steps.length, addAgentStep])
 
   const isVisible = !!selectedAgent
 
@@ -88,11 +121,13 @@ export function AgentDetailPanel() {
       <div className="ad-right">
         <div>
           <div className="ad-metrics-lbl">Metriche</div>
-
           {[
-            { label: 'Status',      value: agent?.status?.toUpperCase() ?? 'IDLE',   accent: agent?.status === 'running' },
-            { label: 'Step totali', value: String(steps.length),                     accent: false },
-            { label: 'Ultimo step', value: steps[steps.length - 1]?.stepType ?? '—', accent: false },
+            {
+              label: 'Status',
+              value: agent?.status?.toUpperCase() ?? 'IDLE',
+              accent: agent?.status === 'running',
+            },
+            { label: 'Step totali', value: String(steps.length), accent: false },
           ].map((row) => (
             <div key={row.label} className="ad-metric-row">
               <span className="ad-metric-lbl">{row.label}</span>
@@ -100,6 +135,49 @@ export function AgentDetailPanel() {
             </div>
           ))}
         </div>
+
+        {/* breakdown per tipo — always shown, empty state when no steps */}
+        {(() => {
+          if (steps.length === 0) {
+            return (
+              <div style={{ marginTop: 20 }}>
+                <div className="ad-metrics-lbl">Breakdown</div>
+                <p className="ad-empty" style={{ marginTop: 10, fontSize: 12 }}>
+                  {fetchedRef.current.has(selectedAgent ?? '')
+                    ? 'Nessun dato — agente non ancora attivo.'
+                    : 'Caricamento…'}
+                </p>
+              </div>
+            )
+          }
+          const counts = { tool: 0, llm: 0, think: 0 }
+          let totalMs = 0
+          for (const s of steps) {
+            const t = stepTypeClass(s.stepType)
+            counts[t]++
+            totalMs += s.durationMs ?? 0
+          }
+          const avgMs = Math.round(totalMs / steps.length)
+          const fmtMs = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
+          const rows = [
+            { label: 'Tool',       value: String(counts.tool),  color: 'var(--acc)' },
+            { label: 'LLM',        value: String(counts.llm),   color: 'var(--wrn)' },
+            { label: 'Think',      value: String(counts.think),  color: '#7eb8ff'    },
+            { label: 'Durata tot', value: fmtMs(totalMs),        color: 'var(--tm)'  },
+            { label: 'Media step', value: fmtMs(avgMs),          color: 'var(--tm)'  },
+          ]
+          return (
+            <div style={{ marginTop: 20 }}>
+              <div className="ad-metrics-lbl">Breakdown</div>
+              {rows.map((r) => (
+                <div key={r.label} className="ad-metric-row">
+                  <span className="ad-metric-lbl">{r.label}</span>
+                  <span className="ad-metric-val" style={{ color: r.color }}>{r.value}</span>
+                </div>
+              ))}
+            </div>
+          )
+        })()}
       </div>
 
     </div>

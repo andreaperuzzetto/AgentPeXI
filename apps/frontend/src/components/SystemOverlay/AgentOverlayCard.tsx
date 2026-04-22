@@ -10,7 +10,7 @@ const AGENT_DESCS: Record<string, string> = {
   analytics: 'Monitoraggio KPI, A/B test, analisi performance e reportistica.',
   finance:   'Gestione costi, margini, budget mensile e reportistica finanziaria.',
   // Personal
-  recall:    'Ricerca nella memoria schermo. Risponde a "cosa stavo guardando?" via Ollama.',
+  recall:    'Ricerca nella memoria schermo. Risponde a domande sul contesto recente via Claude.',
   remind:    'Gestione promemoria e notifiche programmate.',
   summarize: 'Sintesi automatica di documenti, email e contenuti web.',
   research_personal: 'Ricerca web e analisi documenti per uso personale.',
@@ -71,21 +71,24 @@ export function AgentOverlayCard({ agentName, index }: Props) {
           : (AGENT_DESCS[agentName] ?? '')}
       </div>
 
-      {/* last 3 steps preview */}
-      {steps.length > 0 && (
-        <div className="ov-card-steps">
-          {steps.slice(-3).map((step, i) => {
-            const isLatest = i === Math.min(2, steps.length - 1)
-            return (
-              <div key={step.id} className={`ov-card-step${isLatest ? ' latest' : ''}`}>
-                {step.description.length > 52
-                  ? step.description.slice(0, 52) + '…'
-                  : step.description}
-              </div>
-            )
-          })}
-        </div>
-      )}
+      {/* always 3 step slots — placeholder if empty */}
+      <div className="ov-card-steps">
+        {Array.from({ length: 3 }).map((_, i) => {
+          const slice  = steps.slice(-3)
+          const step   = slice[i]
+          const isLast = i === slice.length - 1 && slice.length > 0
+          if (!step) {
+            return <div key={i} className="ov-card-step empty">—</div>
+          }
+          return (
+            <div key={step.id} className={`ov-card-step${isLast ? ' latest' : ''}`}>
+              {step.description.length > 56
+                ? step.description.slice(0, 56) + '…'
+                : step.description}
+            </div>
+          )
+        })}
+      </div>
 
       {/* footer */}
       <div className="ov-card-foot">

@@ -4,17 +4,16 @@ Input:
   {"query": "...", "mode": "quick|deep"}
 
 Pipeline (deep mode):
+0. Cache semantica: query personal_memory (<7 giorni) — risposta diretta se hit
 1. Query decomposition (Ollama caveman) → 2-3 sub-query
 2. DuckDuckGo search per ogni sub-query (max 5 risultati ciascuna)
 3. Estrazione testo da URL rilevanti (TextExtractor)
 4. CRAG grading: filtra chunk non rilevanti
 5. Sintesi Perplexity-style (Claude Haiku): sezioni numerate + citazioni [N]
-6. Ritorna risposta + sources
+6. Salvataggio personal_memory (sostituisce pepe_memory — dati personali separati)
+7. Aggiornamento personal_learning
 
-Pipeline (quick mode):
-1. Singola query DuckDuckGo (8 risultati)
-2. Usa solo snippet (no estrazione full-page)
-3. Sintesi diretta Haiku
+Pipeline (quick mode): stessa Step 0 cache, poi ricerca singola + snippets.
 
 Privacy: DuckDuckGo, nessun tracking, mai Tavily (riservato a Etsy).
 Fail-safe: ogni step ritorna risultato parziale se fallisce — mai crash totale.
@@ -85,6 +84,9 @@ _QUICK_SYNTHESIS_SYSTEM = (
 # Massimo URL da cui estrarre il full-text per query
 _MAX_URLS_TO_FETCH = 3
 _MAX_CHARS_PER_URL = 5_000
+
+# Cache semantica: entro questa finestra una ricerca identica torna dalla personal_memory
+_CACHE_FRESH_DAYS = 7
 
 
 def _voice_summary(synthesis: str, max_chars: int = 300) -> str:
@@ -159,6 +161,31 @@ class ResearchPersonalAgent(AgentBase):
         if not query:
             return self._fail("Parametro 'query' mancante")
 
+        # ── Step 0: cache semantica personal_memory ──────────────────
+        # Se esiste una sintesi recente (<_CACHE_FRESH_DAYS) sullo stesso topic,
+        # la ritorna direttamente — zero web search, zero costo LLM.
+        await self._log_step("cache_check", f"Cache personal_memory: '{query[:50]}'")
+        cached = await self._check_personal_cache(query)
+        if cached:
+            await self._notify_telegram(
+                f"🔍 [Cache] {query}\n{'─' * 28}\n{cached['synthesis']}"
+            )
+            return AgentResult(
+                task_id=task.task_id,
+                agent_name=self.name,
+                status=TaskStatus.COMPLETED,
+                output_data={
+                    "response":    cached["synthesis"],
+                    "sources":     [{"url": u} for u in cached.get("sources", [])],
+                    "query":       query,
+                    "depth":       depth,
+                    "confidence":  0.80,
+                    "cache_hit":   True,
+                    "cached_date": cached["date"],
+                },
+                reply_voice=_voice_summary(cached["synthesis"]),
+            )
+
         if depth == "deep":
             return await self._deep_search(query, task.task_id)
         else:
@@ -178,10 +205,11 @@ class ResearchPersonalAgent(AgentBase):
 
         await self._log_step("synthesize", f"Sintesi su {len(results)} risultati")
         context = self._format_snippets(results)
-        synthesis = await self._synthesize_quick(query, context, results)
+        shared_ctx = await self._read_shared_context(query)
+        synthesis = await self._synthesize_quick(query, context, results, shared_context=shared_ctx)
 
-        # Step 6 — salvataggio pepe_memory
-        await self._save_to_memory(query, synthesis, "quick", results[:5])
+        # Step 6 — salvataggio personal_memory
+        await self._save_to_personal_memory(query, synthesis, "quick", results[:5])
 
         # Step 7 — personal_learning
         await self._update_learning(query)
@@ -262,15 +290,16 @@ class ResearchPersonalAgent(AgentBase):
 
         # ── Step 5: sintesi Perplexity-style ─────────────────────────
         await self._log_step("synthesize", f"Sintesi strutturata su {len(relevant)} fonti")
-        synthesis = await self._synthesize_perplexity(query, relevant)
+        shared_ctx = await self._read_shared_context(query)
+        synthesis = await self._synthesize_perplexity(query, relevant, shared_context=shared_ctx)
 
         sources = [
             {"title": r.get("title", ""), "url": r.get("url", "")}
             for r in relevant[:8]
         ]
 
-        # Step 6 — salvataggio pepe_memory
-        await self._save_to_memory(query, synthesis, "deep", relevant[:8])
+        # Step 6 — salvataggio personal_memory
+        await self._save_to_personal_memory(query, synthesis, "deep", relevant[:8])
 
         # Step 7 — personal_learning
         await self._update_learning(query)
@@ -378,7 +407,9 @@ class ResearchPersonalAgent(AgentBase):
     # Sintesi
     # ------------------------------------------------------------------
 
-    async def _synthesize_perplexity(self, query: str, sources: list[dict]) -> str:
+    async def _synthesize_perplexity(
+        self, query: str, sources: list[dict], shared_context: str = ""
+    ) -> str:
         """Sintesi strutturata Perplexity-style con Claude Haiku."""
         # Costruisce contesto numerato per le citazioni
         context_parts = []
@@ -391,7 +422,7 @@ class ResearchPersonalAgent(AgentBase):
 
         messages = [{
             "role": "user",
-            "content": f"Domanda: {query}\n\nFonti:\n\n{context}",
+            "content": f"Domanda: {query}\n\nFonti:\n\n{context}{shared_context}",
         }]
         try:
             return await self._call_llm(
@@ -410,12 +441,12 @@ class ResearchPersonalAgent(AgentBase):
             )
 
     async def _synthesize_quick(
-        self, query: str, context: str, results: list[dict]
+        self, query: str, context: str, results: list[dict], shared_context: str = ""
     ) -> str:
         """Sintesi rapida su snippet per quick mode."""
         messages = [{
             "role": "user",
-            "content": f"Domanda: {query}\n\nRisultati:\n\n{context}",
+            "content": f"Domanda: {query}\n\nRisultati:\n\n{context}{shared_context}",
         }]
         try:
             return await self._call_llm(
@@ -468,25 +499,94 @@ class ResearchPersonalAgent(AgentBase):
             logger.debug("_check_stop_condition fallito (fail-open): %s", exc)
         return None  # YES o errore → procede
 
-    async def _save_to_memory(
+    async def _read_shared_context(self, query: str) -> str:
+        """Legge insight cross-domain da shared_memory.
+
+        Ritorna una stringa da iniettare nel prompt LLM, vuota se non ci sono dati.
+        """
+        try:
+            docs = await self.memory.query_shared_memory(
+                query=query,
+                n_results=2,
+                agent="research_personal",
+            )
+            if not docs:
+                return ""
+            lines = ["## Connessioni cross-domain rilevate (Etsy ↔ Personale)"]
+            for doc in docs:
+                text = doc.get("document", "").strip()
+                if text:
+                    lines.append(f"- {text[:200]}")
+            return "\n" + "\n".join(lines) if len(lines) > 1 else ""
+        except Exception:
+            return ""
+
+    async def _check_personal_cache(self, query: str) -> dict | None:
+        """Step 0 — cerca una ricerca recente (<_CACHE_FRESH_DAYS) in personal_memory.
+
+        Ritorna dict {'synthesis', 'sources', 'date'} se trovata, None altrimenti.
+        Fail-open: qualsiasi errore → None (procede con la web search).
+        """
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        cutoff = (_dt.now(_tz.utc) - _td(days=_CACHE_FRESH_DAYS)).strftime("%Y-%m-%d")
+        try:
+            results = await self.memory.query_personal_memory(
+                query=query,
+                n_results=1,
+                where={"$and": [
+                    {"tag":  {"$eq": "research_personal"}},
+                    {"date": {"$gte": cutoff}},
+                ]},
+                agent="research_personal",
+            )
+            if not results:
+                return None
+            best = results[0]
+            meta = best.get("metadata", {})
+            synthesis = best.get("document", "").strip()
+            if not synthesis:
+                return None
+            logger.debug(
+                "Cache hit personal_memory per query '%s' (data: %s)",
+                query[:50], meta.get("date", "?"),
+            )
+            return {
+                "synthesis": synthesis,
+                "sources":   meta.get("sources", []),
+                "date":      meta.get("date", ""),
+            }
+        except Exception as exc:
+            logger.debug("_check_personal_cache fallito (fail-open): %s", exc)
+            return None
+
+    async def _save_to_personal_memory(
         self, query: str, synthesis: str, depth: str, sources: list[dict]
     ) -> None:
-        """Step 6 — salva la sintesi in pepe_memory ChromaDB."""
-        from datetime import datetime as _dt
+        """Step 6 — salva la sintesi in personal_memory (non pepe_memory).
+
+        Dati personali separati da Etsy. Metadata arricchiti per cache hit e
+        per query_personal_memory_recent() con filtro temporale.
+        """
+        from datetime import datetime as _dt, timezone as _tz
         try:
-            await self.memory.store_insight(
+            now = _dt.now(_tz.utc)
+            await self.memory.store_personal_insight(
                 synthesis,
                 metadata={
-                    "query": query,
-                    "tag": "research_personal",
-                    "depth": depth,
-                    "sources": [r.get("url", "") for r in sources if r.get("url")],
-                    "date": _dt.utcnow().strftime("%Y-%m-%d"),
-                    "created_at": _dt.utcnow().isoformat(),
+                    "query":        query[:200],
+                    "tag":          "research_personal",
+                    "depth":        depth,
+                    "domain":       "personal",
+                    "source_count": len(sources),
+                    "sources":      [r.get("url", "") for r in sources if r.get("url")],
+                    "agent":        "research_personal",
+                    "date":         now.strftime("%Y-%m-%d"),
+                    "created_at":   now.isoformat(),
+                    "confidence":   0.85,
                 },
             )
         except Exception as exc:
-            logger.debug("_save_to_memory fallito (fail-safe): %s", exc)
+            logger.debug("_save_to_personal_memory fallito (fail-safe): %s", exc)
 
     async def _update_learning(self, query: str) -> None:
         """Step 7 — aggiorna personal_learning con il topic della query."""

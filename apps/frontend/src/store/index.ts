@@ -122,6 +122,17 @@ interface AgentPeXIStore {
   /* Active domain */
   activeDomain: 'etsy' | 'personal'
   setActiveDomain: (domain: 'etsy' | 'personal') => void
+
+  /* Domain config — fetched from /api/domains/config */
+  domainConfig: {
+    etsy:     { name: string; agents: string[] }
+    personal: { name: string; agents: string[] }
+  } | null
+  setDomainConfig: (cfg: { etsy: { name: string; agents: string[] }; personal: { name: string; agents: string[] } }) => void
+
+  /* Neural brain — last memory_query WS event (live node activation) */
+  lastMemoryQuery: { agent: string; collection: string; ids: string[]; ts: number } | null
+  setLastMemoryQuery: (q: { agent: string; collection: string; ids: string[]; ts: number }) => void
 }
 
 export const useStore = create<AgentPeXIStore>((set) => ({
@@ -220,4 +231,10 @@ export const useStore = create<AgentPeXIStore>((set) => ({
 
   activeDomain: 'personal',
   setActiveDomain: (domain) => set({ activeDomain: domain }),
+
+  domainConfig: null,
+  setDomainConfig: (cfg) => set({ domainConfig: cfg }),
+
+  lastMemoryQuery: null,
+  setLastMemoryQuery: (q) => set({ lastMemoryQuery: q }),
 }))

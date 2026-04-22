@@ -1,0 +1,287 @@
+/* ══════════════════════════════════════════════════════
+   NeuralBrain — Canvas + NodeDrawer styles
+   Background: solid black (#000)
+   All positioned relative to .orb-zone (position:relative)
+══════════════════════════════════════════════════════ */
+
+/* ── Container — fills orb-zone ── */
+.neural-brain {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  /* dot-grid background behind canvas removed in favour of pure black */
+}
+
+/* ── Canvas — interactive, full size ── */
+.nb-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.nb-canvas:active { cursor: grabbing; }
+
+/* ══════════════════════════════════════════════════════
+   NODE DRAWER — slides from right, can overlap graph
+══════════════════════════════════════════════════════ */
+.nb-drawer {
+  position: absolute;
+  top: 0; right: 0;
+  height: 100%;
+  width: 480px;
+  max-width: 92%;
+  background: var(--s1);           /* #0A100A — matches app panels/drawers */
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border-left: 1px solid rgba(27, 255, 94, 0.10);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  animation: nb-slide-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  box-shadow: -8px 0 40px rgba(0, 0, 0, 0.45), -1px 0 0 rgba(27, 255, 94, 0.04);
+}
+
+@keyframes nb-slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ── Drawer header ── */
+.nb-drawer-head {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: var(--s2);           /* slightly elevated vs panel */
+  border-bottom: 1px solid rgba(27, 255, 94, 0.08);
+}
+
+.nb-drawer-zone {
+  font-family: var(--fmo);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 3px;
+  border: 1px solid;
+  flex-shrink: 0;
+}
+
+.nb-drawer-label {
+  font-family: var(--fmo);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--tm);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nb-drawer-close {
+  font-family: var(--fmo);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--tf);
+  padding: 4px 8px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.nb-drawer-close:hover { color: var(--tm); background: rgba(255,255,255,.04); }
+
+/* ── Body split ── */
+.nb-drawer-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Left 44% — access history + connections */
+.nb-drawer-left {
+  width: 44%;
+  flex-shrink: 0;
+  border-right: 1px solid rgba(27, 255, 94, 0.07);
+  background: rgba(10, 16, 10, 0.4);   /* s1 tint */
+  display: flex;
+  flex-direction: column;
+  padding: 12px 11px;
+  overflow: hidden;
+  gap: 5px;
+}
+
+/* Right 56% — document content + metadata */
+.nb-drawer-right {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(27, 255, 94, 0.1) transparent;
+  min-height: 0;
+}
+
+/* ── Section label ── */
+.nb-section-lbl {
+  font-family: var(--fmo);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--tf);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nb-coll-badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(27, 255, 94, 0.45);
+  margin-left: auto;
+  letter-spacing: 0.06em;
+}
+
+/* ── Scroll area (access history) ── */
+.nb-drawer-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(27, 255, 94, 0.08) transparent;
+  min-height: 0;
+}
+
+/* ── Access row ── */
+.nb-access-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--s2);           /* #0F170F — matches card surfaces */
+  border: 1px solid rgba(27, 255, 94, 0.07);
+  transition: border-color 0.15s, background 0.15s;
+}
+.nb-access-row:hover {
+  border-color: rgba(27, 255, 94, 0.14);
+  background: var(--s3);
+}
+
+.nb-access-agent {
+  font-family: var(--fmo);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(27, 255, 94, 0.60);
+}
+.nb-access-query {
+  font-family: var(--fmo);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tm);
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.nb-access-ts {
+  font-family: var(--fmo);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--tf);
+  opacity: 0.7;
+}
+
+/* ── Connection chips ── */
+.nb-chip-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.nb-chip {
+  font-family: var(--fmo);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ── Placeholder / loading ── */
+.nb-placeholder {
+  font-family: var(--fmo);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tf);
+  opacity: 0.45;
+  text-align: center;
+  padding-top: 14px;
+  font-style: italic;
+}
+
+/* ── Document text ── */
+.nb-doc {
+  font-family: var(--fmo);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tm);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+}
+
+/* ── Metadata block ── */
+.nb-meta-block {
+  border-top: 1px solid rgba(27, 255, 94, 0.08);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.nb-meta-row {
+  display: flex;
+  gap: 10px;
+  font-family: var(--fmo);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.nb-meta-key {
+  color: var(--tf);
+  flex-shrink: 0;
+  min-width: 64px;
+  text-transform: lowercase;
+}
+
+.nb-meta-val {
+  color: var(--tm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

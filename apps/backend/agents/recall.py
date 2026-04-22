@@ -2,14 +2,15 @@
 
 Input: {"query": "...", "time_from": "ISO8601|null", "time_to": "ISO8601|null", "context": "..."}
 
-Pipeline (v2):
-1. Multi-source search: screen_memory (15) + pepe_memory (5)
+Pipeline (v3):
+1. Multi-source search: screen_memory (15) + pepe_memory (5) + personal_memory (3)
 2. CRAG grading: ogni chunk classificato RELEVANT/IRRELEVANT via Ollama caveman
    → se < 3 rilevanti: query rewrite + retry (una volta sola)
 3. Sintesi Ollama con contesto filtrato
 4. Autonomous RAG stop: Ollama valuta se la risposta è completa
    → se NO: ricerca supplementare mirata + sintesi integrata
-5. Ritorna risposta + sorgenti + metadata
+5. Store sintesi in personal_memory (chiude il loop di apprendimento)
+6. Ritorna risposta + sorgenti + metadata
 
 Privacy totale: nessun dato schermo esce dal Mac.
 """
@@ -166,7 +167,13 @@ class RecallAgent(AgentBase):
                 synthesis = await self._synthesize_integrated(query, context, supp_ctx, synthesis)
                 relevant.extend(supp_rel)
 
-        # ── Step 5: output ───────────────────────────────────────────
+        confidence = min(0.95, 0.5 + len(relevant) * 0.03)
+
+        # ── Step 5: store sintesi in personal_memory ─────────────────
+        await self._log_step("store_memory", "Salvataggio sintesi in personal_memory")
+        await self._store_recall_insight(query, synthesis, relevant, round(confidence, 2))
+
+        # ── Step 6: output ───────────────────────────────────────────
         sources = [
             {
                 "app": app,
@@ -176,8 +183,6 @@ class RecallAgent(AgentBase):
             }
             for app, chunks_ in self._group_by_app(relevant).items()
         ]
-
-        confidence = min(0.95, 0.5 + len(relevant) * 0.03)
 
         # Estrai la prima frase della sintesi per la risposta vocale
         _first_sentence = (synthesis.split(".")[0].strip() + ".") if synthesis else ""
@@ -196,6 +201,7 @@ class RecallAgent(AgentBase):
                 "query": query,
                 "results_found": len(relevant),
                 "confidence": round(confidence, 2),
+                "suggested_research": [],  # placeholder — Phase 3 popola questo campo
             },
             reply_voice=_reply_voice,
         )
@@ -210,11 +216,17 @@ class RecallAgent(AgentBase):
         where: dict | None,
         n_screen: int = 15,
         n_pepe: int = 5,
+        n_personal: int = 3,
     ) -> list[dict]:
-        """Cerca su screen_memory e pepe_memory, unisce i risultati."""
+        """Cerca su screen_memory, pepe_memory e personal_memory, unisce i risultati.
+
+        personal_memory contiene le sintesi dei recall precedenti — permette al
+        loop di apprendimento di arricchire ogni nuova risposta con il contesto
+        già sintetizzato in passato sulla stessa query.
+        """
         results: list[dict] = []
 
-        # Screen memory (privacy locale)
+        # Screen memory (privacy locale — OCR watcher)
         try:
             screen = await self.memory.search_screen_memory(
                 query=query, n_results=n_screen, where=where
@@ -225,7 +237,7 @@ class RecallAgent(AgentBase):
         except Exception as exc:
             logger.warning("search_screen_memory fallita: %s", exc)
 
-        # Pepe memory (insights/note generali)
+        # Pepe memory (insights/note generali Etsy + generici)
         try:
             pepe_res = await self.memory.query_insights(query, n_results=n_pepe)
             for r in (pepe_res or []):
@@ -234,6 +246,18 @@ class RecallAgent(AgentBase):
             results.extend(pepe_res or [])
         except Exception as exc:
             logger.warning("query_insights fallita: %s", exc)
+
+        # Personal memory — sintesi recall precedenti (loop di apprendimento)
+        try:
+            personal_res = await self.memory.query_personal_memory(
+                query=query, n_results=n_personal, agent="recall"
+            )
+            for r in (personal_res or []):
+                r.setdefault("metadata", {})["source_type"] = "recall_synthesis"
+                r.setdefault("metadata", {}).setdefault("app_name", "Memoria Personale")
+            results.extend(personal_res or [])
+        except Exception as exc:
+            logger.warning("query_personal_memory fallita: %s", exc)
 
         return results
 
@@ -362,6 +386,47 @@ class RecallAgent(AgentBase):
         except Exception as exc:
             logger.error("Sintesi integrata Recall fallita: %s", exc)
             return draft_answer   # fallback: risposta parziale è meglio di niente
+
+    # ------------------------------------------------------------------
+    # Learning loop helper
+    # ------------------------------------------------------------------
+
+    async def _store_recall_insight(
+        self,
+        query: str,
+        synthesis: str,
+        relevant: list[dict],
+        confidence: float,
+    ) -> None:
+        """Salva la sintesi finale in personal_memory per chiudere il loop.
+
+        Ogni esecuzione di recall arricchisce personal_memory con la propria
+        risposta sintetizzata. Le esecuzioni successive troveranno questo
+        contenuto tramite _multi_search() → query_personal_memory(), rendendo
+        il sistema progressivamente più capace su topic già esplorati.
+
+        Fail-safe: qualsiasi errore viene silenziosamente loggato — non deve
+        mai bloccare la risposta all'utente.
+        """
+        if not synthesis or not synthesis.strip():
+            return
+        from datetime import datetime as _dt, timezone as _tz
+        try:
+            now = _dt.now(_tz.utc)
+            await self.memory.store_personal_insight(
+                synthesis,
+                metadata={
+                    "type":         "recall_synthesis",
+                    "query":        query[:200],
+                    "source_count": len(relevant),
+                    "agent":        "recall",
+                    "date":         now.strftime("%Y-%m-%d"),
+                    "created_at":   now.isoformat(),
+                    "confidence":   confidence,
+                },
+            )
+        except Exception as exc:
+            logger.debug("_store_recall_insight fallito (fail-safe): %s", exc)
 
     # ------------------------------------------------------------------
     # Helpers statici

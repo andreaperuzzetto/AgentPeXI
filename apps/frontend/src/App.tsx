@@ -2,6 +2,7 @@ import { useEffect, useState, Component, type ReactNode, type ErrorInfo } from '
 import { useShallow } from 'zustand/react/shallow'
 import { Header } from './components/Header'
 import { PepeOrb } from './components/PepeOrb/PepeOrb'
+import { NeuralBrain } from './components/NeuralBrain/NeuralBrain'
 import { PersonalQuickCard } from './components/PersonalQuickCard/PersonalQuickCard'
 import { AnalyticsMiniPanel } from './components/AnalyticsMini/AnalyticsMiniPanel'
 import { DomainCard } from './components/DomainCard/DomainCard'
@@ -36,15 +37,24 @@ export default function App() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
   const [contextOpen,   setContextOpen]   = useState(false)
   const [drawerOpen,    setDrawerOpen]    = useState(false)
-  const { setCostsData, addAgentStep, setAnalyticsSummary, setChromaStats } = useStore(
+  const { setCostsData, addAgentStep, setAnalyticsSummary, setChromaStats, setDomainConfig } = useStore(
     useShallow((s) => ({
       setCostsData:        s.setCostsData,
       addAgentStep:        s.addAgentStep,
       setAnalyticsSummary: s.setAnalyticsSummary,
       setChromaStats:      s.setChromaStats,
+      setDomainConfig:     s.setDomainConfig,
     }))
   )
   useWebSocket()
+
+  /* ── Fetch domain config on mount ── */
+  useEffect(() => {
+    fetch('/api/domains/config')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data?.etsy && data?.personal) setDomainConfig(data) })
+      .catch(() => {})
+  }, [setDomainConfig])
 
   /* ── Hydrate agent steps on mount ── */
   useEffect(() => {
@@ -157,8 +167,15 @@ export default function App() {
           {/* ── Main: orb-zone (1fr) ── */}
           <main className="main">
             <div className="orb-zone">
-              <PepeOrb />
+              {/* PepeOrb: voice WebSocket handler — DOM hidden, JS logic runs */}
+              <div style={{ display: 'none' }} aria-hidden="true">
+                <PepeOrb />
+              </div>
+              {/* Neural brain: Canvas 2D graph + particle orb + node drawer */}
+              <NeuralBrain />
+              {/* Step cards float above canvas — no pointer-events on graph */}
               <StepCards hidden={drawerOpen} />
+              {/* Step drawer can overlap graph (per spec) */}
               <StepDrawer open={drawerOpen} onToggle={() => setDrawerOpen((v) => !v)} />
               <VoiceNotificationStack />
             </div>

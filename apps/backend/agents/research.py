@@ -244,6 +244,29 @@ class ResearchAgent(AgentBase):
 
         return "\n\n## Contesto finanziario (Finance Agent)\n" + "\n".join(lines)
 
+    async def _read_shared_context(self, query: str) -> str:
+        """Legge insight cross-domain da shared_memory.
+
+        Ritorna una stringa pronta per l'iniezione nel prompt LLM.
+        Stringa vuota se shared_memory è vuota o non disponibile (cold-start safe).
+        """
+        try:
+            docs = await self.memory.query_shared_memory(
+                query=query,
+                n_results=2,
+                agent="research",
+            )
+            if not docs:
+                return ""
+            lines = ["## Insight cross-domain (Personal ↔ Etsy)"]
+            for doc in docs:
+                text = doc.get("document", "").strip()
+                if text:
+                    lines.append(f"- {text[:200]}")
+            return "\n".join(lines) if len(lines) > 1 else ""
+        except Exception:
+            return ""
+
     @staticmethod
     def _sanitize_prompt_input(value: str, max_len: int = 300) -> str:
         """Sanifica input utente prima dell'inserimento in un prompt LLM.
@@ -330,6 +353,9 @@ class ResearchAgent(AgentBase):
         # Step 0b — Contesto finanziario da Finance Agent
         finance_text = await self._read_finance_context(query)
 
+        # Step 0c — Insight cross-domain da shared_memory (Personal ↔ Etsy)
+        shared_text = await self._read_shared_context(query)
+
         # Step 1 — Ricerca parallela (4 chiamate)
         search_results, competitor_results, keyword_results, trend_data = await asyncio.gather(
             self._call_tool(
@@ -383,7 +409,8 @@ class ResearchAgent(AgentBase):
                     f"## Dati keyword SEO\n{json.dumps(keyword_results, indent=2, default=str)}\n\n"
                     f"## Google Trends\n{json.dumps(trend_data, indent=2, default=str)}"
                     f"{failure_text}"
-                    f"{finance_text}\n\n"
+                    f"{finance_text}"
+                    f"{shared_text}\n\n"
                     f"## Qualità dati disponibili\n{json.dumps(data_sources, indent=2)}\n"
                     f"Per i campi dove la fonte è 'llm_inference', indica uncertainty nella "
                     f"confidence e compila il campo con la migliore stima disponibile ma "
@@ -503,6 +530,9 @@ class ResearchAgent(AgentBase):
         # Step 0c — Contesto finanziario da Finance Agent
         finance_text = await self._read_finance_context(niche)
 
+        # Step 0d — Insight cross-domain da shared_memory (Personal ↔ Etsy)
+        shared_text = await self._read_shared_context(niche)
+
         if use_cache and cached_data:
             # Solo Google Trends fresco
             trend_data = await self._call_tool(
@@ -527,7 +557,8 @@ class ResearchAgent(AgentBase):
                         f"## Dati cache (< 7 giorni)\n{cached_data['document']}\n\n"
                         f"## Google Trends aggiornato\n{json.dumps(trend_data, indent=2, default=str)}"
                         f"{failure_text}"
-                        f"{finance_text}\n\n"
+                        f"{finance_text}"
+                        f"{shared_text}\n\n"
                         f"## Qualità dati disponibili\n{json.dumps(data_sources, indent=2)}\n\n"
                         f"Produci un report JSON completo seguendo la struttura indicata nel system prompt."
                     ),
@@ -589,7 +620,8 @@ class ResearchAgent(AgentBase):
                         f"## Dati keyword SEO\n{json.dumps(keyword_results, indent=2, default=str)}\n\n"
                         f"## Google Trends\n{json.dumps(trend_data, indent=2, default=str)}"
                         f"{failure_text}"
-                        f"{finance_text}\n\n"
+                        f"{finance_text}"
+                        f"{shared_text}\n\n"
                         f"## Qualità dati disponibili\n{json.dumps(data_sources, indent=2)}\n"
                         f"Per i campi dove la fonte è 'llm_inference', indica uncertainty nella "
                         f"confidence e compila il campo con la migliore stima disponibile ma "

@@ -99,6 +99,15 @@ function handleMessage(raw: MessageEvent) {
       }
       break
 
+    case 'memory_query':
+      store.setLastMemoryQuery({
+        agent:      data.agent,
+        collection: data.collection,
+        ids:        data.ids,
+        ts:         Date.now(),
+      })
+      break
+
     default:
       break
   }
