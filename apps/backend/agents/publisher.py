@@ -409,7 +409,10 @@ class PublisherAgent(AgentBase):
             "4. Tags: usa ESATTAMENTE la lista fornita, non modificare\n"
             "5. Nessun claim falso (no \"best seller\", \"award winning\")\n"
             "6. Sempre in inglese\n"
-            '7. Rispondi SOLO con JSON valido: {"title": "...", "description": "...", "tags": [...]}\n'
+            "7. AI DISCLOSURE OBBLIGATORIA (policy Etsy 2024): includi nella description, "
+            "PRIMA dei bullet points, esattamente questa frase: "
+            "\"This design was created with the assistance of artificial intelligence.\"\n"
+            '8. Rispondi SOLO con JSON valido: {"title": "...", "description": "...", "tags": [...]}\n'
         )
 
     async def _generate_seo(
@@ -521,14 +524,25 @@ class PublisherAgent(AgentBase):
             issues.append("description senza bullet points")
             seo_validated = False
 
-        # Description length
-        if len(description) < 150:
-            issues.append(f"description troppo corta ({len(description)} chars, min 150)")
+        # Description length — il prompt richiede 150-300 parole, validazione coerente
+        desc_word_count = len(description.split())
+        if desc_word_count < 150:
+            issues.append(f"description troppo corta ({desc_word_count} parole, min 150)")
             seo_validated = False
+        elif desc_word_count > 300:
+            issues.append(f"description troppo lunga ({desc_word_count} parole, max 300)")
 
         # Tags — override con Research se disponibili
         if etsy_tags_13:
-            data["tags"] = etsy_tags_13
+            # Validazione: Etsy accetta max 13 tag, ognuno max 20 chars
+            sanitized = [str(t)[:20] for t in etsy_tags_13[:13]]
+            if len(sanitized) != 13:
+                issues.append(f"Research ha fornito {len(sanitized)} tag invece di 13 — slot Etsy non sfruttati")
+                seo_validated = False
+            long_tags = [t for t in etsy_tags_13 if len(str(t)) > 20]
+            if long_tags:
+                issues.append(f"{len(long_tags)} tag troncati a 20 chars: {long_tags[:3]}")
+            data["tags"] = sanitized
         else:
             if len(tags) < 10:
                 issues.append(f"solo {len(tags)} tag (min 10)")
@@ -615,7 +629,20 @@ class PublisherAgent(AgentBase):
     # ------------------------------------------------------------------
 
     def _resolve_price(self, file_type: str, research_data: dict, variant: str = "a") -> float:
-        """Usa il prezzo da Research se disponibile, fallback su AB_PRICES."""
+        """Usa il prezzo da Research se disponibile, fallback su AB_PRICES.
+
+        ATTENZIONE: il valore restituito è in ETSY_SHOP_CURRENCY (default EUR).
+        AB_PRICES e le conversioni USD→EUR assumono che il tuo shop Etsy sia in EUR.
+        Se ETSY_SHOP_CURRENCY != "EUR", i prezzi hardcoded e il rate di conversione
+        devono essere ricalibrati.
+        """
+        if settings.ETSY_SHOP_CURRENCY != "EUR":
+            logger.warning(
+                "ETSY_SHOP_CURRENCY='%s' ma i prezzi sono calibrati in EUR. "
+                "Verificare AB_PRICES e il rate di conversione USD→EUR in config.",
+                settings.ETSY_SHOP_CURRENCY,
+            )
+
         pricing = research_data.get("pricing", {})
 
         if variant.lower() == "a" and pricing.get("launch_price_usd"):
@@ -625,7 +652,7 @@ class PublisherAgent(AgentBase):
             usd = float(pricing["mature_price_usd"])
             return round(usd * settings.USD_EUR_RATE, 2)
 
-        # Fallback su AB_PRICES
+        # Fallback su AB_PRICES (valori in EUR)
         ab_key = variant.upper()
         prices = AB_PRICES.get(file_type, AB_PRICES["printable_pdf"])
         return prices.get(ab_key, prices["A"])
@@ -784,11 +811,16 @@ class PublisherAgent(AgentBase):
     # ------------------------------------------------------------------
 
     def _get_when_made(self) -> str:
-        """Ritorna range 'when_made' valido per Etsy includendo l'anno corrente."""
-        current_year = datetime.datetime.now().year
-        decade_start = (current_year // 5) * 5
-        decade_end = decade_start + 5
-        return f"{decade_start}_{min(decade_end, current_year)}"
+        """Ritorna valore 'when_made' valido per l'API Etsy.
+
+        Prodotti digitali generati da AI → 'made_to_order' è semanticamente corretto
+        e sempre valido indipendentemente dall'anno.
+
+        Enum accettati da spec ufficiale (OAS 3.0):
+            made_to_order, 2020_2026, 2010_2019, 2007_2009, before_2007, ...
+        NON esistono range arbitrari tipo '2025_2026' — causerebbero HTTP 400.
+        """
+        return "made_to_order"
 
     # ------------------------------------------------------------------
     # Contesto stagionale

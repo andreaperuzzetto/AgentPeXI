@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     MAX_PARALLEL_TASKS: int = 5
     COST_ALERT_THRESHOLD_EUR: float = 70.0
     USD_EUR_RATE: float = 0.92         # tasso di cambio USD→EUR, sovrascrivibile via .env
+    # IMPORTANTE: deve corrispondere alla valuta impostata nel tuo Etsy Shop.
+    # I prezzi inviati all'API Etsy (create_listing) sono in questa valuta.
+    # Se il tuo shop è in USD, i prezzi hardcoded e le conversioni Research vanno ricalibrati.
+    ETSY_SHOP_CURRENCY: str = "EUR"
 
     # Prezzi LLM Anthropic (USD per milione di token) — aggiornare quando Anthropic cambia listino
     LLM_SONNET_INPUT_PRICE: float = 3.0     # $3/M input token
