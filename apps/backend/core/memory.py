@@ -2232,6 +2232,45 @@ class MemoryManager:
         except Exception as exc:
             return {"available": False, "count": 0, "error": str(exc)}
 
+    async def delete_stale_shared_memory(self, older_than_days: int = 90) -> int:
+        """Elimina dalla shared_memory gli insight cross-domain più vecchi di N giorni.
+
+        Usato dal job settimanale `shared_memory_decay` per evitare che insight
+        obsoleti (generati da pattern Etsy/Personal non più attuali) inquinino
+        il contesto cross-domain degli agenti.
+
+        Il filtro è sul campo `date` (YYYY-MM-DD) scritto da KnowledgeBridge.
+        Usa `$lt` su stringa ISO — funziona perché il formato è ordinabile lexicograficamente.
+
+        Returns il numero di documenti eliminati (0 se collection vuota o errore).
+        """
+        if self._shared_memory_collection is None:
+            return 0
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        cutoff = (_dt.now(_tz.utc) - _td(days=older_than_days)).strftime("%Y-%m-%d")
+        try:
+            results = await asyncio.to_thread(
+                lambda: self._shared_memory_collection.get(
+                    where={"date": {"$lt": cutoff}},
+                    include=[],
+                )
+            )
+            ids_to_delete = results.get("ids", [])
+            if not ids_to_delete:
+                return 0
+            await asyncio.to_thread(
+                self._shared_memory_collection.delete,
+                ids=ids_to_delete,
+            )
+            logger.info(
+                "shared_memory decay: eliminati %d insight anteriori al %s",
+                len(ids_to_delete), cutoff,
+            )
+            return len(ids_to_delete)
+        except Exception as exc:
+            logger.warning("delete_stale_shared_memory fallito: %s", exc)
+            return 0
+
     # ------------------------------------------------------------------
     # Query pubbliche esposte da main.py
     # ------------------------------------------------------------------
@@ -2485,6 +2524,7 @@ class MemoryManager:
 
     _WEIGHT_MIN = 0.1
     _WEIGHT_MAX = 0.9
+    _ACCEPTANCE_THRESHOLD = 0.02  # |weight_delta| minimo per modificare il peso
 
     async def upsert_learning(
         self,
@@ -2495,7 +2535,19 @@ class MemoryManager:
         weight_delta: float,
     ) -> None:
         """INSERT OR UPDATE con UNIQUE(agent, pattern_type, pattern_value).
-        Weight clampato a [0.1, 0.9]. Aggiorna occurrences e last_seen."""
+
+        Weight clampato a [_WEIGHT_MIN, _WEIGHT_MAX].
+
+        Gate di accettazione (UPDATE path only):
+        se |weight_delta| < _ACCEPTANCE_THRESHOLD il peso non viene modificato —
+        il segnale è troppo debole per essere considerato apprendimento reale.
+        occurrences e last_seen vengono sempre aggiornati (il pattern è stato visto).
+        Ogni valutazione (accettata o no) viene registrata in learning_evaluations
+        tramite save_learning_evaluation(), per permettere analisi future
+        via get_pattern_acceptance_rate().
+
+        INSERT path: sempre accettato — nessuna baseline disponibile alla prima osservazione.
+        """
         async with self._db.execute(
             "SELECT id, weight, occurrences FROM personal_learning WHERE agent=? AND pattern_type=? AND pattern_value=?",
             (agent, pattern_type, pattern_value),
@@ -2503,14 +2555,42 @@ class MemoryManager:
             row = await cur.fetchone()
 
         if row:
+            accepted = abs(weight_delta) >= self._ACCEPTANCE_THRESHOLD
             new_weight = max(self._WEIGHT_MIN, min(self._WEIGHT_MAX, row["weight"] + weight_delta))
-            await self._db.execute(
-                """UPDATE personal_learning
-                   SET weight=?, occurrences=?, last_seen=datetime('now'), signal_type=?
-                   WHERE id=?""",
-                (new_weight, row["occurrences"] + 1, signal_type, row["id"]),
-            )
+
+            if accepted:
+                await self._db.execute(
+                    """UPDATE personal_learning
+                       SET weight=?, occurrences=?, last_seen=datetime('now'), signal_type=?
+                       WHERE id=?""",
+                    (new_weight, row["occurrences"] + 1, signal_type, row["id"]),
+                )
+            else:
+                # Segnale troppo debole: aggiorna occurrences e last_seen, peso invariato
+                new_weight = row["weight"]
+                await self._db.execute(
+                    """UPDATE personal_learning
+                       SET occurrences=?, last_seen=datetime('now')
+                       WHERE id=?""",
+                    (row["occurrences"] + 1, row["id"]),
+                )
+
+            await self._db.commit()
+
+            # Registra la valutazione — fail-safe, non blocca mai
+            try:
+                await self.save_learning_evaluation(
+                    pattern_id=str(row["id"]),
+                    signal_type=signal_type,
+                    metric_type=pattern_type,
+                    baseline_value=row["weight"],
+                    post_value=new_weight,
+                    accepted=accepted,
+                )
+            except Exception as exc:
+                logger.debug("save_learning_evaluation fallito (fail-safe): %s", exc)
         else:
+            # Prima osservazione: INSERT sempre accettato (nessuna baseline disponibile)
             initial = max(self._WEIGHT_MIN, min(self._WEIGHT_MAX, 0.5 + weight_delta))
             await self._db.execute(
                 """INSERT INTO personal_learning
@@ -2518,7 +2598,7 @@ class MemoryManager:
                    VALUES (?, ?, ?, ?, ?)""",
                 (agent, pattern_type, pattern_value, signal_type, initial),
             )
-        await self._db.commit()
+            await self._db.commit()
 
     async def get_learning_patterns(
         self,

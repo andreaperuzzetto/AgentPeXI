@@ -116,6 +116,27 @@ class Scheduler:
             )
             logger.info("Job screen_cleanup registrato (03:00 nightly)")
 
+        # Etsy learning loop domenicale 02:00 — analytics + finance aggiornano i segnali ChromaDB
+        # (design_winner, niche_roi_snapshot, finance_directive, finance_insight)
+        self._scheduler.add_job(
+            self._run_etsy_learning_loop,
+            trigger=CronTrigger(day_of_week="sun", hour=2, minute=0),
+            id="etsy_learning_loop",
+            name="Etsy learning loop",
+            replace_existing=True,
+        )
+        logger.info("Job etsy_learning_loop registrato (domenica 02:00)")
+
+        # shared_memory decay domenicale 03:45 — elimina insight cross-domain >SHARED_MEMORY_DECAY_DAYS
+        self._scheduler.add_job(
+            self._run_shared_memory_decay,
+            trigger=CronTrigger(day_of_week="sun", hour=3, minute=45),
+            id="shared_memory_decay",
+            name="Shared memory decay",
+            replace_existing=True,
+        )
+        logger.info("Job shared_memory_decay registrato (domenica 03:45)")
+
         # Wiki health check domenicale 04:00 — compact + lint + update_index (Step 5.2.4)
         # Eseguito solo se pepe ha l'attributo wiki inizializzato (lifespan Step 5.2.5).
         self._scheduler.add_job(
@@ -529,19 +550,185 @@ class Scheduler:
             except Exception as exc:
                 logger.warning("Learning loop step 5 fallito: %s", exc)
 
-            # Step 6 — notifica Telegram se cambiamenti significativi
-            if decayed > 5 and self.pepe and hasattr(self.pepe, "notify_telegram"):
+            # Step 6 — sintesi settimanale personal_memory (max 1 ogni 6 giorni)
+            synthesis_generated = False
+            try:
+                synthesis_generated = await self._run_weekly_personal_synthesis()
+            except Exception as exc:
+                logger.warning("Learning loop step 6 (weekly synthesis) fallito: %s", exc)
+
+            # Step 7 — notifica Telegram se cambiamenti significativi
+            if (decayed > 5 or synthesis_generated) and self.pepe and hasattr(self.pepe, "notify_telegram"):
                 try:
-                    await self.pepe.notify_telegram(
-                        f"🧠 Learning loop completato: {decayed} pattern aggiornati."
-                    )
+                    msg = f"🧠 Learning loop completato: {decayed} pattern aggiornati."
+                    if synthesis_generated:
+                        msg += "\n📝 Sintesi settimanale personal_memory generata."
+                    await self.pepe.notify_telegram(msg)
                 except Exception:
                     pass
 
-            logger.info("Learning loop completato — decayed=%d", decayed)
+            logger.info("Learning loop completato — decayed=%d synthesis=%s", decayed, synthesis_generated)
 
         except Exception as exc:
             logger.error("personal_learning_loop fallito: %s", exc)
+
+    async def _run_weekly_personal_synthesis(self) -> bool:
+        """Aggrega gli insight personal_memory degli ultimi 7gg in una sintesi settimanale.
+
+        Gira ogni notte (chiamata da _run_personal_learning_loop) ma produce output
+        al massimo una volta ogni 6 giorni — evita duplicati di settimane sovrapposte.
+
+        Requisiti:
+        - almeno 5 insight negli ultimi 7gg (escluse le stesse weekly_synthesis)
+        - nessuna weekly_synthesis scritta negli ultimi 6 giorni
+
+        LLM: Haiku via self.pepe.client.
+        Ritorna True se la sintesi è stata generata e scritta, False altrimenti.
+        """
+        if not self.pepe or not hasattr(self.pepe, "client"):
+            return False
+
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        from apps.backend.core.config import MODEL_HAIKU
+
+        now       = _dt.now(_tz.utc)
+        cutoff_7d = (now - _td(days=7)).strftime("%Y-%m-%d")
+        cutoff_6d = (now - _td(days=6)).strftime("%Y-%m-%d")
+
+        # Guard: evita duplicate settimanali
+        try:
+            recent_check = await self.memory.query_personal_memory(
+                query="sintesi settimanale",
+                n_results=3,
+                where={"date": {"$gte": cutoff_6d}},
+                agent="scheduler",
+            )
+            if any(
+                i.get("metadata", {}).get("type") == "weekly_synthesis"
+                for i in (recent_check or [])
+            ):
+                logger.debug("weekly_personal_synthesis: già presente questa settimana, skip")
+                return False
+        except Exception as exc:
+            logger.debug("weekly_personal_synthesis guard fallito (skip): %s", exc)
+            return False
+
+        # Fetch insight ultimi 7 giorni
+        try:
+            raw = await self.memory.query_personal_memory(
+                query="apprendimento ricerca ricordi topic personale",
+                n_results=30,
+                where={"date": {"$gte": cutoff_7d}},
+                agent="scheduler",
+            )
+        except Exception as exc:
+            logger.warning("weekly_personal_synthesis: query fallita: %s", exc)
+            return False
+
+        # Filtra weekly_synthesis in Python (evita $ne quirks ChromaDB)
+        insights = [
+            i for i in (raw or [])
+            if i.get("metadata", {}).get("type") != "weekly_synthesis"
+        ]
+
+        if len(insights) < 5:
+            logger.debug(
+                "weekly_personal_synthesis: %d insight (soglia 5), skip",
+                len(insights),
+            )
+            return False
+
+        # Costruisci testo aggregato — max 20 doc, 300 chars ciascuno
+        texts: list[str] = []
+        topics: list[str] = []
+        for ins in insights[:20]:
+            doc = ins.get("document", "").strip()
+            if not doc:
+                continue
+            q = ins.get("metadata", {}).get("query", "")
+            prefix = f"[{q[:40]}] " if q else ""
+            texts.append(f"{prefix}{doc[:300]}")
+            if q:
+                topics.append(q[:40])
+
+        if not texts:
+            return False
+
+        week_str = now.strftime("%Y-W%W")
+        combined = "\n\n---\n\n".join(texts)
+
+        system = (
+            "Sei Pepe, assistente personale di Andrea. "
+            "Hai accesso agli insight e ricerche di Andrea degli ultimi 7 giorni. "
+            "Scrivi UNA sintesi strutturata in italiano, max 200 parole. "
+            "Formato: max 3 bullet con i topic principali emersi, poi un insight trasversale. "
+            "Niente intro. Solo contenuto utile per Andrea."
+        )
+        user = f"Insight degli ultimi 7 giorni ({len(texts)} elementi):\n\n{combined}"
+
+        try:
+            response = await self.pepe.client.messages.create(
+                model=MODEL_HAIKU,
+                max_tokens=350,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            synthesis_text = response.content[0].text.strip()
+        except Exception as exc:
+            logger.warning("weekly_personal_synthesis: LLM fallito: %s", exc)
+            return False
+
+        if not synthesis_text:
+            return False
+
+        # Scrivi in personal_memory
+        try:
+            await self.memory.store_personal_insight(
+                synthesis_text,
+                metadata={
+                    "type":          "weekly_synthesis",
+                    "week":          week_str,
+                    "insight_count": len(insights),
+                    "topics":        ", ".join(dict.fromkeys(topics))[:200],
+                    "agent":         "scheduler",
+                    "date":          now.strftime("%Y-%m-%d"),
+                    "created_at":    now.isoformat(),
+                },
+            )
+            logger.info(
+                "weekly_personal_synthesis scritta: %d insight → week %s",
+                len(insights), week_str,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("weekly_personal_synthesis: store fallito: %s", exc)
+            return False
+
+    async def _run_shared_memory_decay(self) -> None:
+        """Domenicale 03:45 — elimina insight shared_memory più vecchi di SHARED_MEMORY_DECAY_DAYS.
+
+        shared_memory contiene pattern cross-domain generati da KnowledgeBridge.
+        Con il tempo questi insight diventano obsoleti (i pattern Etsy o Personal
+        che li hanno originati possono essere cambiati). La retention default è 90 giorni.
+        """
+        try:
+            deleted = await self.memory.delete_stale_shared_memory(
+                older_than_days=settings.SHARED_MEMORY_DECAY_DAYS
+            )
+            if deleted > 0:
+                msg = (
+                    f"🔗 Shared memory decay: {deleted} insight cross-domain eliminati "
+                    f"(retention {settings.SHARED_MEMORY_DECAY_DAYS}gg)."
+                )
+                logger.info(msg)
+                await self._notify_telegram(msg)
+            else:
+                logger.debug(
+                    "shared_memory_decay: nessun insight da eliminare (retention %dgg)",
+                    settings.SHARED_MEMORY_DECAY_DAYS,
+                )
+        except Exception as exc:
+            logger.error("shared_memory_decay fallito: %s", exc)
 
     async def _run_reminder_checker(self) -> None:
         """Ogni N minuti — invia reminder scaduti via Telegram."""
@@ -942,6 +1129,64 @@ class Scheduler:
             await self._notify_telegram(
                 f"❌ Publish {job_index + 1}/{total_jobs} fallito per '{niche}': {exc}\n"
                 f"I file sono in pending/ — riprovo domani."
+            )
+
+    async def _run_etsy_learning_loop(self) -> None:
+        """Domenicale 02:00 — aggiorna i segnali ChromaDB del learning loop Etsy.
+
+        Esegue in sequenza:
+        1. AnalyticsAgent — sync stats Etsy → aggiorna design_winner (sales/views reali)
+        2. FinanceAgent   — ricalcola ROI per nicchia → aggiorna niche_roi_snapshot,
+                           finance_directive, finance_insight
+
+        Senza questo job, i segnali cross-agent in pepe_memory diventano stale nelle
+        settimane in cui la pipeline non gira manualmente. Con questo job i segnali
+        restano freschi e DesignAgent/ResearchAgent li trovano aggiornati alla prossima
+        esecuzione della pipeline.
+
+        Guard: skip se nessun listing in etsy_listings (niente da analizzare).
+        """
+        # Guard: skip se non ci sono listing su cui fare analytics/finance
+        try:
+            listing_count = await self.memory.get_etsy_listings_count()
+            if listing_count == 0:
+                logger.info("etsy_learning_loop: nessun listing, skip")
+                return
+        except Exception:
+            pass  # se il check fallisce, procedi comunque
+
+        analytics_ok = False
+        finance_ok   = False
+
+        # 1. Analytics — sync stats + aggiorna design_winner
+        try:
+            await self._run_analytics()
+            analytics_ok = True
+            logger.info("etsy_learning_loop: analytics completato")
+        except Exception as exc:
+            logger.error("etsy_learning_loop: analytics fallito: %s", exc)
+
+        # 2. Finance — ROI + directive + insight
+        try:
+            await self._run_finance()
+            finance_ok = True
+            logger.info("etsy_learning_loop: finance completato")
+        except Exception as exc:
+            logger.error("etsy_learning_loop: finance fallito: %s", exc)
+
+        # Notifica Telegram riepilogo
+        if analytics_ok or finance_ok:
+            parts = []
+            if analytics_ok:
+                parts.append("📊 Analytics ✅")
+            else:
+                parts.append("📊 Analytics ❌")
+            if finance_ok:
+                parts.append("💶 Finance ✅")
+            else:
+                parts.append("💶 Finance ❌")
+            await self._notify_telegram(
+                "🔁 Etsy learning loop completato\n" + "  ".join(parts)
             )
 
     async def _run_analytics(self) -> None:

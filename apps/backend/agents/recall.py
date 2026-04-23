@@ -143,6 +143,7 @@ class RecallAgent(AgentBase):
                     "sources": [],
                     "results_found": 0,
                     "confidence": 0.3,
+                    "suggested_research": [query],  # topic sconosciuto → ResearchPersonalAgent
                 },
                 reply_voice="Non ho trovato nulla nella memoria recente.",
             )
@@ -201,7 +202,7 @@ class RecallAgent(AgentBase):
                 "query": query,
                 "results_found": len(relevant),
                 "confidence": round(confidence, 2),
-                "suggested_research": [],  # placeholder — Phase 3 popola questo campo
+                "suggested_research": [],  # vuoto: risultati trovati, nessuna ricerca necessaria
             },
             reply_voice=_reply_voice,
         )

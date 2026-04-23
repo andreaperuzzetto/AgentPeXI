@@ -115,6 +115,8 @@ class TelegramBot:
         add(CommandHandler("analytics", self._cmd_analytics, filters=self._chat_filter))
         add(CommandHandler("pipeline", self._cmd_pipeline, filters=self._chat_filter))
         add(CommandHandler("finance", self._cmd_finance, filters=self._chat_filter))
+        add(CommandHandler("niche", self._cmd_niche, filters=self._chat_filter))
+        add(CommandHandler("design", self._cmd_design_etsy, filters=self._chat_filter))
         add(CommandHandler("personal", self._cmd_personal, filters=self._chat_filter))
         add(CommandHandler("etsy", self._cmd_etsy, filters=self._chat_filter))
         add(CommandHandler("list", self._cmd_list, filters=self._chat_filter))
@@ -288,6 +290,118 @@ class TelegramBot:
             if not t.cancelled() and t.exception() else None
         )
 
+    async def _cmd_niche(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/niche <nicchia> [quick] — avvia il Research Agent Etsy per una nicchia specifica.
+        Default: deep. Aggiungi "quick" per una scansione rapida.
+        Es: /niche weekly planner
+            /niche wedding invitation quick
+        """
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(
+                "Uso: `/niche <nicchia> [quick]`\n"
+                "Esempio: `/niche weekly planner`\n\n"
+                "Avvia il Research Agent Etsy in modalità *deep* (default).\n"
+                "Aggiungi `quick` per una scansione rapida.",
+                parse_mode="Markdown",
+            )
+            return
+
+        quick = args[-1].lower() == "quick"
+        if quick:
+            args = args[:-1]
+        niche = " ".join(args).strip()
+        if not niche:
+            await update.message.reply_text("Specifica una nicchia dopo /niche.", parse_mode="Markdown")
+            return
+
+        import uuid as _uuid
+        mode_label = "quick" if quick else "deep"
+        await update.message.reply_text(f"🔍 Research Etsy [{mode_label}]: «{niche}»…")
+        task = AgentTask(
+            task_id=str(_uuid.uuid4()),
+            agent_name="research",
+            input_data={"niches": [niche], "quick": quick, "depth": "quick" if quick else "deep"},
+            source="telegram_manual",
+        )
+        try:
+            result = await self.pepe.dispatch_task(task)
+            out = result.output_data or {}
+            niches_data = out.get("niches", [])
+            if niches_data and isinstance(niches_data, list):
+                entry = niches_data[0]
+                keywords = entry.get("keywords", [])
+                kw_str = ", ".join(keywords[:10]) or "—"
+                demand = entry.get("demand_score", "—")
+                competition = entry.get("competition_score", "—")
+                reply = (
+                    f"✅ *Research completato: {niche}*\n\n"
+                    f"📊 Demand: {demand} | Competition: {competition}\n"
+                    f"🔑 Keywords: {kw_str}"
+                )
+            else:
+                reply = f"✅ Research completato per «{niche}».\nNessun dato strutturato restituito."
+            await self._reply_chunked(update.message, reply)
+        except Exception as exc:
+            logger.error("Research Etsy manuale fallito (%s): %s", niche, exc)
+            await update.message.reply_text(f"❌ Research fallito: {exc}")
+
+    async def _cmd_design_etsy(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/design <nicchia> — avvia il Design Agent Etsy per una nicchia specifica.
+        Es: /design weekly planner
+            /design wedding invitation
+        """
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(
+                "Uso: `/design <nicchia>`\n"
+                "Esempio: `/design weekly planner`\n\n"
+                "Avvia il Design Agent per generare varianti grafiche. "
+                "Il Publisher NON viene avviato — i file rimangono in draft.",
+                parse_mode="Markdown",
+            )
+            return
+
+        niche = " ".join(args).strip()
+        import uuid as _uuid
+
+        # Costruisci un brief minimale (Research saltato — keywords vuote)
+        task_id = str(_uuid.uuid4())
+        brief = {
+            "niche": niche,
+            "product_type": "printable_pdf",
+            "template": "default",
+            "size": "A4",
+            "num_variants": 3,
+            "color_schemes": ["sage", "blush", "slate"],
+            "keywords": [],
+            "production_queue_task_id": task_id,
+        }
+
+        await update.message.reply_text(f"🎨 Design Etsy: «{niche}»…\nIl Publisher non verrà avviato.")
+        task = AgentTask(
+            task_id=task_id,
+            agent_name="design",
+            input_data=brief,
+            source="telegram_manual",
+        )
+        try:
+            result = await self.pepe.dispatch_task(task)
+            out = result.output_data or {}
+            file_paths = out.get("file_paths", [])
+            cost = result.cost_usd or 0.0
+            files_str = "\n".join(f"  • {p}" for p in file_paths[:5]) or "  —"
+            extra = f"\n  …e altri {len(file_paths) - 5}" if len(file_paths) > 5 else ""
+            await update.message.reply_text(
+                f"✅ *Design completato: {niche}*\n\n"
+                f"📁 File generati ({len(file_paths)}):\n{files_str}{extra}\n"
+                f"💰 Costo: ${cost:.4f}",
+                parse_mode="Markdown",
+            )
+        except Exception as exc:
+            logger.error("Design Etsy manuale fallito (%s): %s", niche, exc)
+            await update.message.reply_text(f"❌ Design fallito: {exc}")
+
     async def _cmd_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/list — lista tutti i comandi disponibili."""
         domain = self.pepe.get_active_domain()
@@ -308,7 +422,9 @@ class TelegramBot:
             "/screen [on|off|status] — gestione Screen Watcher",
             "",
             "*— Etsy —*",
-            "/pipeline — avvia manualmente Research → Design → Publisher",
+            "/pipeline — avvia Research → Design → Publisher (ciclo completo)",
+            "/niche <nicchia> [quick] — Research Agent per una nicchia (deep di default)",
+            "/design <nicchia> — Design Agent standalone (no Publisher)",
             "/analytics — esegue subito il job analytics",
             "/finance — genera report economico",
             "/listings — lista ultimi 10 listing",

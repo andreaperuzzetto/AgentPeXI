@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     LEARNING_ACCEPTANCE_THRESHOLD: float = 0.02  # delta minimo per accettare un pattern
     LEARNING_EVAL_WINDOW: int = 10           # ultimi N task per calcolare baseline
 
+    # KnowledgeBridge — shared_memory decay
+    SHARED_MEMORY_DECAY_DAYS: int = 90       # giorni di retention shared_memory (bridge cross-domain)
+
     # Etsy
     ETSY_API_KEY: str = ""
     ETSY_API_SECRET: str = ""
