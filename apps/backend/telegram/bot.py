@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from telegram import Update
@@ -31,6 +32,16 @@ if TYPE_CHECKING:
     from apps.backend.screen.watcher import ScreenWatcher
 
 logger = logging.getLogger("agentpexi.telegram")
+
+
+def _md_escape(text: str) -> str:
+    """Escapa i caratteri speciali Markdown v1 nei valori dinamici.
+    Usare per nomi nicchia, file path, output LLM e qualsiasi valore
+    che possa contenere _ * ` [ ] che romperebbero il parse Telegram.
+    """
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
 
 
 class TelegramBot:
@@ -267,12 +278,20 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Analytics fallito: {exc}")
 
     async def _cmd_pipeline(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """/pipeline — avvia manualmente Research → Design → Publisher."""
+        """/pipeline [png] — avvia manualmente Research → Design → Publisher.
+        Default: printable_pdf. Aggiungi "png" per Digital Art PNG.
+        """
         if not self.scheduler:
             await update.message.reply_text("❌ Scheduler non disponibile.")
             return
-        await update.message.reply_text("⏳ Pipeline avviata — Research in corso...")
-        task = asyncio.create_task(self.scheduler._run_pipeline(), name="pipeline_manual")
+        args = context.args or []
+        product_type = "digital_art_png" if args and args[0].lower() == "png" else "printable_pdf"
+        label = "🖼 Digital Art PNG" if product_type == "digital_art_png" else "📄 Printable PDF"
+        await update.message.reply_text(f"⏳ Pipeline {label} avviata — Research in corso…")
+        task = asyncio.create_task(
+            self.scheduler._run_pipeline(product_type=product_type),
+            name=f"pipeline_manual_{product_type}",
+        )
         task.add_done_callback(
             lambda t: logger.error("Pipeline manuale fallita: %s", t.exception())
             if not t.cancelled() and t.exception() else None
@@ -291,94 +310,195 @@ class TelegramBot:
         )
 
     async def _cmd_niche(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """/niche <nicchia> [quick] — avvia il Research Agent Etsy per una nicchia specifica.
-        Default: deep. Aggiungi "quick" per una scansione rapida.
+        """/niche <nicchia> [quick] — singola nicchia deep (default) o quick.
+        /niche <n1> | <n2> | <n3> [quick] — confronto multi-nicchia (max 5).
         Es: /niche weekly planner
-            /niche wedding invitation quick
+            /niche weekly planner quick
+            /niche weekly planner | habit tracker | budget sheet
+            /niche botanical print | quote wall art | nursery art quick
         """
         args = context.args or []
         if not args:
             await update.message.reply_text(
-                "Uso: `/niche <nicchia> [quick]`\n"
-                "Esempio: `/niche weekly planner`\n\n"
-                "Avvia il Research Agent Etsy in modalità *deep* (default).\n"
-                "Aggiungi `quick` per una scansione rapida.",
+                "Uso:\n"
+                "  `/niche <nicchia> [quick]` — singola nicchia\n"
+                "  `/niche <n1> | <n2> | <n3> [quick]` — confronto multi-nicchia\n\n"
+                "Esempi:\n"
+                "  `/niche weekly planner`\n"
+                "  `/niche weekly planner | habit tracker | budget sheet`\n\n"
+                "Deep di default. Aggiungi `quick` per scansione rapida.",
                 parse_mode="Markdown",
             )
             return
 
-        quick = args[-1].lower() == "quick"
+        import uuid as _uuid
+
+        # Rileva flag [quick] come ultimo argomento
+        raw = " ".join(args)
+        quick = raw.strip().lower().endswith(" quick") or raw.strip().lower() == "quick"
         if quick:
-            args = args[:-1]
-        niche = " ".join(args).strip()
-        if not niche:
-            await update.message.reply_text("Specifica una nicchia dopo /niche.", parse_mode="Markdown")
+            raw = raw.strip()
+            if raw.lower().endswith("quick"):
+                raw = raw[:-5].rstrip(" |").strip()
+
+        # Splitta per | — multi-nicchia se più di uno
+        niches = [n.strip() for n in raw.split("|") if n.strip()]
+        niches = niches[:5]  # max 5
+
+        if not niches:
+            await update.message.reply_text("Specifica almeno una nicchia dopo /niche.", parse_mode="Markdown")
             return
 
-        import uuid as _uuid
         mode_label = "quick" if quick else "deep"
-        await update.message.reply_text(f"🔍 Research Etsy [{mode_label}]: «{niche}»…")
+        is_multi = len(niches) > 1
+
+        if is_multi:
+            niches_str = "\n".join(f"  {i+1}. «{n}»" for i, n in enumerate(niches))
+            await update.message.reply_text(
+                f"🔍 Research Etsy [{mode_label}] — confronto {len(niches)} nicchie:\n{niches_str}\n\n"
+                f"Analisi parallela in corso…",
+            )
+        else:
+            await update.message.reply_text(f"🔍 Research Etsy [{mode_label}]: «{niches[0]}»…")
+
         task = AgentTask(
             task_id=str(_uuid.uuid4()),
             agent_name="research",
-            input_data={"niches": [niche], "quick": quick, "depth": "quick" if quick else "deep"},
+            input_data={"niches": niches, "quick": quick, "depth": "quick" if quick else "deep"},
             source="telegram_manual",
         )
         try:
             result = await self.pepe.dispatch_task(task)
             out = result.output_data or {}
             niches_data = out.get("niches", [])
-            if niches_data and isinstance(niches_data, list):
-                entry = niches_data[0]
-                keywords = entry.get("keywords", [])
-                kw_str = ", ".join(keywords[:10]) or "—"
-                demand = entry.get("demand_score", "—")
-                competition = entry.get("competition_score", "—")
-                reply = (
-                    f"✅ *Research completato: {niche}*\n\n"
-                    f"📊 Demand: {demand} | Competition: {competition}\n"
-                    f"🔑 Keywords: {kw_str}"
-                )
+
+            if is_multi:
+                # Risposta multi-nicchia: tabella comparativa + winner
+                summary = out.get("summary", "")
+                rec_niche = out.get("recommended_niche", "")
+                rec_pt = out.get("recommended_product_type", "")
+
+                lines = [f"✅ *Confronto completato: {len(niches_data)} nicchie analizzate*\n"]
+                for entry in niches_data:
+                    name = entry.get("name", "?")
+                    viable = "✅" if entry.get("viable", True) else "⛔"
+                    demand = entry.get("demand", {})
+                    pricing = entry.get("pricing", {})
+                    sweet_spot = pricing.get("conversion_sweet_spot_usd", "—")
+                    comp = entry.get("competition", {}).get("level", "—")
+                    trend = demand.get("trend", "—")
+                    price_str = f"${sweet_spot}" if sweet_spot and sweet_spot != "—" else "—"
+                    lines.append(
+                        f"{viable} *{_md_escape(name)}*\n"
+                        f"   Demand: {demand.get('level','—')} ({trend}) | "
+                        f"Competition: {comp} | Sweet spot: {price_str}"
+                    )
+
+                if rec_niche:
+                    lines.append(f"\n🏆 *Winner: {_md_escape(rec_niche)}* [{_md_escape(rec_pt)}]")
+                if summary:
+                    lines.append(f"💡 {summary}")
+
+                reply = "\n".join(lines)
             else:
-                reply = f"✅ Research completato per «{niche}».\nNessun dato strutturato restituito."
+                # Risposta singola nicchia
+                if niches_data and isinstance(niches_data, list):
+                    entry = niches_data[0]
+                    keywords = entry.get("keywords", [])
+                    kw_str = ", ".join(keywords[:10]) or "—"
+                    demand = entry.get("demand", {})
+                    competition = entry.get("competition", {})
+                    demand_str = f"{demand.get('level', '—')} ({demand.get('trend', '—')})"
+                    comp_str = competition.get("level", "—")
+                    viable = "✅ viable" if entry.get("viable", True) else "⛔ non viable"
+                    pricing = entry.get("pricing", {})
+                    sweet_spot = pricing.get("conversion_sweet_spot_usd")
+                    price_str = f" | Sweet spot: ${sweet_spot}" if sweet_spot else ""
+                    rec_pt = entry.get("recommended_product_type", "")
+                    pt_str = f" | Tipo: {rec_pt}" if rec_pt else ""
+                    reply = (
+                        f"✅ *Research completato: {_md_escape(niches[0])}*\n\n"
+                        f"📊 Demand: {demand_str} | Competition: {comp_str}\n"
+                        f"💰 Viable: {viable}{price_str}{_md_escape(pt_str)}\n"
+                        f"🔑 Keywords: {_md_escape(kw_str)}"
+                    )
+                else:
+                    reply = f"✅ Research completato per «{niches[0]}».\nNessun dato strutturato restituito."
+
             await self._reply_chunked(update.message, reply)
         except Exception as exc:
-            logger.error("Research Etsy manuale fallito (%s): %s", niche, exc)
+            label = " | ".join(niches)
+            logger.error("Research Etsy manuale fallito (%s): %s", label, exc)
             await update.message.reply_text(f"❌ Research fallito: {exc}")
 
     async def _cmd_design_etsy(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """/design <nicchia> — avvia il Design Agent Etsy per una nicchia specifica.
+        """/design <nicchia> [png] — avvia il Design Agent Etsy per una nicchia specifica.
+        Default: Printable PDF. Aggiungi "png" per Digital Art PNG.
         Es: /design weekly planner
-            /design wedding invitation
+            /design botanical wall art png
         """
         args = context.args or []
         if not args:
             await update.message.reply_text(
-                "Uso: `/design <nicchia>`\n"
-                "Esempio: `/design weekly planner`\n\n"
-                "Avvia il Design Agent per generare varianti grafiche. "
+                "Uso: `/design <nicchia> [png]`\n"
+                "Esempi:\n"
+                "  `/design weekly planner` — genera PDF\n"
+                "  `/design botanical wall art png` — genera Digital Art PNG\n\n"
                 "Il Publisher NON viene avviato — i file rimangono in draft.",
                 parse_mode="Markdown",
             )
             return
 
+        # Rileva flag [png] come ultimo argomento
+        is_png = args[-1].lower() == "png"
+        if is_png:
+            args = args[:-1]
         niche = " ".join(args).strip()
+        if not niche:
+            await update.message.reply_text("Specifica una nicchia dopo /design.", parse_mode="Markdown")
+            return
+
         import uuid as _uuid
+        product_type = "digital_art_png" if is_png else "printable_pdf"
 
-        # Costruisci un brief minimale (Research saltato — keywords vuote)
+        # Costruisci brief minimale (Research saltato — keywords vuote)
         task_id = str(_uuid.uuid4())
-        brief = {
-            "niche": niche,
-            "product_type": "printable_pdf",
-            "template": "default",
-            "size": "A4",
-            "num_variants": 3,
-            "color_schemes": ["sage", "blush", "slate"],
-            "keywords": [],
-            "production_queue_task_id": task_id,
-        }
+        if product_type == "digital_art_png":
+            # Importa _pick_art_type dal scheduler se disponibile, altrimenti inferisci inline
+            art_type = (
+                self.scheduler._pick_art_type(niche)
+                if self.scheduler
+                else "wall_art"
+            )
+            brief = {
+                "niche": niche,
+                "product_type": "digital_art_png",
+                "art_type": art_type,
+                "num_variants": 3,
+                "color_schemes": ["warm", "neutral", "pastel"],
+                "keywords": [],
+                "production_queue_task_id": task_id,
+            }
+            label = f"🖼 Design PNG: «{niche}» (art_type: {art_type})"
+        else:
+            pdf_template = (
+                self.scheduler._pick_template(niche)
+                if self.scheduler
+                else "weekly_planner"
+            )
+            brief = {
+                "niche": niche,
+                "product_type": "printable_pdf",
+                "template": pdf_template,
+                "size": "A4",
+                "num_variants": 3,
+                "color_schemes": ["sage", "blush", "slate"],
+                "keywords": [],
+                "production_queue_task_id": task_id,
+            }
+            label = f"🎨 Design PDF: «{niche}» (template: {pdf_template})"
 
-        await update.message.reply_text(f"🎨 Design Etsy: «{niche}»…\nIl Publisher non verrà avviato.")
+        await update.message.reply_text(f"{label}\nIl Publisher non verrà avviato.")
         task = AgentTask(
             task_id=task_id,
             agent_name="design",
@@ -388,15 +508,23 @@ class TelegramBot:
         try:
             result = await self.pepe.dispatch_task(task)
             out = result.output_data or {}
-            file_paths = out.get("file_paths", [])
+            variants = out.get("variants", [])
+            # Estrai file paths in base al product_type (schema diverso)
+            if product_type == "digital_art_png":
+                file_paths = [v["file_path"] for v in variants if v.get("file_path")]
+                provider = out.get("image_provider", "—")
+                meta_line = f"🖼 Art type: {out.get('art_type', '—')} | Provider: {provider}"
+            else:
+                file_paths = [v["pdf_path"] for v in variants if v.get("pdf_path")]
+                meta_line = f"🎨 Preset: {out.get('preset', '—')} | Template: {out.get('template', '—')}"
             cost = result.cost_usd or 0.0
-            files_str = "\n".join(f"  • {p}" for p in file_paths[:5]) or "  —"
+            files_str = "\n".join(f"  • {Path(p).name}" for p in file_paths[:5]) or "  —"
             extra = f"\n  …e altri {len(file_paths) - 5}" if len(file_paths) > 5 else ""
             await update.message.reply_text(
-                f"✅ *Design completato: {niche}*\n\n"
+                f"✅ Design completato: {niche}\n\n"
+                f"{meta_line}\n"
                 f"📁 File generati ({len(file_paths)}):\n{files_str}{extra}\n"
                 f"💰 Costo: ${cost:.4f}",
-                parse_mode="Markdown",
             )
         except Exception as exc:
             logger.error("Design Etsy manuale fallito (%s): %s", niche, exc)
@@ -422,9 +550,10 @@ class TelegramBot:
             "/screen [on|off|status] — gestione Screen Watcher",
             "",
             "*— Etsy —*",
-            "/pipeline — avvia Research → Design → Publisher (ciclo completo)",
-            "/niche <nicchia> [quick] — Research Agent per una nicchia (deep di default)",
-            "/design <nicchia> — Design Agent standalone (no Publisher)",
+            "/pipeline [png] — avvia Research → Design → Publisher (PDF di default, aggiungi png per Digital Art)",
+            "/niche <nicchia> [quick] — Research singola nicchia (deep di default)",
+            "/niche <n1> | <n2> | <n3> [quick] — confronto multi-nicchia (max 5)",
+            "/design <nicchia> [png] — Design Agent standalone (PDF di default, aggiungi png per Digital Art)",
             "/analytics — esegue subito il job analytics",
             "/finance — genera report economico",
             "/listings — lista ultimi 10 listing",
@@ -481,7 +610,7 @@ class TelegramBot:
             st = self.screen_watcher.get_status()
             icon = "▶️" if st["active"] else "⏸️"
             stato = "Attivo" if st["active"] else "In pausa"
-            last_app = st["last_capture_app"] or "—"
+            last_app = _md_escape(st["last_capture_app"] or "—")
             last_time = st["last_capture_time"] or "—"
             if last_time and last_time != "—":
                 try:
@@ -976,7 +1105,7 @@ class TelegramBot:
                 return
 
             # Invia trascrizione come feedback
-            await update.message.reply_text(f"🎤 _{transcription}_", parse_mode="Markdown")
+            await update.message.reply_text(f"🎤 _{_md_escape(transcription)}_", parse_mode="Markdown")
 
             # Pepe elabora
             session_id = str(update.effective_chat.id)

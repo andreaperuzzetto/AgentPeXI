@@ -74,13 +74,6 @@ const IDEAL_LEN  = 200
 const CTR_PULL   = 0.00035
 
 // ── Mapping: uiStore orbState → canvas state ─────────────────────
-const UI_CANVAS: Record<OrbState, CanvasOrbState> = {
-  wakeword:  'off',
-  listening: 'listen',
-  thinking:  'think',
-  speaking:  'process',
-}
-
 // ── Utility ──────────────────────────────────────────────────────
 function rgba(hex: string, a: number): string {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -281,7 +274,6 @@ export function NeuralBrain() {
 
   // ── Sync orb visual state from uiStore ────────────────────────
   useEffect(() => {
-    const prev = prevUiRef.current
     prevUiRef.current = uiOrbState
 
     const sleeping = orbStateRef.current === 'off' || orbStateRef.current === 'sleeping'

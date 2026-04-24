@@ -68,40 +68,6 @@ function generateParticles(container: HTMLDivElement) {
 const UTTERANCE_TIMEOUT_MS = 8_000   // max durata registrazione utterance (§11.4)
 const WAKE_SAMPLE_MS       = 3_000   // durata ogni finestra di registrazione per wake word
 
-/* ── Wake acknowledgment ─────────────────────────────────────── */
-const WAKE_ACKS = [
-  'Dimmi.',
-  'Sì?',
-  'Ti ascolto.',
-  'Dimmi pure.',
-  'Eccomi.',
-]
-
-/**
- * Risponde vocalmente con una breve frase italiana per confermare
- * che il wake word è stato sentito e Pepe è in ascolto.
- * Risolve il Promise al termine del parlato, così la mic si apre
- * solo dopo — evitando di catturare la voce di Pepe nell'utterance.
- */
-function playWakeAck(): Promise<void> {
-  return new Promise((resolve) => {
-    try {
-      window.speechSynthesis.cancel()
-      const phrase = WAKE_ACKS[Math.floor(Math.random() * WAKE_ACKS.length)]
-      const utter  = new SpeechSynthesisUtterance(phrase)
-      utter.lang   = 'it-IT'
-      utter.rate   = 1.05
-      utter.pitch  = 1.0
-      utter.volume = 0.9
-      utter.onend   = () => resolve()
-      utter.onerror = () => resolve()   // se TTS non disponibile, va avanti lo stesso
-      window.speechSynthesis.speak(utter)
-    } catch {
-      resolve()
-    }
-  })
-}
-
 /* ── Component ───────────────────────────────────────────────── */
 export function PepeOrb() {
   const orbState         = useUiStore((s) => s.orbState)

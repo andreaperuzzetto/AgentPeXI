@@ -27,9 +27,11 @@ function statusStyle(status: QueueItem['status']): { bg: string; color: string; 
   }
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
   try {
     const d = new Date(iso)
+    if (isNaN(d.getTime())) return '—'
     const now = new Date()
     const diffMs = now.getTime() - d.getTime()
     const diffH = diffMs / 3_600_000

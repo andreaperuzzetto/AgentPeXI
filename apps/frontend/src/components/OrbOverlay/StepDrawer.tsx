@@ -75,7 +75,7 @@ export function StepDrawer({ open, onToggle }: StepDrawerProps) {
   /* flatten + sort descending (newest first) */
   const allSteps = useMemo<AgentStep[]>(() => {
     const flat = Object.values(agentSteps).flat()
-    flat.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    flat.sort((a, b) => (b.timestamp ? new Date(b.timestamp).getTime() : 0) - (a.timestamp ? new Date(a.timestamp).getTime() : 0))
     return flat
   }, [agentSteps])
 

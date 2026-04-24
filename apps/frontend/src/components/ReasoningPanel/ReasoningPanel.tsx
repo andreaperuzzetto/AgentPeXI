@@ -3,9 +3,12 @@ import { useStore } from '../../store'
 import type { AgentStep } from '../../types/index'
 
 /* ── helpers ────────────────────────────────────────────────── */
-function relTime(iso: string): string {
+function relTime(iso: string | undefined | null): string {
+  if (!iso) return ''
   try {
-    const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000)
+    const t = new Date(iso).getTime()
+    if (isNaN(t)) return ''
+    const s = Math.round((Date.now() - t) / 1000)
     if (s < 60)  return `${s}s`
     const m = Math.round(s / 60)
     if (m < 60)  return `${m}m`
@@ -37,7 +40,7 @@ export function ReasoningPanel() {
   // Flatten + sort by timestamp, keep last 80
   const allSteps: AgentStep[] = useMemo(() => {
     const flat = Object.values(agentSteps).flat()
-    flat.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    flat.sort((a, b) => (a.timestamp ? new Date(a.timestamp).getTime() : 0) - (b.timestamp ? new Date(b.timestamp).getTime() : 0))
     return flat.slice(-80)
   }, [agentSteps])
 

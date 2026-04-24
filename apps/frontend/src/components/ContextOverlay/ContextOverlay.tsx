@@ -157,7 +157,7 @@ export function ContextOverlay({ open, onClose }: Props) {
       }
     }
     return all
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .sort((a, b) => (b.timestamp ?? '').localeCompare(a.timestamp ?? ''))
       .slice(0, 5)
   }, [agentSteps])
 

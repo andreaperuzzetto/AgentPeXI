@@ -2192,7 +2192,9 @@ ESEMPI:
         try:
             if agent_name == "research":
                 niches = output.get("niches") or []
-                niche  = output.get("niche") or (niches[0] if niches else "")
+                # Supporta sia output singola nicchia che autonomous (winner.niche)
+                winner_niche = (output.get("winner") or {}).get("niche", "")
+                niche = output.get("niche") or winner_niche or (niches[0].get("name", "") if niches and isinstance(niches[0], dict) else niches[0] if niches else "")
                 if niche:
                     await self.wiki.compile_niche(niche, "research", output, llm)
                 await self.wiki.store_raw("etsy", "research", output)

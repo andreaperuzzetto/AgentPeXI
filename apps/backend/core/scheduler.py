@@ -22,6 +22,36 @@ from apps.backend.core.memory import MemoryManager
 logger = logging.getLogger("agentpexi.scheduler")
 
 
+def _extract_color_schemes(color_hint: str) -> list[str]:
+    """Converte un color_palette_hint testuale di Research in nomi di scheme usabili da Design.
+
+    Esempi:
+      "sage green, warm beige, dusty pink"  → ["sage", "beige", "blush"]
+      ""                                    → []  (chiamante usa default)
+    """
+    if not color_hint:
+        return []
+    # Mapping parole chiave → scheme name usato da DesignAgent
+    _map = {
+        "sage": "sage", "green": "sage", "mint": "sage",
+        "beige": "beige", "warm": "beige", "tan": "beige", "cream": "beige",
+        "pink": "blush", "blush": "blush", "rose": "blush", "dusty": "blush",
+        "slate": "slate", "grey": "slate", "gray": "slate", "blue": "slate",
+        "white": "minimal", "minimal": "minimal", "clean": "minimal",
+        "warm beige": "beige", "warm white": "minimal",
+        "neutral": "beige", "pastel": "blush",
+        "dark": "slate", "charcoal": "slate",
+    }
+    schemes: list[str] = []
+    seen: set[str] = set()
+    hint_lower = color_hint.lower()
+    for keyword, scheme in _map.items():
+        if keyword in hint_lower and scheme not in seen:
+            seen.add(scheme)
+            schemes.append(scheme)
+    return schemes[:3] or []
+
+
 class Scheduler:
     """Gestione job schedulati con APScheduler (AsyncIO)."""
 
@@ -854,8 +884,25 @@ class Scheduler:
         "meal planner weekly",
     ]
 
-    async def _run_pipeline(self) -> None:
-        """Pipeline Research → Design. Si ferma dopo Design (Publisher in fase successiva)."""
+    # Nicchie di default per Digital Art PNG (wall art, quote prints, botanical)
+    _DEFAULT_NICHES_PNG = [
+        "minimalist botanical print",
+        "inspirational quote wall art",
+        "abstract watercolor print",
+        "nursery wall art animals",
+        "vintage style botanical poster",
+    ]
+
+    async def _run_png_pipeline(self) -> None:
+        """Wrapper Telegram per pipeline Digital Art PNG."""
+        await self._run_pipeline(product_type="digital_art_png")
+
+    async def _run_pipeline(self, product_type: str = "printable_pdf") -> None:
+        """Pipeline Research → Design → Publisher.
+
+        product_type: "printable_pdf" (default) o "digital_art_png".
+        SVG escluso — svg_bundle non è supportato in questa pipeline.
+        """
         now = datetime.now()
 
         # 1. Verifica finestra oraria
@@ -870,58 +917,119 @@ class Scheduler:
             await self._notify_telegram(msg)
             return
 
-        # 3. Scegli nicchia
-        niche = await self._pick_niche()
-        if not niche:
-            logger.info("Pipeline: nessuna nicchia disponibile (tutte già prodotte), skip")
-            return
-
-        logger.info("Pipeline avviata per nicchia: %s", niche)
-
-        # 4. Research Agent
+        # 3-5. Research Agent in modalità autonoma — decide lui niche + product_type + brief
+        niche: str = ""
+        template: str = ""
         keywords: list[str] = []
+        etsy_tags_13: list[str] = []
+        selling_signals: dict = {}
+        research_output: dict = {}
+        winner_brief: dict = {}
+
         if self.research_agent and self.pepe:
             from apps.backend.core.models import AgentTask as _AgentTask
 
             research_task = _AgentTask(
                 agent_name="research",
-                input_data={"niches": [niche]},
+                input_data={
+                    "mode": "autonomous",
+                    # Se product_type è stato esplicitamente richiesto (es. /pipeline png),
+                    # lo passiamo come constraint — Research cercherà solo candidati di quel tipo.
+                    "product_type_constraint": product_type,
+                },
                 source="scheduler",
             )
             try:
                 research_result = await self.pepe.dispatch_task(research_task)
                 out = research_result.output_data or {}
-                # Estrai keywords dal report
-                niches_data = out.get("niches", [])
-                if niches_data and isinstance(niches_data, list):
-                    keywords = niches_data[0].get("keywords", [])
-                logger.info("Research completato per '%s': %d keywords", niche, len(keywords))
+                research_output = out
+                winner = out.get("winner", {})
+
+                if winner:
+                    niche = winner.get("niche", "")
+                    # Rispetta il product_type del winner solo se non era vincolato dall'esterno.
+                    # Se era vincolato, il winner è già filtrato — usa comunque il suo product_type.
+                    product_type = winner.get("product_type", product_type)
+                    winner_brief = winner.get("brief", {})
+                    keywords = winner_brief.get("keywords", [])
+                    etsy_tags_13 = winner_brief.get("etsy_tags_13", [])
+                    selling_signals = winner_brief.get("selling_signals", {})
+                    template = (
+                        winner_brief.get("template") or
+                        winner_brief.get("art_type") or
+                        self._pick_template(niche)
+                    )
+                    logger.info(
+                        "Research autonomo: winner='%s' [%s], %d keywords, %d tags",
+                        niche, product_type, len(keywords), len(etsy_tags_13),
+                    )
+                else:
+                    # Research completato ma senza winner → fallback _pick_niche
+                    logger.warning("Research autonomo: nessun winner nell'output, fallback _pick_niche")
+                    niches_data = out.get("niches", [])
+                    if niches_data:
+                        first = niches_data[0]
+                        niche = first.get("name", "")
+                        keywords = first.get("keywords", [])
+                        etsy_tags_13 = first.get("etsy_tags_13", [])
+                        selling_signals = first.get("selling_signals", {})
+                        template = self._pick_template(niche)
+
             except Exception as exc:
-                logger.error("Research fallito per '%s': %s", niche, exc)
-                await self._notify_telegram(f"⚠️ Pipeline: Research fallito per '{niche}': {exc}")
+                logger.error("Research autonomo fallito: %s", exc)
+                await self._notify_telegram(f"⚠️ Pipeline: Research autonomo fallito: {exc}")
                 return
         else:
             logger.warning("Research agent o Pepe non disponibile, uso keywords vuote")
 
+        # Se Research non ha fornito una nicchia → fallback _pick_niche (cold-start)
+        if not niche:
+            niche = await self._pick_niche(product_type=product_type)
+            if not niche:
+                logger.info("Pipeline [%s]: nessuna nicchia disponibile, skip", product_type)
+                return
+            template = self._pick_template(niche) if product_type == "printable_pdf" else self._pick_art_type(niche)
+            logger.info("Pipeline [%s] fallback a niche: %s", product_type, niche)
+
+        logger.info("Pipeline [%s] avviata per nicchia: %s", product_type, niche)
+
         # 5. Costruisci brief per Design
-        template = self._pick_template(niche)
         task_id = str(uuid.uuid4())
 
-        brief = {
-            "niche": niche,
-            "product_type": "printable_pdf",
-            "template": template,
-            "size": "A4",
-            "num_variants": 3,
-            "color_schemes": ["sage", "blush", "slate"],
-            "keywords": keywords,
-            "production_queue_task_id": task_id,
-        }
+        if product_type == "digital_art_png":
+            art_type = winner_brief.get("art_type") or self._pick_art_type(niche)
+            color_schemes = _extract_color_schemes(winner_brief.get("color_palette_hint", "")) or ["warm", "neutral", "pastel"]
+            brief = {
+                "niche": niche,
+                "product_type": "digital_art_png",
+                "art_type": art_type,
+                "num_variants": 3,
+                "color_schemes": color_schemes,
+                "keywords": keywords,
+                "production_queue_task_id": task_id,
+                "research_result": research_output,
+            }
+            template = art_type
+        else:
+            pdf_template = winner_brief.get("template") or self._pick_template(niche)
+            color_schemes = _extract_color_schemes(winner_brief.get("color_palette_hint", "")) or ["sage", "blush", "slate"]
+            brief = {
+                "niche": niche,
+                "product_type": "printable_pdf",
+                "template": pdf_template,
+                "size": "A4",
+                "num_variants": 3,
+                "color_schemes": color_schemes,
+                "keywords": keywords,
+                "production_queue_task_id": task_id,
+                "research_result": research_output,
+            }
+            template = pdf_template
 
         # 6. Aggiungi in production_queue
         await self.memory.add_to_production_queue(
             task_id=task_id,
-            product_type="printable_pdf",
+            product_type=product_type,
             niche=niche,
             brief=brief,
         )
@@ -942,11 +1050,17 @@ class Scheduler:
 
         try:
             design_result = await self.pepe.dispatch_task(design_task)
-            file_paths = design_result.output_data.get("file_paths", [])
+            design_out = design_result.output_data or {}
+            variants = design_out.get("variants", [])
+            # Chiave output diversa per tipo: pdf_path (PDF) vs file_path (PNG)
+            if product_type == "digital_art_png":
+                file_paths = [v["file_path"] for v in variants if v.get("file_path")]
+            else:
+                file_paths = [v["pdf_path"] for v in variants if v.get("pdf_path")]
             cost = design_result.cost_usd
             logger.info(
-                "Design completato: %d file generati, costo $%.4f",
-                len(file_paths), cost,
+                "Design [%s] completato: %d varianti generate, costo $%.4f",
+                product_type, len(file_paths), cost,
             )
             await self._broadcast({
                 "type": "system_status",
@@ -971,15 +1085,32 @@ class Scheduler:
             )
             return
 
-        publish_base = {
-            "production_queue_task_id": task_id,
-            "product_type": "printable_pdf",
-            "template": template,
-            "niche": niche,
-            "color_schemes": brief.get("color_schemes", []),
-            "keywords": keywords,
-            "size": brief.get("size", "A4"),
-        }
+        if product_type == "digital_art_png":
+            publish_base = {
+                "production_queue_task_id": task_id,
+                "product_type": "digital_art_png",
+                "niche": niche,
+                "color_schemes": brief.get("color_schemes", []),
+                "keywords": keywords,
+                "etsy_tags_13": etsy_tags_13,
+                "selling_signals": selling_signals,
+                # Per PNG il file stesso è l'immagine listing — nessun Playwright necessario
+                "thumbnail_paths": file_paths,
+            }
+        else:
+            publish_base = {
+                "production_queue_task_id": task_id,
+                "product_type": "printable_pdf",
+                "template": template,
+                "niche": niche,
+                "color_schemes": brief.get("color_schemes", []),
+                "keywords": keywords,
+                "size": brief.get("size", "A4"),
+                # Dati Research validati: Publisher usa etsy_tags_13 al posto di tag LLM
+                # e selling_signals per costruire la SEO copy con i trigger di conversione
+                "etsy_tags_13": etsy_tags_13,
+                "selling_signals": selling_signals,
+            }
         await self._schedule_staggered_publish(
             file_paths=file_paths,
             publish_base=publish_base,
@@ -1225,24 +1356,42 @@ class Scheduler:
         )
         try:
             dispatcher = self.pepe.dispatch_task if self.pepe else self.finance_agent.execute
-            await dispatcher(task)
+            result = await dispatcher(task)
             logger.info("Finance report giornaliero completato")
+            # Notifica Telegram con sintesi
+            if result and hasattr(result, "output_data") and result.output_data:
+                rep = result.output_data
+                rev  = rep.get("total_revenue_eur", 0.0)
+                cost = rep.get("llm_cost_eur", 0.0)
+                net  = rep.get("net_margin_eur", 0.0)
+                roi  = rep.get("roi_pct", 0.0)
+                conf = getattr(result, "confidence", 0.0)
+                status_icon = "✅" if conf >= 0.60 else "🟡"
+                await self._notify_telegram(
+                    f"{status_icon} Finance report 30gg\n"
+                    f"💶 Revenue: €{rev:.2f} | Costi LLM: €{cost:.4f}\n"
+                    f"📊 Margine netto: €{net:.2f} | ROI: {roi:.1f}%\n"
+                    f"Confidence: {conf:.0%}"
+                )
+            else:
+                await self._notify_telegram("✅ Finance report completato (dati insufficienti per sintesi)")
         except Exception as exc:
             logger.error("Finance report fallito: %s", exc)
             await self._notify_telegram(f"⚠️ Finance report fallito: {exc}")
 
-    async def _pick_niche(self) -> str | None:
+    async def _pick_niche(self, product_type: str = "printable_pdf") -> str | None:
         """Sceglie la prossima nicchia da produrre.
 
         Deduplicazione a tre livelli:
         1. production_queue — nicchie pianificate/in-corso/completate negli ultimi 7 giorni
         2. etsy_listings    — nicchie già pubblicate su Etsy (via is_duplicate_product)
-        3. Fallback pool    — nicchie di default se ChromaDB è vuoto
+        3. Fallback pool    — nicchie di default per product_type (PDF o PNG)
         """
         # 1. Pool nicchie da ChromaDB insights
         niches_pool: list[str] = []
+        query = "etsy wall art niche trending" if product_type == "digital_art_png" else "etsy niche trending"
         try:
-            insights = await self.memory.query_insights("etsy niche trending", n_results=5)
+            insights = await self.memory.query_insights(query, n_results=5)
             for ins in insights:
                 doc = ins.get("document", "")
                 if doc:
@@ -1251,7 +1400,11 @@ class Scheduler:
             pass
 
         if not niches_pool:
-            niches_pool = list(self._DEFAULT_NICHES)
+            niches_pool = (
+                list(self._DEFAULT_NICHES_PNG)
+                if product_type == "digital_art_png"
+                else list(self._DEFAULT_NICHES)
+            )
 
         # 2. Nicchie recenti in production_queue (ultimi 7 giorni)
         seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -1268,9 +1421,9 @@ class Scheduler:
             if niche in blocked_niches:
                 continue
             try:
-                if await self.memory.is_duplicate_product(niche, "printable_pdf"):
+                if await self.memory.is_duplicate_product(niche, product_type):
                     blocked_niches.add(niche)
-                    logger.debug("Niche '%s' già in etsy_listings, skip", niche)
+                    logger.debug("Niche '%s' [%s] già in etsy_listings, skip", niche, product_type)
             except Exception as exc:
                 logger.debug("Errore check etsy_listings per '%s': %s", niche, exc)
 
@@ -1278,20 +1431,48 @@ class Scheduler:
             if niche not in blocked_niches:
                 return niche
 
-        logger.info("Tutte le nicchie già prodotte o pubblicate su Etsy")
+        logger.info("Tutte le nicchie [%s] già prodotte o pubblicate su Etsy", product_type)
         return None
 
     @staticmethod
     def _pick_template(niche: str) -> str:
-        """Regola semplice: inferisci template dal nome della nicchia."""
+        """Regola semplice: inferisci template PDF dal nome della nicchia."""
         n = niche.lower()
         if "habit" in n:
             return "habit_tracker"
-        if "budget" in n:
-            return "budget_sheet"
-        if "journal" in n or "diary" in n:
-            return "daily_journal"
+        if "budget" in n or "finance" in n or "expense" in n:
+            return "budget_tracker"
+        if "meal" in n or "food" in n or "recipe" in n:
+            return "meal_planner"
+        if "workout" in n or "fitness" in n or "exercise" in n:
+            return "workout_tracker"
+        if "journal" in n or "diary" in n or "gratitude" in n:
+            return "gratitude_journal"
+        if "reading" in n or "book" in n:
+            return "reading_log"
+        if "travel" in n or "trip" in n or "itinerary" in n:
+            return "travel_planner"
+        if "goal" in n or "vision" in n or "resolution" in n:
+            return "goal_planner"
+        if "project" in n or "task" in n or "checklist" in n:
+            return "project_planner"
+        if "daily" in n or "day" in n:
+            return "daily_planner"
+        if "monthly" in n or "month" in n:
+            return "monthly_planner"
         return "weekly_planner"
+
+    @staticmethod
+    def _pick_art_type(niche: str) -> str:
+        """Inferisce art_type per Digital Art PNG dal nome della nicchia."""
+        n = niche.lower()
+        if "quote" in n or "inspirational" in n or "motivation" in n or "saying" in n:
+            return "quote_print"
+        if "botanical" in n or "plant" in n or "floral" in n or "flower" in n or "leaf" in n:
+            return "botanical_print"
+        if "nursery" in n or "kids" in n or "baby" in n or "children" in n or "animal" in n:
+            return "nursery_print"
+        return "wall_art"
 
     async def _notify_telegram(self, message: str) -> None:
         """Invia notifica via Telegram (se broadcaster disponibile)."""

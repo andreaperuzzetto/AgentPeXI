@@ -36,7 +36,7 @@ export function StepCards({ hidden }: { hidden?: boolean }) {
     const flat: AgentStep[] = Object.values(agentSteps).flat()
     if (flat.length === 0) return
 
-    flat.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    flat.sort((a, b) => (a.timestamp ? new Date(a.timestamp).getTime() : 0) - (b.timestamp ? new Date(b.timestamp).getTime() : 0))
     const latest = flat.slice(-MAX_CARDS)
 
     if (flat.length !== lastCountRef.current) {

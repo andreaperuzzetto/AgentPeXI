@@ -30,7 +30,7 @@ function fmtTime(iso: string): string {
 
 function stepsToday(steps: AgentStep[]): number {
   const today = new Date().toISOString().slice(0, 10)
-  return steps.filter((s) => s.timestamp.slice(0, 10) === today).length
+  return steps.filter((s) => s.timestamp?.slice(0, 10) === today).length
 }
 
 /* ── HeroBox — ultimo evento del dominio ─────────────────────── */
@@ -40,9 +40,11 @@ function HeroBox({ agentList }: { agentList: string[] }) {
   const latest = useMemo<AgentStep | null>(() => {
     const all = agentList.flatMap((name) => agentSteps[name] ?? [])
     if (all.length === 0) return null
-    return all.reduce((a, b) =>
-      new Date(a.timestamp) > new Date(b.timestamp) ? a : b
-    )
+    return all.reduce((a, b) => {
+      const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0
+      const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0
+      return ta > tb ? a : b
+    })
   }, [agentList, agentSteps])
 
   if (!latest) {

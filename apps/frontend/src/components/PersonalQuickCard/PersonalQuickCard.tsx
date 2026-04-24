@@ -28,9 +28,12 @@ type ConnStatus = 'ok' | 'error' | 'unknown'
 const ETSY_AGENTS = ['research', 'design', 'publisher', 'analytics', 'finance']
 
 /* ── helpers ─────────────────────────────────────────────────────── */
-function relTime(iso: string): string {
+function relTime(iso: string | undefined | null): string {
+  if (!iso) return '—'
   try {
-    const ms = Date.now() - new Date(iso).getTime()
+    const t = new Date(iso).getTime()
+    if (isNaN(t)) return '—'
+    const ms = Date.now() - t
     const m  = Math.round(ms / 60_000)
     if (m < 1)  return 'adesso'
     if (m < 60) return `${m}m fa`
