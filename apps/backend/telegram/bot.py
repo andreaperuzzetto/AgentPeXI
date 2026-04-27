@@ -312,20 +312,22 @@ class TelegramBot:
     async def _cmd_niche(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/niche <nicchia> [quick] — singola nicchia deep (default) o quick.
         /niche <n1> | <n2> | <n3> [quick] — confronto multi-nicchia (max 5).
+        Separatore: | oppure , (entrambi accettati).
         Es: /niche weekly planner
             /niche weekly planner quick
             /niche weekly planner | habit tracker | budget sheet
-            /niche botanical print | quote wall art | nursery art quick
+            /niche habit tracker, budget planner, goal journal quick
         """
         args = context.args or []
         if not args:
             await update.message.reply_text(
                 "Uso:\n"
                 "  `/niche <nicchia> [quick]` — singola nicchia\n"
-                "  `/niche <n1> | <n2> | <n3> [quick]` — confronto multi-nicchia\n\n"
+                "  `/niche <n1> | <n2> [quick]` — confronto multi-nicchia (separatore `|` o `,`)\n\n"
                 "Esempi:\n"
                 "  `/niche weekly planner`\n"
-                "  `/niche weekly planner | habit tracker | budget sheet`\n\n"
+                "  `/niche weekly planner | habit tracker | budget sheet`\n"
+                "  `/niche habit tracker, budget planner, goal journal`\n\n"
                 "Deep di default. Aggiungi `quick` per scansione rapida.",
                 parse_mode="Markdown",
             )
@@ -341,8 +343,11 @@ class TelegramBot:
             if raw.lower().endswith("quick"):
                 raw = raw[:-5].rstrip(" |").strip()
 
-        # Splitta per | — multi-nicchia se più di uno
-        niches = [n.strip() for n in raw.split("|") if n.strip()]
+        # Splitta per | o , — multi-nicchia se più di uno
+        if "|" in raw:
+            niches = [n.strip() for n in raw.split("|") if n.strip()]
+        else:
+            niches = [n.strip() for n in raw.split(",") if n.strip()]
         niches = niches[:5]  # max 5
 
         if not niches:
@@ -423,7 +428,35 @@ class TelegramBot:
                         f"🔑 Keywords: {_md_escape(kw_str)}"
                     )
                 else:
-                    reply = f"✅ Research completato per «{niches[0]}».\nNessun dato strutturato restituito."
+                    # Fallback: cerca dati utili in altre chiavi dell'output LLM
+                    winner = out.get("winner") or {}
+                    fallback_niche = (
+                        out.get("niche")
+                        or (winner.get("niche") if winner else "")
+                        or niches[0]
+                    )
+                    summary = out.get("summary") or out.get("analysis") or ""
+                    fb_pt = (
+                        out.get("recommended_product_type")
+                        or out.get("product_type")
+                        or (winner.get("product_type") if winner else "")
+                        or ""
+                    )
+                    fb_kw = out.get("keywords") or (winner.get("keywords") if winner else []) or []
+                    if summary or fb_pt or fb_kw:
+                        kw_str = ", ".join(fb_kw[:10]) if fb_kw else "—"
+                        pt_str = f" | Tipo: {fb_pt}" if fb_pt else ""
+                        reply = (
+                            f"✅ *Research completato: {_md_escape(fallback_niche)}*\n\n"
+                            + (f"💡 {_md_escape(summary)}\n" if summary else "")
+                            + f"🔑 Keywords: {_md_escape(kw_str)}{_md_escape(pt_str)}"
+                        )
+                    else:
+                        reply = (
+                            f"✅ Research completato per «{_md_escape(niches[0])}».\n"
+                            f"Nessun dato strutturato restituito.\n\n"
+                            f"_Raw output keys: {', '.join(out.keys()) or 'vuoto'}_"
+                        )
 
             await self._reply_chunked(update.message, reply)
         except Exception as exc:
@@ -552,7 +585,7 @@ class TelegramBot:
             "*— Etsy —*",
             "/pipeline [png] — avvia Research → Design → Publisher (PDF di default, aggiungi png per Digital Art)",
             "/niche <nicchia> [quick] — Research singola nicchia (deep di default)",
-            "/niche <n1> | <n2> | <n3> [quick] — confronto multi-nicchia (max 5)",
+            "/niche <n1> | <n2> [quick] — confronto multi-nicchia (separatore | o ,, max 5)",
             "/design <nicchia> [png] — Design Agent standalone (PDF di default, aggiungi png per Digital Art)",
             "/analytics — esegue subito il job analytics",
             "/finance — genera report economico",

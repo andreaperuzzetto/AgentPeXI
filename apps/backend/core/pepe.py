@@ -1966,7 +1966,6 @@ ESEMPI:
                 agent_name=agent_name,
                 input_data=enriched_input,
                 source=source,
-                status=TaskStatus.PENDING,
             )
             await self.memory.resolve_pending_input(task_id)
             return await self._enqueue_and_wait(new_task)
