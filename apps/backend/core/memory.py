@@ -1,7 +1,9 @@
 """MemoryManager — SQLite + ChromaDB per AgentPeXI.
 
-Schema: 9 tabelle SQLite (conversations, agent_logs, agent_steps, llm_calls,
-tool_calls, etsy_listings, scheduled_tasks, error_log, production_queue).
+Schema: 15 tabelle SQLite (conversations, agent_logs, agent_steps, llm_calls,
+tool_calls, etsy_listings, scheduled_tasks, error_log, production_queue,
+config, autopilot_state, market_signals, listing_performance,
+niche_intelligence, revenue_events).
 ChromaDB collection `pepe_memory` con Voyage AI voyage-3-lite embeddings.
 """
 
@@ -262,6 +264,101 @@ CREATE TABLE IF NOT EXISTS memory_queries (
 CREATE INDEX IF NOT EXISTS idx_mq_collection ON memory_queries(collection);
 CREATE INDEX IF NOT EXISTS idx_mq_agent      ON memory_queries(agent);
 CREATE INDEX IF NOT EXISTS idx_mq_queried_at ON memory_queries(queried_at);
+
+-- ---------------------------------------------------------------------------
+-- Blocco 1-4: nuove tabelle refactoring
+-- ---------------------------------------------------------------------------
+
+-- Configurazione chiave-valore (budget, policy, system flags)
+CREATE TABLE IF NOT EXISTS config (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at REAL NOT NULL DEFAULT (unixepoch())
+);
+
+-- Stato persistente AutopilotLoop (sopravvive ai restart)
+CREATE TABLE IF NOT EXISTS autopilot_state (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at REAL NOT NULL DEFAULT (unixepoch())
+);
+
+-- Cache dati di mercato raccolti da MarketDataAgent (Tier 1-2)
+CREATE TABLE IF NOT EXISTS market_signals (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    niche                TEXT    NOT NULL,
+    product_type         TEXT,
+    -- Tier 1: Etsy scraping
+    etsy_result_count    INTEGER,
+    avg_reviews          REAL,
+    avg_price_eur        REAL,
+    autocomplete_hits    INTEGER,
+    -- Tier 2: Google Trends / eRank
+    google_trend_score   REAL,
+    erank_search_volume  INTEGER,
+    -- Scoring calcolato
+    entry_score          REAL    DEFAULT 0.0,
+    seasonal_boost       REAL    DEFAULT 1.0,
+    -- Meta
+    tier                 INTEGER DEFAULT 1,
+    collected_at         REAL    NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_ms_niche       ON market_signals(niche, collected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ms_score       ON market_signals(entry_score DESC);
+
+-- Snapshot periodici performance listing pubblicati (AnalyticsAgent)
+CREATE TABLE IF NOT EXISTS listing_performance (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    etsy_listing_id     TEXT    NOT NULL,
+    production_queue_id INTEGER REFERENCES production_queue(id),
+    niche               TEXT    NOT NULL,
+    product_type        TEXT    NOT NULL,
+    views               INTEGER DEFAULT 0,
+    favorites           INTEGER DEFAULT 0,
+    orders              INTEGER DEFAULT 0,
+    revenue_eur         REAL    DEFAULT 0.0,
+    conversion_rate     REAL    DEFAULT 0.0,
+    favorite_rate       REAL    DEFAULT 0.0,
+    days_live           INTEGER DEFAULT 0,
+    snapshot_at         REAL    NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_lp_listing ON listing_performance(etsy_listing_id);
+CREATE INDEX IF NOT EXISTS idx_lp_niche   ON listing_performance(niche, snapshot_at DESC);
+
+-- Intelligenza aggregata per niche+product_type (LearningLoop → scoring)
+CREATE TABLE IF NOT EXISTS niche_intelligence (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    niche                TEXT    NOT NULL,
+    product_type         TEXT    NOT NULL,
+    total_listings       INTEGER DEFAULT 0,
+    total_orders         INTEGER DEFAULT 0,
+    total_revenue_eur    REAL    DEFAULT 0.0,
+    avg_conversion_rate  REAL    DEFAULT 0.0,
+    avg_favorite_rate    REAL    DEFAULT 0.0,
+    performance_score    REAL    DEFAULT 0.5,
+    confidence_level     TEXT    DEFAULT 'low',
+    last_sale_at         REAL,
+    last_updated_at      REAL    NOT NULL DEFAULT (unixepoch()),
+    UNIQUE(niche, product_type)
+);
+CREATE INDEX IF NOT EXISTS idx_ni_score ON niche_intelligence(performance_score DESC);
+CREATE INDEX IF NOT EXISTS idx_ni_niche ON niche_intelligence(niche);
+
+-- Singoli eventi di vendita (FinanceTracker)
+CREATE TABLE IF NOT EXISTS revenue_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    etsy_listing_id TEXT    NOT NULL,
+    order_id        TEXT    UNIQUE,
+    niche           TEXT,
+    product_type    TEXT,
+    gross_eur       REAL    NOT NULL,
+    etsy_fee_eur    REAL    NOT NULL,
+    net_eur         REAL    NOT NULL,
+    design_cost_eur REAL    DEFAULT 0.0,
+    sold_at         REAL    NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_re_sold_at ON revenue_events(sold_at DESC);
+CREATE INDEX IF NOT EXISTS idx_re_listing ON revenue_events(etsy_listing_id);
 """
 
 
@@ -318,11 +415,39 @@ class MemoryManager:
 
         # Migrazioni schema (colonne aggiunte dopo la creazione iniziale)
         _migrations = [
+            # --- migrazioni storiche ---
             "ALTER TABLE etsy_listings ADD COLUMN views_prev INTEGER DEFAULT 0",
             "ALTER TABLE conversations ADD COLUMN domain TEXT NOT NULL DEFAULT 'etsy'",
             "ALTER TABLE agent_logs ADD COLUMN domain TEXT NOT NULL DEFAULT 'etsy'",
             "ALTER TABLE llm_calls ADD COLUMN provider TEXT NOT NULL DEFAULT 'anthropic'",
             "ALTER TABLE pending_actions ADD COLUMN task_id TEXT",
+            # --- Blocco 1-2: estensione production_queue ---
+            # Dati di input
+            "ALTER TABLE production_queue ADD COLUMN keywords TEXT",
+            "ALTER TABLE production_queue ADD COLUMN entry_score REAL DEFAULT 0.0",
+            # Design output
+            "ALTER TABLE production_queue ADD COLUMN design_prompt TEXT",
+            "ALTER TABLE production_queue ADD COLUMN image_url TEXT",
+            "ALTER TABLE production_queue ADD COLUMN thumbnail_path TEXT",
+            "ALTER TABLE production_queue ADD COLUMN listing_title TEXT",
+            "ALTER TABLE production_queue ADD COLUMN listing_description TEXT",
+            "ALTER TABLE production_queue ADD COLUMN listing_tags TEXT",
+            "ALTER TABLE production_queue ADD COLUMN listing_price REAL",
+            # Approvazione
+            "ALTER TABLE production_queue ADD COLUMN approval_sent_at REAL",
+            "ALTER TABLE production_queue ADD COLUMN approval_message_id INTEGER",
+            "ALTER TABLE production_queue ADD COLUMN approval_chat_id INTEGER",
+            "ALTER TABLE production_queue ADD COLUMN skip_reason TEXT",
+            "ALTER TABLE production_queue ADD COLUMN skip_count_user INTEGER DEFAULT 0",
+            "ALTER TABLE production_queue ADD COLUMN skip_count_timeout INTEGER DEFAULT 0",
+            # Scheduling / pubblicazione
+            "ALTER TABLE production_queue ADD COLUMN scheduled_publish_at REAL",
+            "ALTER TABLE production_queue ADD COLUMN published_at REAL",
+            # Costi
+            "ALTER TABLE production_queue ADD COLUMN llm_cost_usd REAL DEFAULT 0.0",
+            "ALTER TABLE production_queue ADD COLUMN image_cost_usd REAL DEFAULT 0.0",
+            # Tracciabilità loop
+            "ALTER TABLE production_queue ADD COLUMN loop_run_id TEXT",
         ]
         for migration_sql in _migrations:
             try:
@@ -337,9 +462,14 @@ class MemoryManager:
 
         # Indici per nuove colonne (idempotenti)
         _new_indexes = [
+            # --- indici storici ---
             "CREATE INDEX IF NOT EXISTS idx_conv_domain ON conversations(domain)",
             "CREATE INDEX IF NOT EXISTS idx_agent_logs_domain ON agent_logs(domain)",
             "CREATE INDEX IF NOT EXISTS idx_pa_task ON pending_actions(task_id)",
+            # --- Blocco 2: nuovi indici production_queue ---
+            "CREATE INDEX IF NOT EXISTS idx_pq_niche ON production_queue(niche, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_pq_scheduled ON production_queue(scheduled_publish_at) WHERE scheduled_publish_at IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_pq_loop_run ON production_queue(loop_run_id)",
         ]
         for idx_sql in _new_indexes:
             try:
@@ -406,6 +536,15 @@ class MemoryManager:
         if self._db:
             await self._db.close()
             self._db = None
+
+    async def get_db(self):
+        """
+        Ritorna la connessione aiosqlite raw.
+        Usato da service layer (ProductionQueueService, MarketDataAgent, etc.)
+        che gestiscono le proprie query senza passare per metodi MemoryManager.
+        La connessione è garantita aperta dopo initialize().
+        """
+        return self._db
 
     # ------------------------------------------------------------------
     # Conversations
