@@ -123,6 +123,7 @@ class ResearchAgent(AgentBase):
     def __init__(self, *, telegram_broadcaster: Callable | None = None, **kwargs: Any) -> None:
         super().__init__(name="research", model=MODEL_HAIKU, **kwargs)
         self._telegram_broadcast = telegram_broadcaster
+        self._entry_scorer = None   # lazy init — EntryPointScoring (step 1.5)
 
     async def _notify_telegram(self, message: str) -> None:
         if self._telegram_broadcast:
@@ -130,6 +131,59 @@ class ResearchAgent(AgentBase):
                 await self._telegram_broadcast(message)
             except Exception:
                 pass
+
+    async def _get_entry_point_scorer(self):
+        """
+        Lazy init di EntryPointScoring + MarketDataAgent.
+        Importazioni locali per evitare import circolari.
+        mock_mode letto dalla tabella config (default False).
+        """
+        if self._entry_scorer is None:
+            from apps.backend.agents.market_data import MarketDataAgent
+            from apps.backend.core.entry_point_scoring import EntryPointScoring
+
+            mock_mode = False
+            try:
+                db = await self.memory.get_db()
+                cur = await db.execute(
+                    "SELECT value FROM config WHERE key = 'system.mock_mode'"
+                )
+                row = await cur.fetchone()
+                if row:
+                    mock_mode = row["value"].lower() in ("true", "1", "on")
+            except Exception:
+                pass
+
+            market_data = MarketDataAgent(memory=self.memory, mock_mode=mock_mode)
+            self._entry_scorer = EntryPointScoring(
+                memory=self.memory, market_data=market_data
+            )
+        return self._entry_scorer
+
+    @staticmethod
+    def _build_market_context(scored_candidate) -> str:
+        """
+        Converte un ScoredCandidate in una stringa compatta per il prompt LLM.
+        Se signals è None (cold-start) ritorna stringa vuota.
+        """
+        sc = scored_candidate
+        signals = sc.signals
+        if signals is None:
+            return ""
+
+        lines = [
+            "## Dati di mercato strutturati (MarketDataAgent)",
+            f"Entry score: {sc.final_score:.3f} "
+            f"(base={sc.base_score:.3f}, qgf={sc.quality_gap_factor}, "
+            f"perf_mult={sc.performance_multiplier})",
+            f"Listing Etsy trovati: {getattr(signals, 'etsy_result_count', 'n/d'):,}",
+            f"Avg favorites (domanda proxy): {getattr(signals, 'avg_reviews', 0):.1f}",
+            f"Avg prezzo: €{getattr(signals, 'avg_price_eur', 0):.2f}",
+            f"Autocomplete hits: {getattr(signals, 'autocomplete_hits', 0)}",
+            f"Google Trends score: {getattr(signals, 'google_trend_score', 0):.1f}/100",
+            f"Seasonal boost: {getattr(signals, 'seasonal_boost', 1.0)}",
+        ]
+        return "\n".join(lines)
 
     async def _read_finance_context(self, niche: str) -> str:
         """
@@ -628,6 +682,39 @@ class ResearchAgent(AgentBase):
             + ", ".join(f"{c['niche']} [{c['product_type']}]" for c in candidates[:4])
             + ("…" if len(candidates) > 4 else ""),
         )
+
+        # Step 1b — EntryPointScoring: filtra e ordina, mantiene top-3
+        # Fallisce silenziosamente: se lo scorer dà errore usa i candidati raw
+        try:
+            scorer = await self._get_entry_point_scorer()
+            scored = await scorer.rank_candidates(candidates, top_k=3)
+            if scored:
+                candidates = [
+                    {
+                        "niche":          sc.niche,
+                        "product_type":   sc.product_type or c.get("product_type", "printable_pdf"),
+                        "source":         c.get("source", "entry_point_scored"),
+                        "entry_score":    sc.final_score,
+                        "market_context": self._build_market_context(sc),
+                    }
+                    for sc, c in zip(
+                        scored,
+                        {c["niche"]: c for c in candidates}.values(),
+                    )
+                ]
+                await self._log_step(
+                    "thinking",
+                    "EntryPointScoring top-3: "
+                    + ", ".join(
+                        f"{c['niche']} [score={c['entry_score']:.2f}]"
+                        for c in candidates
+                    ),
+                )
+        except Exception as _ep_err:
+            logger.warning(
+                "research: EntryPointScoring fallito, uso candidati raw: %s", _ep_err
+            )
+
         await self._notify_telegram(
             f"🔍 Research autonomo: analisi {len(candidates)} candidati in parallelo…"
         )
@@ -640,8 +727,10 @@ class ResearchAgent(AgentBase):
                 sub_task = AgentTask(
                     agent_name=self.name,
                     input_data={
-                        "niches": [candidate["niche"]],
+                        "niches":          [candidate["niche"]],
                         "product_type_hint": candidate["product_type"],
+                        "entry_score":     candidate.get("entry_score", 0.0),
+                        "market_context":  candidate.get("market_context", ""),
                     },
                     source=task.source,
                 )
@@ -1001,6 +1090,14 @@ class ResearchAgent(AgentBase):
         self, task: AgentTask, niche: str
     ) -> AgentResult:
         """Analisi approfondita di una singola nicchia."""
+        # Legge market_context da EntryPointScoring (se presente)
+        _input          = task.input_data or {}
+        _market_context = _input.get("market_context", "")
+        _entry_score    = _input.get("entry_score", 0.0)
+        _market_block   = (
+            f"\n\n{_market_context}" if _market_context else ""
+        )
+
         # Step 0 — Cache check ChromaDB
         cached = await self.memory.query_chromadb(
             query=f"Research report per nicchia '{niche}'",
@@ -1051,10 +1148,11 @@ class ResearchAgent(AgentBase):
                 keyword=niche,
             )
             data_sources = {
-                "pricing": "cached",
+                "pricing":     "cached",
                 "competitors": "cached",
-                "trend": "google_trends" if isinstance(trend_data, dict) and trend_data.get("source") == "google_trends" else "llm_inference",
-                "keywords": "cached",
+                "trend":       "google_trends" if isinstance(trend_data, dict) and trend_data.get("source") == "google_trends" else "llm_inference",
+                "keywords":    "cached",
+                "entry_point": "market_signals" if _market_context else "none",
             }
 
             analysis = await self._call_llm(
@@ -1064,6 +1162,7 @@ class ResearchAgent(AgentBase):
                         f"Aggiorna l'analisi della nicchia Etsy: **{niche}** (digital products).\n\n"
                         f"## Dati cache (< 7 giorni)\n{cached_data['document']}\n\n"
                         f"## Google Trends aggiornato\n{json.dumps(trend_data, indent=2, default=str)}"
+                        f"{_market_block}"
                         f"{failure_text}"
                         f"{finance_text}"
                         f"{shared_text}\n\n"
@@ -1111,10 +1210,11 @@ class ResearchAgent(AgentBase):
             erank_raw = etsy_direct.get("erank_keyword_data", []) if isinstance(etsy_direct, dict) else []
 
             data_sources = {
-                "pricing": "etsy_extract" if etsy_raw else "blog_inference",
+                "pricing":     "etsy_extract" if etsy_raw else "blog_inference",
                 "competitors": "etsy_extract" if etsy_raw else "blog_mention",
-                "trend": "google_trends" if isinstance(trend_data, dict) and trend_data.get("source") == "google_trends" else "llm_inference",
-                "keywords": "erank_content" if erank_raw else "llm_inference",
+                "trend":       "google_trends" if isinstance(trend_data, dict) and trend_data.get("source") == "google_trends" else "llm_inference",
+                "keywords":    "erank_content" if erank_raw else "llm_inference",
+                "entry_point": "market_signals" if _market_context else "none",
             }
 
             # Step 3 — LLM analysis
@@ -1127,6 +1227,7 @@ class ResearchAgent(AgentBase):
                         f"## Dati competitor\n{json.dumps(competitor_results, indent=2, default=str)}\n\n"
                         f"## Dati keyword SEO\n{json.dumps(keyword_results, indent=2, default=str)}\n\n"
                         f"## Google Trends\n{json.dumps(trend_data, indent=2, default=str)}"
+                        f"{_market_block}"
                         f"{failure_text}"
                         f"{finance_text}"
                         f"{shared_text}\n\n"
@@ -1704,6 +1805,13 @@ class ResearchAgent(AgentBase):
         missing: list[str] = []
 
         # === PARTE 1: Qualità fonti dati (55% del totale) ===
+
+        # Entry point scoring (peso 0.15) — dati strutturati da MarketDataAgent
+        # Aggiunge confidenza quando abbiamo segnali di mercato reali pre-LLM
+        entry_src = data_sources.get("entry_point", "none")
+        if entry_src == "market_signals":
+            score += 0.15
+        # Se assente: score non penalizzato (source opzionale)
 
         # Pricing (peso 0.20)
         pricing_src = data_sources.get("pricing", "")

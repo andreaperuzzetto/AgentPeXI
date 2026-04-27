@@ -446,6 +446,8 @@ class MemoryManager:
             # Costi
             "ALTER TABLE production_queue ADD COLUMN llm_cost_usd REAL DEFAULT 0.0",
             "ALTER TABLE production_queue ADD COLUMN image_cost_usd REAL DEFAULT 0.0",
+            "ALTER TABLE production_queue ADD COLUMN listing_fee_usd REAL DEFAULT 0.20",   # 🔴 [B2/video]
+            "ALTER TABLE production_queue ADD COLUMN ads_activated INTEGER DEFAULT 0",      # 🔴 [B2/video]
             # Tracciabilità loop
             "ALTER TABLE production_queue ADD COLUMN loop_run_id TEXT",
         ]
