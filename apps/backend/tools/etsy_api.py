@@ -29,6 +29,14 @@ ETSY_BASE_URL = "https://api.etsy.com/v3"
 ETSY_TOKEN_URL = "https://api.etsy.com/v3/public/oauth/token"
 
 
+class EtsyAPIError(Exception):
+    """Eccezione per errori Etsy API (4xx/5xx, token scaduto, rate limit)."""
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class EtsyAPI:
     """Client async per Etsy v3 API."""
 

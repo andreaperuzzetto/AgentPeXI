@@ -13,9 +13,10 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -27,6 +28,7 @@ from apps.backend.core.domains import DOMAIN_ETSY
 from apps.backend.core.models import AgentTask
 
 if TYPE_CHECKING:
+    from apps.backend.core.autopilot_loop import AutopilotLoop
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.scheduler import Scheduler
     from apps.backend.screen.watcher import ScreenWatcher
@@ -52,10 +54,12 @@ class TelegramBot:
         pepe: Pepe,
         scheduler: Scheduler | None = None,
         screen_watcher: ScreenWatcher | None = None,
+        autopilot_loop: "AutopilotLoop | None" = None,
     ) -> None:
         self.pepe = pepe
         self.scheduler = scheduler
         self.screen_watcher = screen_watcher
+        self.autopilot_loop = autopilot_loop
         self._app: Application | None = None
 
         # Filtro: rispondi solo all'utente autorizzato.
@@ -113,6 +117,11 @@ class TelegramBot:
         assert self._app is not None
         add = self._app.add_handler
 
+        # Blocco 2 — AutopilotLoop
+        add(CommandHandler("run",  self._cmd_run,  filters=self._chat_filter))
+        add(CommandHandler("stop", self._cmd_stop, filters=self._chat_filter))
+        add(CallbackQueryHandler(self._handle_approval_callback))
+
         add(CommandHandler("status", self._cmd_status, filters=self._chat_filter))
         add(CommandHandler("report", self._cmd_report, filters=self._chat_filter))
         add(CommandHandler("pause", self._cmd_pause, filters=self._chat_filter))
@@ -153,31 +162,122 @@ class TelegramBot:
     # ------------------------------------------------------------------
 
     async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """/status — stato del sistema."""
-        statuses = self.pepe.get_agent_statuses()
-        if not statuses:
-            await update.message.reply_text("🟢 Sistema attivo. Nessun agente registrato.")
-            return
-
+        """/status — stato del sistema + AutopilotLoop (B2)."""
         lines = ["🟢 *Sistema AgentPeXI*\n"]
-        status_icons = {"idle": "⚪", "running": "🔵", "error": "🔴"}
-        for name, status in statuses.items():
-            icon = status_icons.get(status, "❓")
-            lines.append(f"{icon} *{name}*: {status}")
+
+        # AutopilotLoop status (Blocco 2)
+        if self.autopilot_loop is not None:
+            try:
+                loop_status = await self.autopilot_loop.cmd_status()
+                lines.append(loop_status)
+                lines.append("")
+            except Exception as exc:
+                lines.append(f"⚠️ Loop status errore: {exc}\n")
+
+        # Agenti Pepe
+        statuses = self.pepe.get_agent_statuses()
+        if statuses:
+            status_icons = {"idle": "⚪", "running": "🔵", "error": "🔴"}
+            lines.append("*Agenti:*")
+            for name, status in statuses.items():
+                icon = status_icons.get(status, "❓")
+                lines.append(f"{icon} {name}: {status}")
+            lines.append("")
 
         queue_size = self.pepe._queue.qsize()
-        lines.append(f"\n📋 Task in coda: {queue_size}")
+        lines.append(f"📋 Task Pepe in coda: {queue_size}")
 
         domain = self.pepe.get_active_domain()
         domain_name = domain.name if domain else "personal"
         domain_icon = "🏪" if domain_name == "etsy_store" else "🧠"
-        lines.append(f"\n{domain_icon} *Dominio attivo*: {domain_name}")
+        lines.append(f"{domain_icon} *Dominio attivo*: {domain_name}")
 
-        mock_line = "\n🟡 *MOCK MODE ATTIVO*" if self.pepe.mock_mode else ""
-        if mock_line:
-            lines.append(mock_line)
+        if self.pepe.mock_mode:
+            lines.append("\n🟡 *MOCK MODE ATTIVO*")
 
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    # ------------------------------------------------------------------
+    # Blocco 2 — AutopilotLoop commands
+    # ------------------------------------------------------------------
+
+    async def _cmd_run(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/run — avvia o riprende l'AutopilotLoop."""
+        loop = self.autopilot_loop
+        if loop is None:
+            await update.message.reply_text("⚠️ AutopilotLoop non disponibile.")
+            return
+        msg = await loop.cmd_run()
+        await update.message.reply_text(msg)
+
+    async def _cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/stop — mette l'AutopilotLoop in paused_manual."""
+        loop = self.autopilot_loop
+        if loop is None:
+            await update.message.reply_text("⚠️ AutopilotLoop non disponibile.")
+            return
+        msg = await loop.cmd_stop()
+        await update.message.reply_text(msg)
+
+    async def _handle_approval_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """CallbackQueryHandler — gestisce Approva/Salta dalla inline keyboard."""
+        query = update.callback_query
+        if query is None:
+            return
+
+        # Sicurezza: solo l'utente autorizzato
+        if str(query.from_user.id) != str(settings.TELEGRAM_CHAT_ID):
+            await query.answer("Non autorizzato.")
+            return
+
+        await query.answer()  # rimuove il loading sul pulsante
+
+        data = query.data or ""
+        # formato atteso: "approve:{item_id}" | "skip:{item_id}"
+        if ":" not in data:
+            return
+
+        action, _, raw_id = data.partition(":")
+        try:
+            item_id = int(raw_id)
+        except ValueError:
+            return
+
+        loop = self.autopilot_loop
+        if loop is None:
+            await query.edit_message_reply_markup(reply_markup=None)
+            return
+
+        if action == "approve":
+            loop.register_approval(item_id, "approved")
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.message.reply_text(f"✅ Approvazione registrata per item {item_id}.")
+            except Exception:
+                pass
+        elif action == "skip":
+            loop.register_approval(item_id, "skipped_user")
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.message.reply_text(f"⏭ Skip registrato per item {item_id}.")
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Helper: costruisce la inline keyboard per le approval notification
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def build_approval_keyboard(item_id: int) -> InlineKeyboardMarkup:
+        """Restituisce la inline keyboard [✅ Approva] [⏭ Salta] per un item."""
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Approva", callback_data=f"approve:{item_id}"),
+                InlineKeyboardButton("⏭ Salta",   callback_data=f"skip:{item_id}"),
+            ]
+        ])
 
     async def _cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/report — chiede report a Pepe."""

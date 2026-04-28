@@ -109,6 +109,11 @@ storage = None       # apps.backend.core.storage.StorageManager — assegnato in
 etsy_api = None      # apps.backend.tools.etsy_api.EtsyAPI — assegnato in lifespan
 scheduler = None     # apps.backend.core.scheduler.Scheduler — assegnato in lifespan
 screen_watcher = None  # apps.backend.screen.watcher.ScreenWatcher — assegnato in lifespan
+# Blocco 2 — Autonomy Layer
+production_queue   = None   # apps.backend.core.production_queue.ProductionQueueService
+budget_manager     = None   # apps.backend.core.budget_manager.BudgetManager
+publication_policy = None   # apps.backend.core.publication_policy.PublicationPolicy
+autopilot_loop     = None   # apps.backend.core.autopilot_loop.AutopilotLoop
 
 
 # ------------------------------------------------------------------
@@ -120,6 +125,7 @@ screen_watcher = None  # apps.backend.screen.watcher.ScreenWatcher — assegnato
 async def lifespan(app: FastAPI):
     """Startup: MemoryManager, Pepe, workers, Telegram bot. Shutdown: graceful stop."""
     global memory, pepe, storage, etsy_api, scheduler, screen_watcher
+    global production_queue, budget_manager, publication_policy, autopilot_loop
 
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.scheduler import Scheduler
@@ -219,6 +225,20 @@ async def lifespan(app: FastAPI):
     etsy_api = EtsyAPI(memory=memory, pepe=pepe)
     logger.info("EtsyAPI inizializzato")
 
+    # 2d-b2. Autonomy Layer — Blocco 2
+    from apps.backend.core.production_queue import ProductionQueueService
+    from apps.backend.core.budget_manager import BudgetManager
+    from apps.backend.core.publication_policy import PublicationPolicy
+    from apps.backend.core.autopilot_loop import AutopilotLoop
+
+    _db = await memory.get_db()
+    production_queue   = ProductionQueueService(_db)
+    budget_manager     = BudgetManager(_db)
+    publication_policy = PublicationPolicy(_db)
+    await budget_manager.ensure_defaults()
+    await publication_policy.ensure_defaults()
+    logger.info("Autonomy Layer (B2): ProductionQueueService, BudgetManager, PublicationPolicy inizializzati")
+
     # 2e. Publisher Agent
     publisher_agent = PublisherAgent(
         anthropic_client=pepe.client,
@@ -302,7 +322,20 @@ async def lifespan(app: FastAPI):
     #     _screen_watcher_error = str(exc)
     #     screen_watcher = None
 
-    # 3. Scheduler APScheduler
+    # 3. AutopilotLoop — instanziato prima dello Scheduler e del bot
+    #    così bot_send è il telegram_broadcast già definito sopra
+    autopilot_loop = AutopilotLoop(
+        db               = _db,
+        queue            = production_queue,
+        budget           = budget_manager,
+        policy           = publication_policy,
+        bot_send         = telegram_broadcast,
+        design_pipeline  = None,   # iniettato da DesignAgent in Blocco 3
+        niche_picker     = None,   # iniettato da ResearchAgent in Blocco 3
+    )
+    logger.info("AutopilotLoop istanziato")
+
+    # 4. Scheduler APScheduler
     scheduler = Scheduler(
         memory=memory,
         ws_broadcaster=ws_manager.broadcast,
@@ -315,11 +348,25 @@ async def lifespan(app: FastAPI):
         finance_agent=finance_agent,
         telegram_broadcaster=telegram_broadcast,
         screen_watcher=screen_watcher,
+        # Blocco 2
+        production_queue   = production_queue,
+        budget_manager     = budget_manager,
+        publication_policy = publication_policy,
+        autopilot_loop     = autopilot_loop,
+        etsy_client        = etsy_api,
     )
-    # 4. Bot Telegram (stesso event loop di FastAPI) — prima dello scheduler
-    # così set_reminder_notifier è già collegato quando il checker spara il primo fire
-    telegram_bot = TelegramBot(pepe=pepe, scheduler=scheduler, screen_watcher=screen_watcher)
+    # 5. Bot Telegram (stesso event loop di FastAPI)
+    telegram_bot = TelegramBot(
+        pepe=pepe,
+        scheduler=scheduler,
+        screen_watcher=screen_watcher,
+        autopilot_loop=autopilot_loop,
+    )
     await telegram_bot.start()
+
+    # 6. Avvia AutopilotLoop (dopo il bot, così le notifiche arrivano subito)
+    await autopilot_loop.start()
+    logger.info("AutopilotLoop avviato")
 
     await scheduler.start()
     logger.info("Scheduler avviato")
@@ -341,6 +388,9 @@ async def lifespan(app: FastAPI):
 
     # Shutdown (ordine inverso)
     await telegram_bot.stop()
+    if autopilot_loop is not None:
+        await autopilot_loop.stop()
+        logger.info("AutopilotLoop fermato")
     await scheduler.stop()
     if screen_watcher is not None:
         await screen_watcher.stop()

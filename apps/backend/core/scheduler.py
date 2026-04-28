@@ -68,6 +68,12 @@ class Scheduler:
         finance_agent: Any = None,
         telegram_broadcaster: Callable | None = None,
         screen_watcher: Any = None,
+        # Blocco 2 — Autonomy Layer
+        production_queue: Any = None,
+        budget_manager: Any = None,
+        publication_policy: Any = None,
+        autopilot_loop: Any = None,
+        etsy_client: Any = None,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
@@ -80,6 +86,12 @@ class Scheduler:
         self.finance_agent = finance_agent
         self._telegram_broadcast = telegram_broadcaster
         self.screen_watcher = screen_watcher
+        # Blocco 2
+        self.production_queue  = production_queue
+        self.budget_manager    = budget_manager
+        self.publication_policy = publication_policy
+        self.autopilot_loop    = autopilot_loop
+        self.etsy_client       = etsy_client
         self._scheduler = AsyncIOScheduler()
         # Track job execution state: job_id → {status, last_run}
         self._job_status: dict[str, dict[str, Any]] = {}
@@ -134,6 +146,15 @@ class Scheduler:
         # daily_pipeline, analytics_daily, finance_daily rimossi (Blocco 0 planv2).
         # Pipeline, analytics e finance si avviano SOLO via comandi Telegram:
         # /pipeline, /analytics, /finance
+
+        # Blocco 2 — publish checker ogni 15 minuti
+        self._scheduler.add_job(
+            self._run_publish_checker,
+            trigger=IntervalTrigger(minutes=15),
+            id="publish_checker",
+            name="Publish checker (B2)",
+            replace_existing=True,
+        )
 
         # Screen cleanup nightly (Blocco 2) — elimina chunk più vecchi di SCREEN_RETENTION_DAYS
         if self.screen_watcher is not None:
@@ -1473,6 +1494,76 @@ class Scheduler:
         if "nursery" in n or "kids" in n or "baby" in n or "children" in n or "animal" in n:
             return "nursery_print"
         return "wall_art"
+
+    # ------------------------------------------------------------------
+    # Blocco 2 — Publish checker
+    # ------------------------------------------------------------------
+
+    async def _run_publish_checker(self) -> None:
+        """Pubblica su Etsy tutti gli item scheduled con slot ≤ now.
+
+        Schedulato ogni 15 minuti. Attiva Etsy Ads post-publish se policy lo prevede.
+        L'effettiva chiamata API ads è implementata nel Blocco 5 (EtsyAdsManager);
+        qui si marca solo ads_activated=1 come preparazione.
+        """
+        from apps.backend.tools.etsy_api import EtsyAPIError
+
+        queue  = self.production_queue
+        policy = self.publication_policy
+
+        if queue is None:
+            logger.debug("publish_checker: production_queue non iniettata, skip")
+            return
+
+        now = datetime.now(timezone.utc).timestamp()
+        due_items = await queue.get_due_scheduled(now)
+
+        if not due_items:
+            return
+
+        logger.info("publish_checker: %d item da pubblicare", len(due_items))
+
+        mock = bool(getattr(self.pepe, "mock_mode", False))
+
+        for item in due_items:
+            if mock:
+                await queue.set_published(item.id, etsy_listing_id="MOCK_ID")
+                await self._notify_telegram(
+                    f"📦 [MOCK] Pubblicato: {item.listing_title or item.niche}"
+                )
+                logger.info("publish_checker [MOCK] item %d", item.id)
+                continue
+
+            try:
+                if self.etsy_client is None:
+                    raise EtsyAPIError("etsy_client non iniettato")
+
+                listing_id = await self.etsy_client.publish_listing(item)
+                await queue.set_published(item.id, listing_id)
+                await self._notify_telegram(
+                    f"🎉 Pubblicato: {item.listing_title or item.niche}\n"
+                    f"🔗 https://etsy.com/listing/{listing_id}"
+                )
+                logger.info("publish_checker: item %d → listing %s", item.id, listing_id)
+
+                # 🔴 [video] — attiva Etsy Ads se policy lo prevede
+                # Chiamata API ads implementata in Blocco 5 (EtsyAdsManager)
+                if policy is not None and await policy.ads_enabled():
+                    await queue.set_ads_activated(item.id)
+                    logger.info(
+                        "Etsy Ads attivazione marcata per listing %s", listing_id
+                    )
+
+            except EtsyAPIError as exc:
+                await queue.set_failed(item.id, str(exc))
+                await self._notify_telegram(
+                    f"❌ Errore pubblicazione {item.listing_title or item.niche}: {exc}"
+                )
+                logger.error("publish_checker: item %d fallito: %s", item.id, exc)
+
+            except Exception as exc:
+                await queue.set_failed(item.id, str(exc))
+                logger.exception("publish_checker: errore inatteso item %d", item.id)
 
     async def _notify_telegram(self, message: str) -> None:
         """Invia notifica via Telegram (se broadcaster disponibile)."""
