@@ -138,6 +138,8 @@ async def lifespan(app: FastAPI):
     from apps.backend.agents.publisher import PublisherAgent
     from apps.backend.agents.analytics import AnalyticsAgent
     from apps.backend.agents.finance import FinanceAgent
+    from apps.backend.core.learning_loop import LearningLoop
+    from apps.backend.core.bundle_strategy import BundleStrategy
     from apps.backend.agents.recall import RecallAgent
     from apps.backend.agents.remind import RemindAgent
     from apps.backend.agents.summarize import SummarizeAgent
@@ -251,7 +253,15 @@ async def lifespan(app: FastAPI):
     )
     pepe.register_agent("publisher", publisher_agent)
 
-    # 2f. Analytics Agent
+    # 2f. LearningLoop — B4/4.5 (wired prima di AnalyticsAgent che lo usa)
+    learning_loop = LearningLoop(memory=memory)
+    logger.info("LearningLoop istanziato")
+
+    # 2g. BundleStrategy — B4/4.6
+    bundle_strategy = BundleStrategy(memory=memory, learning_loop=learning_loop)
+    logger.info("BundleStrategy istanziato")
+
+    # 2h. Analytics Agent
     analytics_agent = AnalyticsAgent(
         anthropic_client=pepe.client,
         memory=memory,
@@ -259,7 +269,7 @@ async def lifespan(app: FastAPI):
         ws_broadcaster=ws_manager.broadcast,
         telegram_broadcaster=telegram_broadcast,
         production_queue=production_queue,   # B4/4.2 — Ladder System + polling
-        # learning_loop wired in step 4.5
+        learning_loop=learning_loop,         # B4/4.5 — CTR attribution + score update
     )
     pepe.register_agent("analytics", analytics_agent)
 
@@ -325,6 +335,258 @@ async def lifespan(app: FastAPI):
     #     _screen_watcher_error = str(exc)
     #     screen_watcher = None
 
+    # ---------------------------------------------------------------------------
+    # 2j. Callable per AutopilotLoop — design_pipeline + niche_picker
+    #
+    # design_pipeline: riceve (item_id, niche_data), esegue DesignAgent,
+    #   poi chiama production_queue.set_design_ready() per transitare
+    #   l'item a pending_approval con thumbnail e dati listing di base.
+    #   Il SEO completo (titolo lungo, descrizione) viene generato da
+    #   PublisherAgent al momento della pubblicazione effettiva.
+    #
+    # niche_picker: prova prima niche_intelligence (score calcolato da
+    #   LearningLoop — B4/4.5), poi fa fallback su ResearchAgent per
+    #   scoperta autonoma di nuove nicchie.
+    # ---------------------------------------------------------------------------
+
+    from apps.backend.core.models import AgentTask as _AgentTask, TaskStatus as _TaskStatus
+
+    async def _autopilot_design_pipeline(item_id: int, niche_data: dict) -> None:
+        """Esegue DesignAgent e salva output in production_queue."""
+        niche        = niche_data.get("niche", "")
+        product_type = niche_data.get("product_type", "digital_print")
+        keywords     = niche_data.get("keywords", [])
+
+        design_task = _AgentTask(
+            agent_name="design",
+            input_data={
+                "niche":         niche,
+                "product_type":  product_type,
+                "keywords":      keywords,
+                "color_schemes": niche_data.get("color_schemes", []),
+                "source":        "autopilot",
+            },
+            source="autopilot",
+        )
+        try:
+            result = await pepe.dispatch_task(design_task)
+        except Exception as exc:
+            logger.error("design_pipeline: DesignAgent fallito item=%d: %s", item_id, exc)
+            return
+
+        if result.status != _TaskStatus.COMPLETED:
+            logger.warning(
+                "design_pipeline: DesignAgent non completato item=%d status=%s",
+                item_id, result.status,
+            )
+            return
+
+        out      = result.output_data or {}
+        variants = out.get("variants", [])
+
+        # Thumbnail: primo variant con output_path disponibile
+        thumbnail_path = ""
+        image_url      = ""
+        if variants:
+            first          = variants[0]
+            thumbnail_path = first.get("thumbnail_path") or first.get("output_path") or ""
+            image_url      = first.get("image_url") or ""
+
+        # SEO placeholder — titolo leggibile da mostrare nell'approvazione Telegram.
+        # Il SEO definitivo (ottimizzato per Etsy) viene generato da PublisherAgent
+        # nella fase di pubblicazione (publish_checker → etsy_client.publish_listing).
+        title = (
+            f"{niche.replace('_', ' ').title()} — {product_type.replace('_', ' ').title()}"
+        )
+        tags  = keywords[:13]
+
+        pricing    = niche_data.get("pricing") or {}
+        price: float
+        if isinstance(pricing, dict) and pricing.get("price"):
+            price = float(pricing["price"])
+        else:
+            price = float(niche_data.get("price") or 4.99)
+
+        await production_queue.set_design_ready(
+            item_id       = item_id,
+            design_prompt = out.get("cover_title") or out.get("template") or niche,
+            image_url     = image_url,
+            thumbnail_path= thumbnail_path,
+            title         = title,
+            description   = "",   # generato da PublisherAgent al publish
+            tags          = tags,
+            price         = price,
+            llm_cost      = result.cost_usd or 0.0,
+            image_cost    = float(out.get("image_cost_usd") or 0.0),
+        )
+        logger.info(
+            "design_pipeline: item=%d → pending_approval (niche=%s, thumbnail=%s)",
+            item_id, niche, thumbnail_path or "nessuna",
+        )
+
+    async def _autopilot_niche_picker() -> dict | None:
+        """
+        Sceglie la prossima niche con rotazione data-driven. — B4/4.7
+
+        Strategia a cascata:
+          1. niche_intelligence — multi-candidate scoring:
+               - legge top 10 per performance_score
+               - filtra niche "perdenti certificate" (score < 0.3 + confidence=high)
+               - evita la niche dell'ultimo listing pubblicato (anti-repetition)
+               - final_score = performance_score  (boost implicito: già pesa CTR+conv+rev)
+          2. Unexplored candidates (LearningLoop) — niches con score ma 0 listing recenti
+          3. ResearchAgent discovery autonoma — solo se non c'è niente nei dati locali
+        """
+        # Leggi l'ultima niche pubblicata per anti-repetition
+        last_niche = ""
+        try:
+            db_conn    = await memory.get_db()
+            cursor_rep = await db_conn.execute(
+                """
+                SELECT niche FROM production_queue
+                WHERE status = 'published'
+                ORDER BY published_at DESC LIMIT 1
+                """
+            )
+            rep_row   = await cursor_rep.fetchone()
+            last_niche = rep_row["niche"] if rep_row else ""
+        except Exception:
+            pass
+
+        # 1. Multi-candidate scoring da niche_intelligence
+        try:
+            db_conn = await memory.get_db()
+            cursor  = await db_conn.execute(
+                """
+                SELECT niche, product_type, performance_score, confidence_level
+                FROM niche_intelligence
+                WHERE performance_score IS NOT NULL AND performance_score > 0
+                ORDER BY performance_score DESC
+                LIMIT 10
+                """
+            )
+            rows = await cursor.fetchall()
+
+            scored = []
+            for row in rows:
+                niche        = row["niche"]
+                product_type = row["product_type"]
+                score        = float(row["performance_score"])
+                confidence   = row["confidence_level"] or "low"
+
+                # Filtra niche perdenti certificate
+                if score < 0.3 and confidence == "high":
+                    logger.debug("niche_picker: skip perdente [%s] score=%.3f conf=%s",
+                                 niche, score, confidence)
+                    continue
+
+                # Penalità leggera alla niche dell'ultimo listing (evita ripetizione)
+                if niche == last_niche:
+                    score *= 0.7
+
+                scored.append({
+                    "niche":        niche,
+                    "product_type": product_type,
+                    "entry_score":  round(score, 3),
+                    "keywords":     [],
+                })
+
+            if scored:
+                # Ordina per final_score (dopo eventuali penalità)
+                scored.sort(key=lambda x: x["entry_score"], reverse=True)
+                winner = scored[0]
+                logger.info(
+                    "niche_picker: selezionata [%s/%s] score=%.3f",
+                    winner["niche"], winner["product_type"], winner["entry_score"],
+                )
+                return winner
+
+        except Exception as exc:
+            logger.warning("niche_picker: lettura niche_intelligence fallita: %s", exc)
+
+        # 2. Unexplored candidates — niches con score ma 0 listing recenti
+        try:
+            unexplored = await learning_loop.get_unexplored_candidates()
+            if unexplored:
+                best = unexplored[0]
+                logger.info(
+                    "niche_picker: unexplored [%s/%s] score=%.3f",
+                    best["niche"], best["product_type"], best["performance_score"],
+                )
+                return {
+                    "niche":        best["niche"],
+                    "product_type": best["product_type"],
+                    "entry_score":  best["performance_score"],
+                    "keywords":     [],
+                }
+        except Exception as exc:
+            logger.warning("niche_picker: get_unexplored_candidates fallito: %s", exc)
+
+        # 3. Ultimate fallback: ResearchAgent discovery autonoma (LLM cost)
+        logger.info("niche_picker: nessun dato locale — avvio ResearchAgent")
+        research_task = _AgentTask(
+            agent_name="research",
+            input_data={"mode": "autonomous_discovery", "source": "autopilot"},
+            source="autopilot",
+        )
+        try:
+            result = await pepe.dispatch_task(research_task)
+            out    = result.output_data or {}
+            niches = out.get("niches", [])
+            if niches and isinstance(niches[0], dict):
+                best = niches[0]
+                return {
+                    "niche":         best.get("name") or best.get("niche") or "",
+                    "product_type":  best.get("product_type", "digital_print"),
+                    "keywords":      best.get("keywords", []),
+                    "entry_score":   float(best.get("final_score") or best.get("score") or 0.5),
+                    "color_schemes": best.get("color_schemes", []),
+                    "pricing":       best.get("pricing", {}),
+                }
+        except Exception as exc:
+            logger.error("niche_picker: ResearchAgent fallito: %s", exc)
+
+        return None
+
+    async def _autopilot_bundle_checker() -> dict | None:
+        """
+        Controlla se esiste una niche bundle-ready e ritorna la spec
+        come niche_data da passare alla design pipeline. — B4/4.7
+
+        Priorità: bundle con score più alto tra quelli pronti.
+        Ritorna None se nessuna niche soddisfa i criteri (BundleStrategy.should_create_bundle).
+        """
+        try:
+            candidates = await bundle_strategy.check_all_niches()
+        except Exception as exc:
+            logger.warning("bundle_checker: check_all_niches fallito: %s", exc)
+            return None
+
+        if not candidates:
+            return None
+
+        # Ordina per score e prendi il migliore
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        best = candidates[0]
+        spec = best["spec"]
+
+        logger.info(
+            "bundle_checker: bundle-ready [%s] score=%.3f (%d componenti)",
+            spec["niche"], best["score"], spec["n_components"],
+        )
+
+        # Formatta come niche_data compatibile con design_pipeline
+        return {
+            "niche":            spec["niche"],
+            "product_type":     "bundle",
+            "keywords":         spec.get("keywords", []),
+            "entry_score":      spec.get("entry_score", best["score"]),
+            "suggested_price":  spec.get("suggested_price"),
+            "component_titles": spec.get("component_titles", []),
+            "component_images": spec.get("component_images", []),
+            "is_bundle":        True,
+        }
+
     # 3. AutopilotLoop — instanziato prima dello Scheduler e del bot
     #    così bot_send è il telegram_broadcast già definito sopra
     autopilot_loop = AutopilotLoop(
@@ -333,8 +595,9 @@ async def lifespan(app: FastAPI):
         budget           = budget_manager,
         policy           = publication_policy,
         bot_send         = telegram_broadcast,
-        design_pipeline  = None,   # iniettato da DesignAgent in Blocco 3
-        niche_picker     = None,   # iniettato da ResearchAgent in Blocco 3
+        design_pipeline  = _autopilot_design_pipeline,
+        niche_picker     = _autopilot_niche_picker,
+        bundle_checker   = _autopilot_bundle_checker,    # B4/4.7
     )
     logger.info("AutopilotLoop istanziato")
 
@@ -369,6 +632,8 @@ async def lifespan(app: FastAPI):
         publication_policy=publication_policy,
         etsy_api=etsy_api,
         analytics_agent=analytics_agent,     # B4/4.3 — /ladder command
+        learning_loop=learning_loop,         # B4/4.5 — /learn command
+        bundle_strategy=bundle_strategy,     # B4/4.6 — /bundle command
     )
     telegram_bot = TelegramBot(_bot_deps)
     await telegram_bot.start()

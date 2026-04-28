@@ -1040,7 +1040,8 @@ class AnalyticsAgent(AgentBase):
         db     = await self.memory.get_db()
         cursor = await db.execute(
             """
-            SELECT views, clicks, orders, ctr, conversion_rate, days_live
+            SELECT views, clicks, orders, ctr, conversion_rate, days_live,
+                   template, color_scheme
             FROM listing_performance
             WHERE production_queue_id = ?
             ORDER BY snapshot_at DESC
@@ -1108,48 +1109,105 @@ class AnalyticsAgent(AgentBase):
 
     async def _trigger_remediation(self, item: Any, level: str, action: str, row: Any) -> None:
         """
-        Notifica Telegram per azione correttiva identificata dal Ladder.
-        LearningLoop (opzionale, step 4.5) — chiamato con None guard.
-        Registra il tentativo in _remediation_log per evitare spam.
+        Azione correttiva identificata dal Ladder System.
+
+        Flusso per ogni action:
+          rewrite_seo    → flag_for_seo_revision (abbassa score niche) +
+                           crea nuovo pending_design (AutopilotLoop farà fresh research)
+          regen_thumbnail → flag_low_ctr (ChromaDB — DesignAgent eviterà template/colore) +
+                            crea nuovo pending_design (DesignAgent genererà thumbnail alternativa)
+          update_listing  → solo notifica Telegram (richiede intervento manuale)
+
+        Registra il tentativo in _remediation_log per evitare spam (cooldown 48h).
         """
+        template     = row["template"]     if row["template"]     else ""
+        color_scheme = row["color_scheme"] if row["color_scheme"] else ""
+        title        = (item.listing_title or item.niche)[:60]
+        queued_msg   = ""    # appendice al messaggio se item enqueued
+
         if action == "rewrite_seo":
+            # 1. Segnala al LearningLoop: abbassa score per ridurre priorità niche
             if self._learning_loop is not None:
                 try:
-                    self._learning_loop.flag_for_seo_revision(item.niche, item.product_type)
-                except Exception:
-                    pass
-            title = (item.listing_title or item.niche)[:60]
+                    await self._learning_loop.flag_for_seo_revision(
+                        item.niche, item.product_type
+                    )
+                except Exception as exc:
+                    logger.warning("flag_for_seo_revision fallito: %s", exc)
+
+            # 2. Enqueue nuovo pending_design — il pipeline farà fresh keyword research
+            if self._production_queue is not None:
+                try:
+                    run_id = f"remediation_seo_{item.id}"
+                    new_id = await self._production_queue.create_item(
+                        niche=item.niche,
+                        product_type=item.product_type,
+                        keywords=item.keywords or [],
+                        entry_score=0.85,      # alta priorità — listing esistente fallisce
+                        loop_run_id=run_id,
+                    )
+                    queued_msg = f"\n🔄 Nuovo listing enqueued (#{new_id}) per SEO alternativo."
+                    logger.info(
+                        "Ladder rewrite_seo: enqueued item #%d per niche=%s",
+                        new_id, item.niche,
+                    )
+                except Exception as exc:
+                    logger.warning("create_item per rewrite_seo fallito: %s", exc)
+
             msg = (
                 f"🔍 SEO revision needed\n"
                 f"📦 {title}\n"
                 f"📊 {row['views']} views dopo {row['days_live']} giorni"
                 f" — soglia: {VIEWS_MIN_7DAYS}\n\n"
-                f"Usa /niche {item.niche} per ri-analisi keywords.\n"
+                f"Score niche abbassato — sarà ri-analizzata con meno priorità."
+                f"{queued_msg}\n"
                 f"#ladder #views_low"
             )
 
         elif action == "regen_thumbnail":
+            # 1. Segnala al LearningLoop: template+color_scheme → low_ctr_signal in ChromaDB
             if self._learning_loop is not None:
                 try:
-                    self._learning_loop.flag_low_ctr(
-                        item.niche, item.product_type, "", ""
+                    await self._learning_loop.flag_low_ctr(
+                        item.niche, item.product_type, template, color_scheme
                     )
-                except Exception:
-                    pass
-            title   = (item.listing_title or item.niche)[:60]
+                except Exception as exc:
+                    logger.warning("flag_low_ctr fallito: %s", exc)
+
+            # 2. Enqueue nuovo pending_design — DesignAgent leggerà low_ctr_signal
+            #    e genererà thumbnail con template/colore diverso
+            if self._production_queue is not None:
+                try:
+                    run_id = f"remediation_thumbnail_{item.id}"
+                    new_id = await self._production_queue.create_item(
+                        niche=item.niche,
+                        product_type=item.product_type,
+                        keywords=item.keywords or [],
+                        entry_score=0.90,      # priorità massima — CTR critico
+                        loop_run_id=run_id,
+                    )
+                    queued_msg = f"\n🔄 Nuovo listing enqueued (#{new_id}) con thumbnail alternativa."
+                    logger.info(
+                        "Ladder regen_thumbnail: enqueued item #%d per niche=%s template=%s/%s",
+                        new_id, item.niche, template, color_scheme,
+                    )
+                except Exception as exc:
+                    logger.warning("create_item per regen_thumbnail fallito: %s", exc)
+
             ctr_pct = f"{row['ctr'] * 100:.1f}%"
             msg = (
                 f"🖼 Thumbnail update needed\n"
                 f"📦 {title}\n"
                 f"📊 CTR {ctr_pct} < soglia {CTR_MIN * 100:.0f}%"
                 f" — thumbnail non converte\n\n"
-                f"La prossima generazione per questa niche eviterà template/colore attuali.\n"
-                f"Usa /design {item.niche} per thumbnail alternativa.\n"
+                f"Template '{template}' / colore '{color_scheme}' segnalato come low-CTR."
+                f" La prossima generazione lo eviterà."
+                f"{queued_msg}\n"
                 f"#ladder #ctr_low"
             )
 
         elif action == "update_listing":
-            title = (item.listing_title or item.niche)[:60]
+            # Richiede intervento manuale — solo notifica
             msg = (
                 f"📝 Listing update needed\n"
                 f"📦 {title}\n"

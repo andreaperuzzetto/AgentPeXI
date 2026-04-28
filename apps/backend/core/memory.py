@@ -419,6 +419,11 @@ class MemoryManager:
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         self._db = await aiosqlite.connect(self._db_path)
         self._db.row_factory = aiosqlite.Row
+        # WAL mode: riduce lock contention con coroutine concorrenti
+        # (AutopilotLoop + Scheduler + API scrivono in parallelo)
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA synchronous=NORMAL")  # WAL-safe, più veloce di FULL
+        await self._db.commit()
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
 
@@ -496,6 +501,20 @@ class MemoryManager:
             "CREATE INDEX IF NOT EXISTS idx_pq_niche ON production_queue(niche, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_pq_scheduled ON production_queue(scheduled_publish_at) WHERE scheduled_publish_at IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_pq_loop_run ON production_queue(loop_run_id)",
+            # --- Blocco 4: indici per BudgetManager, Ladder System, LearningLoop ---
+            # BudgetManager.today_llm_cost() filtra su created_at — senza indice = full scan
+            "CREATE INDEX IF NOT EXISTS idx_llm_calls_created_at ON llm_calls(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_llm_calls_agent_created ON llm_calls(agent_name, created_at)",
+            # Ladder: ORDER BY snapshot_at DESC LIMIT 1 per production_queue_id
+            "CREATE INDEX IF NOT EXISTS idx_lp_pq_snapshot ON listing_performance(production_queue_id, snapshot_at DESC)",
+            # Ladder: queries per livello diagnostico
+            "CREATE INDEX IF NOT EXISTS idx_lp_ladder ON listing_performance(ladder_level, snapshot_at DESC)",
+            # LearningLoop: GROUP BY / WHERE su niche + product_type
+            "CREATE INDEX IF NOT EXISTS idx_ni_niche ON niche_intelligence(niche, product_type)",
+            # FinanceTracker: queries revenue per listing nel tempo
+            "CREATE INDEX IF NOT EXISTS idx_re_listing ON revenue_events(listing_id, created_at)",
+            # poll_listing_performance: listing published_at (filtra per status + data)
+            "CREATE INDEX IF NOT EXISTS idx_pq_published ON production_queue(status, published_at)",
         ]
         for idx_sql in _new_indexes:
             try:

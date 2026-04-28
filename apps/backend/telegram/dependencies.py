@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from apps.backend.agents.analytics import AnalyticsAgent
     from apps.backend.core.autopilot_loop import AutopilotLoop
     from apps.backend.core.budget_manager import BudgetManager
+    from apps.backend.core.bundle_strategy import BundleStrategy
+    from apps.backend.core.learning_loop import LearningLoop
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.production_queue import ProductionQueueService
     from apps.backend.core.publication_policy import PublicationPolicy
@@ -56,3 +58,5 @@ class BotDependencies:
     publication_policy: "PublicationPolicy | None" = None
     etsy_api: "EtsyAPI | None" = None
     analytics_agent: "AnalyticsAgent | None" = None
+    learning_loop: "LearningLoop | None" = None
+    bundle_strategy: "BundleStrategy | None" = None

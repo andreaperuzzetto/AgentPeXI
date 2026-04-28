@@ -75,6 +75,19 @@ _MAX_AVG_REVIEWS  = 200      # oltre → domanda massima
 # Se Trends non disponibile il peso ricade tutto su Etsy.
 _TRENDS_WEIGHT = 0.35
 
+# Competition bonus — moltiplicatore entry_score basato sul numero di risultati Etsy
+# Fonte: Alfie "How to Start Selling on Etsy in 2026 & ACTUALLY Make SALES"
+# Sweet spot: 2k–10k risultati = domanda reale + poca competizione per nuovi shop
+_COMPETITION_TOO_SMALL  = 2_000    # < 2k: niche inesistente o troppo niched
+_COMPETITION_SWEET_LOW  = 10_000   # 2k–10k: sweet spot Alfie
+_COMPETITION_NORMAL_HIGH = 50_000  # 10k–50k: normale
+# > 50k: mercato molto affollato — penalità leggera
+
+_BONUS_SWEET_SPOT  = 1.25  # sweet spot: domanda reale, poco affollato
+_BONUS_NORMAL      = 1.0   # range normale — nessun aggiustamento
+_BONUS_TOO_SMALL   = 1.0   # troppo piccolo — niche forse inesistente, neutro
+_BONUS_CROWDED     = 0.9   # molto affollato — penalità leggera
+
 
 # ---------------------------------------------------------------------------
 # Dataclass risultato
@@ -538,14 +551,22 @@ class MarketDataAgent:
         Entry score — Tier 1 o Tier 1+2 a seconda dei dati disponibili.
 
         Formula:
-            demand_proxy    = etsy_demand                         (Tier 1)
-                            | blend(etsy_demand, trends_demand)   (Tier 2)
-            competition     = etsy_result_count normalizzato
-            entry_score     = (demand_proxy / competition) * seasonal_boost * ac_boost
+            demand_proxy     = etsy_demand                         (Tier 1)
+                             | blend(etsy_demand, trends_demand)   (Tier 2)
+            competition      = etsy_result_count normalizzato
+            competition_bonus = moltiplicatore sweet-spot (Alfie 2026)
+            entry_score      = (demand / competition) * seasonal_boost
+                               * ac_boost * competition_bonus
 
         Blending Tier 2:
             demand = (1 - _TRENDS_WEIGHT) * etsy_demand + _TRENDS_WEIGHT * trends_demand
             dove trends_demand = google_trend_score / 100
+
+        Competition bonus (fonte: Alfie):
+            < 2k    → 1.00 (niche troppo piccola — possibile falso positivo)
+            2k–10k  → 1.25 (sweet spot: domanda reale + bassa competizione)
+            10k–50k → 1.00 (range normale — nessun aggiustamento)
+            > 50k   → 0.90 (mercato affollato — penalità leggera)
 
         Score finale in [0.05, 1.0].
         Cold-start (nessun dato) → 0.4 flat.
@@ -572,10 +593,21 @@ class MarketDataAgent:
         # --- formula base ---
         raw = demand / competition
 
+        # --- competition bonus — sweet spot Alfie ---
+        result_count = signals.etsy_result_count
+        if result_count < _COMPETITION_TOO_SMALL:
+            competition_bonus = _BONUS_TOO_SMALL    # 1.0 — neutro, niche incerta
+        elif result_count < _COMPETITION_SWEET_LOW:
+            competition_bonus = _BONUS_SWEET_SPOT   # 1.25 — sweet spot
+        elif result_count < _COMPETITION_NORMAL_HIGH:
+            competition_bonus = _BONUS_NORMAL       # 1.0 — normale
+        else:
+            competition_bonus = _BONUS_CROWDED      # 0.9 — mercato affollato
+
         # autocomplete boost: ogni hit +3%, max +20%
         ac_boost = 1.0 + min(signals.autocomplete_hits * 0.03, 0.20)
 
-        score = raw * signals.seasonal_boost * ac_boost
+        score = raw * signals.seasonal_boost * ac_boost * competition_bonus
 
         return round(max(0.05, min(score, 1.0)), 3)
 
