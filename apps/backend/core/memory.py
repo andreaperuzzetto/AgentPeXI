@@ -313,12 +313,18 @@ CREATE TABLE IF NOT EXISTS listing_performance (
     production_queue_id INTEGER REFERENCES production_queue(id),
     niche               TEXT    NOT NULL,
     product_type        TEXT    NOT NULL,
+    template            TEXT,                        -- dal DesignAgent result [B4]
+    color_scheme        TEXT,                        -- dal DesignAgent result [B4]
     views               INTEGER DEFAULT 0,
+    clicks              INTEGER DEFAULT 0,           -- per calcolo CTR [B4]
     favorites           INTEGER DEFAULT 0,
     orders              INTEGER DEFAULT 0,
     revenue_eur         REAL    DEFAULT 0.0,
-    conversion_rate     REAL    DEFAULT 0.0,
+    ctr                 REAL    DEFAULT 0.0,         -- clicks / views [B4]
+    conversion_rate     REAL    DEFAULT 0.0,         -- orders / clicks
     favorite_rate       REAL    DEFAULT 0.0,
+    ladder_level        TEXT,                        -- NULL | views_low | ctr_low | conv_low | ok [B4]
+    last_diagnostic_at  REAL,                        -- ts ultimo Ladder check [B4]
     days_live           INTEGER DEFAULT 0,
     snapshot_at         REAL    NOT NULL DEFAULT (unixepoch())
 );
@@ -333,7 +339,9 @@ CREATE TABLE IF NOT EXISTS niche_intelligence (
     total_listings       INTEGER DEFAULT 0,
     total_orders         INTEGER DEFAULT 0,
     total_revenue_eur    REAL    DEFAULT 0.0,
+    avg_ctr              REAL    DEFAULT 0.0,        -- media CTR listing niche [B4]
     avg_conversion_rate  REAL    DEFAULT 0.0,
+    avg_days_to_sale     REAL,                       -- media giorni dalla publish alla prima vendita [B4]
     avg_favorite_rate    REAL    DEFAULT 0.0,
     performance_score    REAL    DEFAULT 0.5,
     confidence_level     TEXT    DEFAULT 'low',
@@ -355,6 +363,7 @@ CREATE TABLE IF NOT EXISTS revenue_events (
     etsy_fee_eur    REAL    NOT NULL,
     net_eur         REAL    NOT NULL,
     design_cost_eur REAL    DEFAULT 0.0,
+    listing_fee_eur REAL    DEFAULT 0.18,            -- $0.20 al tasso cambio corrente [B4]
     sold_at         REAL    NOT NULL DEFAULT (unixepoch())
 );
 CREATE INDEX IF NOT EXISTS idx_re_sold_at ON revenue_events(sold_at DESC);
@@ -450,6 +459,21 @@ class MemoryManager:
             "ALTER TABLE production_queue ADD COLUMN ads_activated INTEGER DEFAULT 0",      # 🔴 [B2/video]
             # Tracciabilità loop
             "ALTER TABLE production_queue ADD COLUMN loop_run_id TEXT",
+            # --- Blocco 4: listing_performance + niche_intelligence + revenue_events ---
+            # listing_performance — template/color_scheme per CTR attribution
+            "ALTER TABLE listing_performance ADD COLUMN template TEXT",
+            "ALTER TABLE listing_performance ADD COLUMN color_scheme TEXT",
+            # listing_performance — click tracking e CTR [B4]
+            "ALTER TABLE listing_performance ADD COLUMN clicks INTEGER DEFAULT 0",
+            "ALTER TABLE listing_performance ADD COLUMN ctr REAL DEFAULT 0.0",
+            # listing_performance — Ladder System diagnostico [B4]
+            "ALTER TABLE listing_performance ADD COLUMN ladder_level TEXT",
+            "ALTER TABLE listing_performance ADD COLUMN last_diagnostic_at REAL",
+            # niche_intelligence — CTR aggregato e velocità vendita [B4]
+            "ALTER TABLE niche_intelligence ADD COLUMN avg_ctr REAL DEFAULT 0.0",
+            "ALTER TABLE niche_intelligence ADD COLUMN avg_days_to_sale REAL",
+            # revenue_events — fee listing separata dal design cost [B4]
+            "ALTER TABLE revenue_events ADD COLUMN listing_fee_eur REAL DEFAULT 0.18",
         ]
         for migration_sql in _migrations:
             try:

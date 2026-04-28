@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from apps.backend.agents.analytics import AnalyticsAgent
     from apps.backend.core.autopilot_loop import AutopilotLoop
     from apps.backend.core.budget_manager import BudgetManager
     from apps.backend.core.pepe import Pepe
@@ -40,6 +41,7 @@ class BotDependencies:
         budget_manager     — BudgetManager B2
         publication_policy — PublicationPolicy B2
         etsy_api           — EtsyAPI client B3/step 3.6
+        analytics_agent    — AnalyticsAgent B4/4.3 (per /ladder diretto)
     """
 
     # ── Obbligatorio ──────────────────────────────────────────────────
@@ -53,3 +55,4 @@ class BotDependencies:
     budget_manager: "BudgetManager | None" = None
     publication_policy: "PublicationPolicy | None" = None
     etsy_api: "EtsyAPI | None" = None
+    analytics_agent: "AnalyticsAgent | None" = None

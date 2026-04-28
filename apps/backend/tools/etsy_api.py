@@ -149,6 +149,40 @@ class EtsyAPI:
             "shop_id": "MOCK_SHOP_001",
         }
 
+    async def _mock_get_listing_stats(self, listing_id: int | str) -> dict:
+        """
+        Simula stats listing con distribuzione realistica (fonte: Alfie).
+        CTR medio Etsy 2026: ~2-4%. Conversion su click: ~0.5-3%.
+        """
+        try:
+            listings = await self.memory.get_etsy_listings()
+            listing  = next(
+                (l for l in listings if str(l.get("listing_id")) == str(listing_id)),
+                None,
+            )
+            base_views = listing.get("views", 0) + random.randint(0, 20) if listing else random.randint(10, 200)
+            price_eur  = listing.get("price_eur", 4.99) if listing else 4.99
+        except Exception:
+            base_views = random.randint(10, 200)
+            price_eur  = 4.99
+
+        views      = max(0, base_views)
+        # CTR gaussiana troncata: media 2.5%, deviazione 1.2%, range [0.5%, 6%]
+        ctr        = max(0.005, min(0.06, random.gauss(0.025, 0.012)))
+        clicks     = max(0, int(views * ctr))
+        # Conversion su click: media 1.8%, deviazione 0.8%
+        conv_rate  = max(0.005, min(0.04, random.gauss(0.018, 0.008)))
+        num_orders = max(0, int(clicks * conv_rate))
+        favorites  = max(0, int(clicks * random.uniform(0.15, 0.45)))
+
+        return {
+            "views":       views,
+            "clicks":      clicks,
+            "favorites":   favorites,
+            "num_orders":  num_orders,
+            "revenue_eur": round(num_orders * price_eur, 4),
+        }
+
     async def _mock_get_shop_transactions(
         self, shop_id: str | None = None, listing_id: int | None = None
     ) -> dict:
@@ -452,6 +486,48 @@ class EtsyAPI:
         if self.mock_mode:
             return await self._mock_get_listing(listing_id)
         return await self._request("GET", f"/application/listings/{listing_id}")
+
+    async def get_listing_stats(self, listing_id: int | str) -> dict:
+        """
+        Ritorna {views, clicks, favorites, num_orders, revenue_eur} per un listing.
+        🔴 Etsy v3 non espone clicks senza Etsy Ads API.
+        In real mode: clicks=0 (dato non disponibile).
+        In mock mode: simula valori CTR realistici per il Ladder System.
+        """
+        if self.mock_mode:
+            return await self._mock_get_listing_stats(listing_id)
+
+        listing_data = await self._request("GET", f"/application/listings/{listing_id}")
+        views     = listing_data.get("views", 0)
+        favorites = listing_data.get("num_favorers", 0)
+        price_dict = listing_data.get("price", {})
+        if isinstance(price_dict, dict):
+            price_eur = float(price_dict.get("amount", 0)) / 100
+        else:
+            price_eur = float(price_dict or 0)
+
+        shop_id = listing_data.get("shop_id") or settings.ETSY_SHOP_ID
+        try:
+            txn_data = await self.get_shop_transactions(
+                shop_id=str(shop_id), listing_id=int(listing_id)
+            )
+            if isinstance(txn_data, dict):
+                results = txn_data.get("results", [])
+            elif isinstance(txn_data, list):
+                results = txn_data
+            else:
+                results = []
+            num_orders = sum(t.get("quantity", 1) for t in results)
+        except Exception:
+            num_orders = 0
+
+        return {
+            "views":       views,
+            "clicks":      0,           # Etsy v3 senza Ads API non espone clicks
+            "favorites":   favorites,
+            "num_orders":  num_orders,
+            "revenue_eur": round(num_orders * price_eur, 4),
+        }
 
     async def update_listing(self, listing_id: int, **kwargs: Any) -> dict:
         if self.mock_mode:

@@ -156,6 +156,17 @@ class Scheduler:
             replace_existing=True,
         )
 
+        # Blocco 4 — polling performance listing ogni 6 ore
+        if self.analytics_agent is not None:
+            self._scheduler.add_job(
+                self._run_poll_listing_performance,
+                trigger=IntervalTrigger(hours=6),
+                id="analytics_poll",
+                name="Polling performance listing (B4)",
+                replace_existing=True,
+            )
+            logger.info("Job analytics_poll registrato (ogni 6h)")
+
         # Screen cleanup nightly (Blocco 2) — elimina chunk più vecchi di SCREEN_RETENTION_DAYS
         if self.screen_watcher is not None:
             self._scheduler.add_job(
@@ -981,6 +992,25 @@ class Scheduler:
                 await self.pepe.notify_telegram(message, priority=True)
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # Blocco 4 — polling performance listing
+    # ------------------------------------------------------------------
+
+    async def _run_poll_listing_performance(self) -> None:
+        """Esegue il polling delle performance listing ogni 6 ore.
+
+        Chiama AnalyticsAgent.poll_listing_performance() che:
+        - inserisce snapshot in listing_performance
+        - esegue diagnostica Ladder System
+        - aggiorna LearningLoop (quando disponibile, step 4.5)
+        """
+        if self.analytics_agent is None:
+            return
+        try:
+            await self.analytics_agent.poll_listing_performance()
+        except Exception as exc:
+            logger.error("poll_listing_performance fallito: %s", exc, exc_info=True)
 
     # ------------------------------------------------------------------
     # Broadcast helper

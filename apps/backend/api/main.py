@@ -258,6 +258,8 @@ async def lifespan(app: FastAPI):
         etsy_api=etsy_api,
         ws_broadcaster=ws_manager.broadcast,
         telegram_broadcaster=telegram_broadcast,
+        production_queue=production_queue,   # B4/4.2 — Ladder System + polling
+        # learning_loop wired in step 4.5
     )
     pepe.register_agent("analytics", analytics_agent)
 
@@ -366,6 +368,7 @@ async def lifespan(app: FastAPI):
         budget_manager=budget_manager,
         publication_policy=publication_policy,
         etsy_api=etsy_api,
+        analytics_agent=analytics_agent,     # B4/4.3 — /ladder command
     )
     telegram_bot = TelegramBot(_bot_deps)
     await telegram_bot.start()
