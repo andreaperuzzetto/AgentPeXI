@@ -365,6 +365,7 @@ async def lifespan(app: FastAPI):
         production_queue=production_queue,
         budget_manager=budget_manager,
         publication_policy=publication_policy,
+        etsy_api=etsy_api,
     )
     telegram_bot = TelegramBot(_bot_deps)
     await telegram_bot.start()

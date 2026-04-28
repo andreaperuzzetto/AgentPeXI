@@ -6,11 +6,13 @@ NON usa run_polling() — si integra nel loop asyncio di FastAPI.
 B3/step 3.3: tutti i command handler sono stati estratti in:
   - handlers/autopilot.py  (/run, /stop, callback approve/skip)
   - handlers/system.py     (/status, /report, /pause, /resume, /ask, /new,
-                             /mock, /retry, /resume_agent, /personal, /etsy,
+                             /retry, /resume_agent, /personal, /etsy,
                              /screen, /list, /wiki, voice, text)
   - handlers/queue.py      (/listings, /niche, /design, /analytics, /finance,
                              /remind, /reminders, /summarize, /research,
                              /feedback, /urgency)
+  - handlers/config.py     (/budget, /mock, /policy, /config, /ads)
+  - handlers/shop_setup.py (/shop, /shopsetup)
 
 Questa classe è responsabile solo di: startup/shutdown del bot e notifiche push.
 """
@@ -18,7 +20,6 @@ Questa classe è responsabile solo di: startup/shutdown del bot e notifiche push
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from telegram.ext import Application
 
@@ -27,12 +28,6 @@ from apps.backend.telegram.dependencies import BotDependencies
 from apps.backend.telegram.formatters import send_chunked
 from apps.backend.telegram.middleware import build_chat_filter
 
-if TYPE_CHECKING:
-    from apps.backend.core.autopilot_loop import AutopilotLoop
-    from apps.backend.core.pepe import Pepe
-    from apps.backend.core.scheduler import Scheduler
-    from apps.backend.screen.watcher import ScreenWatcher
-
 logger = logging.getLogger("agentpexi.telegram")
 
 
@@ -40,18 +35,9 @@ class TelegramBot:
     """Bot Telegram per AgentPeXI — startup + notifiche push."""
 
     def __init__(self, deps: BotDependencies) -> None:
-        self.pepe               = deps.pepe
-        self.scheduler          = deps.scheduler
-        self.screen_watcher     = deps.screen_watcher
-        self.autopilot_loop     = deps.autopilot_loop
-        self.production_queue   = deps.production_queue
-        self.budget_manager     = deps.budget_manager
-        self.publication_policy = deps.publication_policy
-        self._deps              = deps
+        self._deps            = deps
         self._app: Application | None = None
-
-        # Fail-closed: lancia RuntimeError se TELEGRAM_CHAT_ID manca.
-        self._chat_filter = build_chat_filter(settings.TELEGRAM_CHAT_ID)
+        self._chat_filter     = build_chat_filter(settings.TELEGRAM_CHAT_ID)
 
     # ------------------------------------------------------------------
     # Startup / shutdown (chiamati dal lifespan FastAPI)
@@ -69,14 +55,12 @@ class TelegramBot:
             .build()
         )
 
-        # Registra handler via moduli dedicati (B3/step 3.3)
         self._register_handlers()
 
         # Registra notifier in Pepe
-        self.pepe.set_telegram_notifier(self._send_notification)
-        self.pepe.set_reminder_notifier(self._send_reminder_notification)
+        self._deps.pepe.set_telegram_notifier(self._send_notification)
+        self._deps.pepe.set_reminder_notifier(self._send_reminder_notification)
 
-        # Avvio asincrono (nello stesso event loop di FastAPI)
         await self._app.initialize()
         await self._app.start()
         await self._app.updater.start_polling(drop_pending_updates=True)
@@ -96,13 +80,15 @@ class TelegramBot:
     # ------------------------------------------------------------------
 
     def _register_handlers(self) -> None:
-        """Delega la registrazione ai moduli handler di B3/step 3.3."""
+        """Delega la registrazione ai moduli handler di B3."""
         assert self._app is not None
-        from apps.backend.telegram.handlers import autopilot, queue, system
+        from apps.backend.telegram.handlers import autopilot, config, queue, shop_setup, system
 
         autopilot.register(self._app, self._deps, self._chat_filter)
         system.register(self._app, self._deps, self._chat_filter)
         queue.register(self._app, self._deps, self._chat_filter)
+        config.register(self._app, self._deps, self._chat_filter)
+        shop_setup.register(self._app, self._deps, self._chat_filter)
 
     # ------------------------------------------------------------------
     # Notifiche (callback registrato in Pepe)

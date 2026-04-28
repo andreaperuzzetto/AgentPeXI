@@ -1,6 +1,6 @@
 """Handler Telegram — comandi di sistema e infrastruttura.
 
-Comandi: /status, /pause, /resume, /ask, /new, /report, /mock,
+Comandi: /status, /pause, /resume, /ask, /new, /report,
          /retry, /resume_agent, /personal, /etsy, /screen,
          /list, /wiki
 Handler messaggi: testo generico, vocale
@@ -12,7 +12,6 @@ import asyncio
 import logging
 import os
 import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from telegram import Update
@@ -191,59 +190,6 @@ async def cmd_resume_agent(
 
 
 # ---------------------------------------------------------------------------
-# /mock
-# ---------------------------------------------------------------------------
-
-async def cmd_mock(
-    deps: "BotDependencies",
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    """/mock [on|off] — attiva o disattiva mock mode Etsy."""
-    args = context.args or []
-    arg = args[0].lower() if args else ""
-
-    if arg == "on":
-        deps.pepe.set_mock_mode(True)
-        if deps.pepe._ws_broadcast:
-            await deps.pepe._ws_broadcast({
-                "type": "system_status",
-                "mock_mode": True,
-                "message": "Mock mode attivato",
-            })
-        await update.message.reply_text(
-            "🟡 *MOCK MODE ATTIVO*\n\n"
-            "Etsy API e Replicate sono simulati.\n"
-            "I listing vengono salvati nel DB locale.\n"
-            "Usa /ask per avviare una pipeline di test.",
-            parse_mode="Markdown",
-        )
-
-    elif arg == "off":
-        deps.pepe.set_mock_mode(False)
-        if deps.pepe._ws_broadcast:
-            await deps.pepe._ws_broadcast({
-                "type": "system_status",
-                "mock_mode": False,
-                "message": "Mock mode disattivato",
-            })
-        await update.message.reply_text(
-            "✅ *Mock mode disattivato*\n\n"
-            "Il sistema tornerà a usare Etsy API reale "
-            "non appena i token saranno disponibili.",
-            parse_mode="Markdown",
-        )
-
-    else:
-        status = "🟡 ATTIVO" if deps.pepe.mock_mode else "⚫ INATTIVO"
-        await update.message.reply_text(
-            f"*Mock Mode*: {status}\n\n"
-            "Uso: `/mock on` oppure `/mock off`",
-            parse_mode="Markdown",
-        )
-
-
-# ---------------------------------------------------------------------------
 # /personal / /etsy
 # ---------------------------------------------------------------------------
 
@@ -381,7 +327,6 @@ async def cmd_list(
         "/analytics — esegue subito il job analytics",
         "/finance — genera report economico",
         "/listings — lista ultimi 10 listing",
-        "/mock [on|off] — attiva/disattiva mock mode",
         "/wiki [stats|query|lint|health] — knowledge base wiki",
         "",
         "*— Personal —*",
@@ -626,7 +571,6 @@ def register(
     add(CommandHandler("resume",       partial(cmd_resume,       deps), filters=chat_filter))
     add(CommandHandler("ask",          partial(cmd_ask,          deps), filters=chat_filter))
     add(CommandHandler("new",          partial(cmd_new,          deps), filters=chat_filter))
-    add(CommandHandler("mock",         partial(cmd_mock,         deps), filters=chat_filter))
     add(CommandHandler("retry",        partial(cmd_retry,        deps), filters=chat_filter))
     add(CommandHandler("resume_agent", partial(cmd_resume_agent, deps), filters=chat_filter))
     add(CommandHandler("personal",     partial(cmd_personal,     deps), filters=chat_filter))

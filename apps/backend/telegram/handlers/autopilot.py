@@ -3,9 +3,7 @@
 Comandi: /run, /stop
 Callback: approve:{id} / skip:{id} dalla inline keyboard di approvazione.
 
-Il keyboard builder (build_approval_keyboard) verrà spostato in
-callbacks.py al passo 3.5; per ora rimane qui accanto agli handler
-che lo usano.
+Il keyboard builder vive in telegram/callbacks.py (B3/step 3.5).
 """
 
 from __future__ import annotations
@@ -13,27 +11,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
+from apps.backend.telegram.callbacks import build_approval_keyboard  # noqa: F401 (re-export)
 from apps.backend.telegram.middleware import is_authorized
 
 if TYPE_CHECKING:
     from apps.backend.telegram.dependencies import BotDependencies
 
 logger = logging.getLogger("agentpexi.telegram.autopilot")
-
-
-# ---------------------------------------------------------------------------
-# Keyboard builder
-# ---------------------------------------------------------------------------
-
-def build_approval_keyboard(item_id: int) -> InlineKeyboardMarkup:
-    """Restituisce la inline keyboard [✅ Approva] [⏭ Salta] per un item."""
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Approva", callback_data=f"approve:{item_id}"),
-        InlineKeyboardButton("⏭ Salta",   callback_data=f"skip:{item_id}"),
-    ]])
 
 
 # ---------------------------------------------------------------------------

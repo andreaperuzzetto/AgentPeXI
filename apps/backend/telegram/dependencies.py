@@ -11,7 +11,7 @@ si passa. Questo rende facile:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from apps.backend.core.publication_policy import PublicationPolicy
     from apps.backend.core.scheduler import Scheduler
     from apps.backend.screen.watcher import ScreenWatcher
+    from apps.backend.tools.etsy_api import EtsyAPI
 
 
 @dataclass
@@ -38,6 +39,7 @@ class BotDependencies:
         production_queue   — ProductionQueueService B2
         budget_manager     — BudgetManager B2
         publication_policy — PublicationPolicy B2
+        etsy_api           — EtsyAPI client B3/step 3.6
     """
 
     # ── Obbligatorio ──────────────────────────────────────────────────
@@ -50,3 +52,4 @@ class BotDependencies:
     production_queue: "ProductionQueueService | None" = None
     budget_manager: "BudgetManager | None" = None
     publication_policy: "PublicationPolicy | None" = None
+    etsy_api: "EtsyAPI | None" = None
