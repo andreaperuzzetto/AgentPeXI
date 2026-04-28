@@ -131,6 +131,7 @@ async def lifespan(app: FastAPI):
     from apps.backend.core.scheduler import Scheduler
     from apps.backend.core.storage import StorageManager
     from apps.backend.telegram.bot import TelegramBot
+    from apps.backend.telegram.dependencies import BotDependencies
     from apps.backend.tools.etsy_api import EtsyAPI
     from apps.backend.agents.research import ResearchAgent
     from apps.backend.agents.design import DesignAgent
@@ -356,12 +357,16 @@ async def lifespan(app: FastAPI):
         etsy_client        = etsy_api,
     )
     # 5. Bot Telegram (stesso event loop di FastAPI)
-    telegram_bot = TelegramBot(
+    _bot_deps = BotDependencies(
         pepe=pepe,
         scheduler=scheduler,
         screen_watcher=screen_watcher,
         autopilot_loop=autopilot_loop,
+        production_queue=production_queue,
+        budget_manager=budget_manager,
+        publication_policy=publication_policy,
     )
+    telegram_bot = TelegramBot(_bot_deps)
     await telegram_bot.start()
 
     # 6. Avvia AutopilotLoop (dopo il bot, così le notifiche arrivano subito)

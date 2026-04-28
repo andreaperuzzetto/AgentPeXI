@@ -1,0 +1,52 @@
+"""Dependency injection container per il bot Telegram.
+
+Invece di passare ogni servizio come parametro singolo al costruttore
+di TelegramBot, si costruisce un'unica istanza di BotDependencies e la
+si passa. Questo rende facile:
+
+  - aggiungere nuovi servizi senza toccare la firma di TelegramBot
+  - iniettare mock in test (sostituire solo i campi rilevanti)
+  - dividere handler in moduli separati (ogni handler riceve deps)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from apps.backend.core.autopilot_loop import AutopilotLoop
+    from apps.backend.core.budget_manager import BudgetManager
+    from apps.backend.core.pepe import Pepe
+    from apps.backend.core.production_queue import ProductionQueueService
+    from apps.backend.core.publication_policy import PublicationPolicy
+    from apps.backend.core.scheduler import Scheduler
+    from apps.backend.screen.watcher import ScreenWatcher
+
+
+@dataclass
+class BotDependencies:
+    """Raccoglie tutte le dipendenze iniettate nel TelegramBot.
+
+    Obbligatorio:
+        pepe — orchestratore principale, sempre presente.
+
+    Opzionali — ``None`` se il servizio non è stato avviato:
+        scheduler          — APScheduler wrapper
+        screen_watcher     — ScreenWatcher macOS
+        autopilot_loop     — AutopilotLoop B2
+        production_queue   — ProductionQueueService B2
+        budget_manager     — BudgetManager B2
+        publication_policy — PublicationPolicy B2
+    """
+
+    # ── Obbligatorio ──────────────────────────────────────────────────
+    pepe: "Pepe"
+
+    # ── Opzionali ─────────────────────────────────────────────────────
+    scheduler: "Scheduler | None" = None
+    screen_watcher: "ScreenWatcher | None" = None
+    autopilot_loop: "AutopilotLoop | None" = None
+    production_queue: "ProductionQueueService | None" = None
+    budget_manager: "BudgetManager | None" = None
+    publication_policy: "PublicationPolicy | None" = None
