@@ -32,10 +32,14 @@ function handleMessage(raw: MessageEvent) {
 
     case 'system_status':
       store.setSystemStatus({
-        queueSize: data.queue_size,
+        queueSize:   data.queue_size,
         activeTasks: data.active_tasks,
-        mock_mode: data.mock_mode,
+        mock_mode:   data.mock_mode,
       })
+      // Autopilot status — backend può includere autopilot_status nel system_status event
+      if (data.autopilot_status) {
+        store.setAutopilotStatus(data.autopilot_status, data.autopilot_niche ?? null)
+      }
       break
 
     case 'tool_call':
@@ -99,12 +103,23 @@ function handleMessage(raw: MessageEvent) {
       }
       break
 
-    case 'memory_query':
-      store.setLastMemoryQuery({
+    case 'memory_query': {
+      const mq = {
         agent:      data.agent,
         collection: data.collection,
         ids:        data.ids,
         ts:         Date.now(),
+      }
+      store.pushMemoryQuery(mq)       // feed HUD MemoryStreams (FE-3)
+      break
+    }
+
+    case 'knowledge_bridge':
+      store.pushBridgeEvent({
+        topic:           data.topic   ?? '',
+        source_etsy:     data.source_etsy     ?? '',
+        source_personal: data.source_personal ?? '',
+        ts:              data.ts ?? Date.now(),
       })
       break
 

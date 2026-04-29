@@ -65,6 +65,7 @@ class ProductionQueueItem:
     image_cost_usd: float
     listing_fee_usd: float       # 🔴 [video] $0.20 per listing al publish
     ads_activated: int           # 🔴 [video] 1 se Etsy Ads attivate
+    ads_paused: int              # [FE-0.1] 1 se campagna ads messa in pausa
 
     # meta
     loop_run_id: str | None
@@ -102,6 +103,7 @@ class ProductionQueueItem:
             image_cost_usd=d.get("image_cost_usd") or 0.0,
             listing_fee_usd=d.get("listing_fee_usd") or 0.20,
             ads_activated=d.get("ads_activated") or 0,
+            ads_paused=d.get("ads_paused") or 0,
             loop_run_id=d.get("loop_run_id"),
             created_at=_to_float(d.get("created_at")),
             updated_at=_to_float(d.get("updated_at")),
@@ -333,6 +335,14 @@ class ProductionQueueService:
         """🔴 Marca ads_activated=1 dopo il publish."""
         await self._db.execute(
             "UPDATE production_queue SET ads_activated=1, updated_at=? WHERE id=?",
+            (self._now(), item_id),
+        )
+        await self._db.commit()
+
+    async def set_ads_paused(self, item_id: int) -> None:
+        """[FE-0.1] Marca ads_paused=1 quando EtsyAdsManager mette in pausa una campagna."""
+        await self._db.execute(
+            "UPDATE production_queue SET ads_paused=1, updated_at=? WHERE id=?",
             (self._now(), item_id),
         )
         await self._db.commit()

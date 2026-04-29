@@ -462,6 +462,7 @@ class MemoryManager:
             "ALTER TABLE production_queue ADD COLUMN image_cost_usd REAL DEFAULT 0.0",
             "ALTER TABLE production_queue ADD COLUMN listing_fee_usd REAL DEFAULT 0.20",   # 🔴 [B2/video]
             "ALTER TABLE production_queue ADD COLUMN ads_activated INTEGER DEFAULT 0",      # 🔴 [B2/video]
+            "ALTER TABLE production_queue ADD COLUMN ads_paused INTEGER DEFAULT 0",         # [FE-0.1] tracciamento pausa esplicita
             # Tracciabilità loop
             "ALTER TABLE production_queue ADD COLUMN loop_run_id TEXT",
             # --- Blocco 4: listing_performance + niche_intelligence + revenue_events ---
@@ -1146,14 +1147,38 @@ class MemoryManager:
         }
 
     async def get_chroma_stats(self) -> dict:
-        """Conta le entry nella collection ChromaDB."""
+        """
+        Conta le entry in tutte le collection ChromaDB.
+
+        Risposta: { available, count, by_collection: { pepe_memory, screen_memory,
+                    personal_memory, shared_memory } }
+        """
         if self._chroma_collection is None:
-            return {"available": False, "count": 0}
+            return {"available": False, "count": 0, "by_collection": {}}
         try:
-            count = self._chroma_collection.count()
-            return {"available": True, "count": count}
+            by_collection = {}
+            total = 0
+
+            _collections = {
+                "pepe_memory":     self._chroma_collection,
+                "screen_memory":   self._screen_memory_collection,
+                "personal_memory": self._personal_memory_collection,
+                "shared_memory":   self._shared_memory_collection,
+            }
+            for name, col in _collections.items():
+                if col is not None:
+                    try:
+                        n = await asyncio.to_thread(col.count)
+                        by_collection[name] = n
+                        total += n
+                    except Exception:
+                        by_collection[name] = 0
+                else:
+                    by_collection[name] = 0
+
+            return {"available": True, "count": total, "by_collection": by_collection}
         except Exception as exc:
-            return {"available": False, "count": 0, "error": str(exc)}
+            return {"available": False, "count": 0, "by_collection": {}, "error": str(exc)}
 
     # ------------------------------------------------------------------
     # Memory query tracking (neural brain)

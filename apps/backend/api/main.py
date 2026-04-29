@@ -114,6 +114,11 @@ production_queue   = None   # apps.backend.core.production_queue.ProductionQueue
 budget_manager     = None   # apps.backend.core.budget_manager.BudgetManager
 publication_policy = None   # apps.backend.core.publication_policy.PublicationPolicy
 autopilot_loop     = None   # apps.backend.core.autopilot_loop.AutopilotLoop
+# Blocco 4/5 — Intelligence & Growth Layer
+bundle_strategy    = None   # apps.backend.core.bundle_strategy.BundleStrategy
+shop_optimizer     = None   # apps.backend.core.shop_optimizer.ShopProfileOptimizer
+etsy_ads_manager   = None   # apps.backend.core.etsy_ads.EtsyAdsManager
+finance_tracker    = None   # apps.backend.core.finance_tracker.FinanceTracker
 
 
 # ------------------------------------------------------------------
@@ -126,6 +131,7 @@ async def lifespan(app: FastAPI):
     """Startup: MemoryManager, Pepe, workers, Telegram bot. Shutdown: graceful stop."""
     global memory, pepe, storage, etsy_api, scheduler, screen_watcher
     global production_queue, budget_manager, publication_policy, autopilot_loop
+    global bundle_strategy, shop_optimizer, etsy_ads_manager, finance_tracker
 
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.scheduler import Scheduler
@@ -161,6 +167,7 @@ async def lifespan(app: FastAPI):
     from apps.backend.core.knowledge_bridge import KnowledgeBridge
     _bridge = KnowledgeBridge(memory=memory)
     memory.set_bridge_callback(_bridge.on_new_insight)
+    _bridge.set_ws_broadcaster(ws_manager.broadcast)  # eventi knowledge_bridge → BridgeActivity HUD (FE-0.7)
     logger.info("MemoryManager inizializzato + KnowledgeBridge registrato")
 
     # 1c. Tools condivisi — istanziati una volta sola (DI negli agenti Personal)
@@ -825,6 +832,101 @@ async def get_mock_status() -> dict:
     return {"mock_mode": pepe.mock_mode if pepe else False}
 
 
+# ------------------------------------------------------------------
+# Autopilot control endpoints  (FE-Blocco 0.5)
+# ------------------------------------------------------------------
+
+def _map_autopilot_status(raw: str) -> str:
+    """Mappa lo stato interno AutopilotLoop ai 3 stati FE: running|paused|stopped."""
+    if raw == "running":
+        return "running"
+    if raw.startswith("paused"):
+        return "paused"
+    return "stopped"  # idle, "" o qualsiasi altro valore
+
+
+@app.get("/api/autopilot/status")
+async def get_autopilot_status() -> dict:
+    """
+    Stato corrente dell'AutopilotLoop (FE-Blocco 0.5).
+
+    Risposta: { status, current_niche, items_today, last_run_at }
+    """
+    if not autopilot_loop:
+        return {"status": "stopped", "current_niche": None, "items_today": 0, "last_run_at": None}
+    try:
+        raw_status    = await autopilot_loop._get_status()
+        current_niche = await autopilot_loop._state_get("loop.current_niche", "") or None
+        last_run_raw  = await autopilot_loop._state_get("loop.last_run_at", "")
+
+        # items pubblicati oggi
+        items_today = 0
+        if memory:
+            from datetime import date as _date, datetime as _dt, timezone as _tz
+            _today_start = _dt.combine(_date.today(), _dt.min.time()).replace(tzinfo=_tz.utc).timestamp()
+            db = await memory.get_db()
+            cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM production_queue WHERE status = 'published' AND published_at >= ?",
+                (_today_start,),
+            )
+            row = await cur.fetchone()
+            items_today = int(row["cnt"]) if row else 0
+
+        return {
+            "status":        _map_autopilot_status(raw_status),
+            "current_niche": current_niche,
+            "items_today":   items_today,
+            "last_run_at":   float(last_run_raw) if last_run_raw else None,
+        }
+    except Exception as exc:
+        logger.exception("get_autopilot_status error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/autopilot/start", dependencies=[Depends(verify_personal_key)])
+async def autopilot_start() -> dict:
+    """Avvia o riprende l'AutopilotLoop."""
+    if not autopilot_loop:
+        return JSONResponse(status_code=503, content={"error": "AutopilotLoop non inizializzato"})
+    try:
+        raw = await autopilot_loop._get_status()
+        if raw == "running" and autopilot_loop._running:
+            return {"status": "running", "message": "Loop già in esecuzione"}
+        await autopilot_loop.resume()
+        return {"status": "running"}
+    except Exception as exc:
+        logger.exception("autopilot_start error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/autopilot/pause", dependencies=[Depends(verify_personal_key)])
+async def autopilot_pause() -> dict:
+    """Mette in pausa l'AutopilotLoop (paused_manual)."""
+    if not autopilot_loop:
+        return JSONResponse(status_code=503, content={"error": "AutopilotLoop non inizializzato"})
+    try:
+        await autopilot_loop.stop()   # stop() → paused_manual
+        return {"status": "paused"}
+    except Exception as exc:
+        logger.exception("autopilot_pause error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/autopilot/stop", dependencies=[Depends(verify_personal_key)])
+async def autopilot_stop() -> dict:
+    """Ferma l'AutopilotLoop e imposta status=stopped."""
+    if not autopilot_loop:
+        return JSONResponse(status_code=503, content={"error": "AutopilotLoop non inizializzato"})
+    try:
+        autopilot_loop._running = False
+        await autopilot_loop._set_status("idle")
+        await autopilot_loop._state_set("loop.current_niche", "")
+        return {"status": "stopped"}
+    except Exception as exc:
+        logger.exception("autopilot_stop error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
 @app.post("/api/run/analytics", dependencies=[Depends(verify_personal_key)])
 @limiter.limit("5/minute")
 async def run_analytics_now(request: Request) -> dict:
@@ -883,6 +985,23 @@ async def get_scheduler() -> dict:
         apscheduler_jobs = scheduler.get_jobs()
 
     return {"tasks": db_tasks, "jobs": apscheduler_jobs}
+
+
+@app.get("/api/scheduler/jobs")
+async def get_scheduler_jobs() -> dict:
+    """
+    Job APScheduler attivi (FE-Blocco 0.4).
+
+    Risposta pulita per il frontend — solo job APScheduler, senza task DB.
+    Risposta: { jobs: [{ id, name, trigger, next_run, last_run, status }] }
+    """
+    if not scheduler:
+        return {"jobs": []}
+    try:
+        return {"jobs": scheduler.get_jobs()}
+    except Exception as exc:
+        logger.exception("get_scheduler_jobs error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 @app.get("/api/production-queue")
@@ -1521,8 +1640,283 @@ async def get_etsy_listings(status: str = "all", limit: Annotated[int, Query(ge=
 
 
 # ------------------------------------------------------------------
+# Etsy Intelligence endpoints  (FE-Blocco 0.1)
+# ------------------------------------------------------------------
+
+@app.get("/api/etsy/niches")
+async def get_etsy_niches(
+    min_score: float | None = None,
+    confidence: str | None = None,
+) -> dict:
+    """
+    Legge niche_intelligence — dati aggregati per niche+product_type.
+
+    Query params opzionali:
+      min_score   float — filtra performance_score >= min_score
+      confidence  str   — filtra confidence_level (low|medium|high)
+    """
+    if not memory:
+        return {"niches": []}
+    try:
+        db = await memory.get_db()
+        conditions = []
+        params: list = []
+
+        if min_score is not None:
+            conditions.append("performance_score >= ?")
+            params.append(min_score)
+        if confidence:
+            conditions.append("confidence_level = ?")
+            params.append(confidence)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        cursor = await db.execute(
+            f"""
+            SELECT
+                niche, product_type,
+                total_listings, total_orders, total_revenue_eur,
+                avg_ctr, avg_conversion_rate, avg_days_to_sale,
+                avg_favorite_rate, performance_score, confidence_level,
+                last_sale_at, last_updated_at
+            FROM niche_intelligence
+            {where}
+            ORDER BY performance_score DESC
+            """,
+            params,
+        )
+        rows = await cursor.fetchall()
+        niches = [dict(r) for r in rows]
+        return {"niches": niches}
+    except Exception as exc:
+        logger.exception("get_etsy_niches error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+# Cache bundle — evita riesecuzione scan ad ogni refresh FE
+_bundles_cache: dict = {"data": None, "cached_at": 0.0}
+_BUNDLES_CACHE_TTL = 600  # 10 minuti
+
+
+@app.get("/api/etsy/bundles")
+async def get_etsy_bundles() -> dict:
+    """
+    Ritorna niches bundle-ready via BundleStrategy.check_all_niches().
+    Cache 10 minuti — non riesegue la scan ad ogni request.
+    """
+    import time as _time
+
+    now = _time.time()
+    if _bundles_cache["data"] is not None and (now - _bundles_cache["cached_at"]) < _BUNDLES_CACHE_TTL:
+        return {"bundles": _bundles_cache["data"], "cached_at": _bundles_cache["cached_at"]}
+
+    if not bundle_strategy:
+        return {"bundles": [], "cached_at": None}
+    try:
+        results = await bundle_strategy.check_all_niches()
+        _bundles_cache["data"]      = results
+        _bundles_cache["cached_at"] = now
+        return {"bundles": results, "cached_at": now}
+    except Exception as exc:
+        logger.exception("get_etsy_bundles error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.get("/api/etsy/ads-status")
+async def get_etsy_ads_status() -> dict:
+    """
+    Riassunto stato Etsy Ads.
+
+    - activated_count: listing con ads_activated=1 in production_queue
+    - paused_count:    listing con ladder_level='ctr_low' (proxy per ads in pausa)
+    - avg_ctr:         CTR medio su listing con ads attive
+    - last_auto_manage_at: ultimo run auto_manage (da config, se presente)
+    """
+    if not memory:
+        return {"activated_count": 0, "paused_count": 0, "avg_ctr": None, "last_auto_manage_at": None}
+    try:
+        db = await memory.get_db()
+
+        # Listing con ads attive
+        cur = await db.execute(
+            "SELECT COUNT(*) AS cnt FROM production_queue WHERE ads_activated = 1"
+        )
+        row = await cur.fetchone()
+        activated_count = row["cnt"] if row else 0
+
+        # Listing con ads esplicitamente messe in pausa da EtsyAdsManager
+        cur = await db.execute(
+            "SELECT COUNT(*) AS cnt FROM production_queue WHERE ads_paused = 1"
+        )
+        row = await cur.fetchone()
+        paused_count = row["cnt"] if row else 0
+
+        # CTR medio sulle listing ads attive
+        cur = await db.execute(
+            """
+            SELECT AVG(lp.ctr) AS avg_ctr
+            FROM listing_performance lp
+            JOIN production_queue pq ON lp.production_queue_id = pq.id
+            WHERE pq.ads_activated = 1 AND lp.ctr > 0
+            """
+        )
+        row = await cur.fetchone()
+        avg_ctr = round(float(row["avg_ctr"]), 4) if row and row["avg_ctr"] else None
+
+        # Ultimo run auto_manage_ads — da config se tracciato
+        cur = await db.execute(
+            "SELECT value FROM config WHERE key = 'etsy_ads.last_auto_manage_at'"
+        )
+        row = await cur.fetchone()
+        last_auto_manage_at = float(row["value"]) if row and row["value"] else None
+
+        return {
+            "activated_count":    activated_count,
+            "paused_count":       paused_count,
+            "avg_ctr":            avg_ctr,
+            "last_auto_manage_at": last_auto_manage_at,
+        }
+    except Exception as exc:
+        logger.exception("get_etsy_ads_status error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.get("/api/etsy/shop-optimizer")
+async def get_etsy_shop_optimizer() -> dict:
+    """
+    Stato corrente ShopProfileOptimizer — ultimo titolo e niches applicati.
+    Legge dalla tabella config (non chiama LLM né Etsy API).
+    """
+    if not memory:
+        return {"last_title": None, "last_niches": [], "last_applied_at": None, "status": "unavailable"}
+    try:
+        db = await memory.get_db()
+
+        cur = await db.execute(
+            "SELECT key, value FROM config WHERE key IN (?, ?, ?)",
+            (
+                "shop_optimizer.last_applied_title",
+                "shop_optimizer.last_applied_niches",
+                "shop_optimizer.last_applied_at",
+            ),
+        )
+        rows = await cur.fetchall()
+        cfg = {r["key"]: r["value"] for r in rows}
+
+        last_title = cfg.get("shop_optimizer.last_applied_title")
+        last_niches_raw = cfg.get("shop_optimizer.last_applied_niches")
+        last_applied_at = cfg.get("shop_optimizer.last_applied_at")
+
+        try:
+            last_niches = json.loads(last_niches_raw) if last_niches_raw else []
+        except (json.JSONDecodeError, TypeError):
+            last_niches = []
+
+        status = "applied" if last_title else "never_applied"
+
+        return {
+            "last_title":      last_title,
+            "last_niches":     last_niches,
+            "last_applied_at": float(last_applied_at) if last_applied_at else None,
+            "status":          status,
+        }
+    except Exception as exc:
+        logger.exception("get_etsy_shop_optimizer error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/api/etsy/shop-optimizer/preview")
+async def etsy_shop_optimizer_preview(body: dict | None = None) -> dict:
+    """
+    Genera anteprima titolo + about senza applicare su Etsy.
+    Chiama ShopProfileOptimizer.preview() — usa LLM ma non Etsy API.
+
+    Body opzionale: { "focus_niche": "wedding planner" }
+    """
+    if not shop_optimizer:
+        return JSONResponse(status_code=503, content={"error": "ShopProfileOptimizer non inizializzato"})
+    try:
+        focus_niche = (body or {}).get("focus_niche")
+        result = await shop_optimizer.preview(focus_niche=focus_niche)
+        return {
+            "title":   result.get("title"),
+            "about":   result.get("about"),
+            "niches":  result.get("niches", []),
+            "changed": result.get("changed", False),
+            "status":  "ok",
+        }
+    except Exception as exc:
+        logger.exception("etsy_shop_optimizer_preview error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+# ------------------------------------------------------------------
 # Analytics endpoints
 # ------------------------------------------------------------------
+
+
+@app.get("/api/finance/summary")
+async def get_finance_summary(
+    year: int | None = None,
+    month: int | None = None,
+) -> dict:
+    """
+    P&L mensile aggregato + breakdown per niche (FE-Blocco 0.2).
+
+    Query params opzionali:
+      year  int — default: anno corrente
+      month int — default: mese corrente
+
+    Risposta: { year, month, n_sales, gross_eur, etsy_fees_eur,
+                listing_fees_eur, design_costs_eur, net_eur, margin_pct,
+                by_niche: [{ niche, gross_eur, net_eur, total_fees_eur, sales_count }] }
+    """
+    if not finance_tracker:
+        return JSONResponse(status_code=503, content={"error": "FinanceTracker non inizializzato"})
+    try:
+        summary = await finance_tracker.monthly_summary(year=year, month=month)
+
+        # Breakdown per niche — stessa finestra temporale usata da monthly_summary
+        from datetime import datetime, timezone as _tz
+        _now   = datetime.now(_tz.utc)
+        _year  = year  or _now.year
+        _month = month or _now.month
+        _start = datetime(_year, _month, 1, tzinfo=_tz.utc).timestamp()
+        _end   = datetime(_year + 1, 1, 1, tzinfo=_tz.utc).timestamp() if _month == 12 \
+                 else datetime(_year, _month + 1, 1, tzinfo=_tz.utc).timestamp()
+
+        db = await memory.get_db()
+        cursor = await db.execute(
+            """
+            SELECT
+                niche,
+                COUNT(*)              AS sales_count,
+                SUM(gross_eur)        AS gross_eur,
+                SUM(net_eur)          AS net_eur,
+                SUM(etsy_fee_eur + listing_fee_eur + design_cost_eur) AS total_fees_eur
+            FROM revenue_events
+            WHERE sold_at >= ? AND sold_at < ?
+              AND niche IS NOT NULL
+            GROUP BY niche
+            ORDER BY gross_eur DESC
+            """,
+            (_start, _end),
+        )
+        rows = await cursor.fetchall()
+        by_niche = [
+            {
+                "niche":          r["niche"],
+                "sales_count":    int(r["sales_count"]),
+                "gross_eur":      round(float(r["gross_eur"] or 0.0), 2),
+                "net_eur":        round(float(r["net_eur"]   or 0.0), 2),
+                "total_fees_eur": round(float(r["total_fees_eur"] or 0.0), 2),
+            }
+            for r in rows
+        ]
+
+        return {**summary, "by_niche": by_niche}
+    except Exception as exc:
+        logger.exception("get_finance_summary error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 @app.get("/api/finance/report")
@@ -1577,6 +1971,104 @@ async def get_analytics_failures(limit: Annotated[int, Query(ge=1, le=500)] = 20
         return {"failures": []}
     failures = await memory.get_all_listing_analyses(limit=limit)
     return {"failures": failures}
+
+
+@app.get("/api/analytics/ctr-ab")
+async def get_analytics_ctr_ab(limit: Annotated[int, Query(ge=1, le=100)] = 50) -> dict:
+    """
+    Ultimi risultati A/B thumbnail da ChromaDB (FE-Blocco 0.3).
+
+    Ogni documento `type=design_winner` contiene winner + loser template/color_scheme/ctr.
+    Risposta: { results: [{ niche, product_type, winner: {...}, loser: {...}, compared_at }] }
+    """
+    if not memory:
+        return {"results": []}
+    try:
+        raw = await memory.query_chromadb(
+            query="A/B thumbnail winner template color_scheme CTR design test",
+            n_results=limit,
+            where={"type": "design_winner"},
+            agent="api",
+        )
+        results = []
+        for item in raw:
+            meta = item.get("metadata") or {}
+            if not meta.get("niche"):
+                continue
+            results.append({
+                "niche":        meta.get("niche"),
+                "product_type": meta.get("product_type"),
+                "winner": {
+                    "template":     meta.get("template", ""),
+                    "color_scheme": meta.get("color_scheme", ""),
+                    "ctr":          float(meta.get("ctr", 0) or 0),
+                },
+                "loser": {
+                    "template":     meta.get("loser_template", ""),
+                    "color_scheme": meta.get("loser_color_scheme", ""),
+                    "ctr":          float(meta.get("loser_ctr", 0) or 0),
+                },
+                "compared_at": meta.get("date"),
+            })
+        return {"results": results}
+    except Exception as exc:
+        logger.exception("get_analytics_ctr_ab error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.get("/api/analytics/ladder")
+async def get_analytics_ladder() -> dict:
+    """
+    Distribuzione listing per ladder_level (FE-Blocco 0.3).
+
+    Conta listing distinti per livello diagnostico da listing_performance.
+    Risposta: { ok, views_low, ctr_low, conv_low, undiagnosed, total, last_updated }
+    """
+    if not memory:
+        return {"ok": 0, "views_low": 0, "ctr_low": 0, "conv_low": 0, "undiagnosed": 0, "total": 0, "last_updated": None}
+    try:
+        db = await memory.get_db()
+
+        # Conta per ladder_level sull'ultimo snapshot per listing (max snapshot_at)
+        cursor = await db.execute(
+            """
+            SELECT
+                ladder_level,
+                COUNT(DISTINCT etsy_listing_id) AS cnt
+            FROM listing_performance
+            WHERE snapshot_at = (
+                SELECT MAX(lp2.snapshot_at)
+                FROM listing_performance lp2
+                WHERE lp2.etsy_listing_id = listing_performance.etsy_listing_id
+            )
+            GROUP BY ladder_level
+            """
+        )
+        rows = await cursor.fetchall()
+
+        counts: dict[str, int] = {}
+        for r in rows:
+            key = r["ladder_level"] or "undiagnosed"
+            counts[key] = int(r["cnt"])
+
+        # Timestamp ultimo snapshot disponibile
+        cur2 = await db.execute("SELECT MAX(snapshot_at) AS last FROM listing_performance")
+        row2 = await cur2.fetchone()
+        last_updated = float(row2["last"]) if row2 and row2["last"] else None
+
+        total = sum(counts.values())
+        return {
+            "ok":          counts.get("ok", 0),
+            "views_low":   counts.get("views_low", 0),
+            "ctr_low":     counts.get("ctr_low", 0),
+            "conv_low":    counts.get("conv_low", 0),
+            "undiagnosed": counts.get("undiagnosed", 0),
+            "total":       total,
+            "last_updated": last_updated,
+        }
+    except Exception as exc:
+        logger.exception("get_analytics_ladder error")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 # ------------------------------------------------------------------

@@ -119,6 +119,10 @@ interface AgentPeXIStore {
   selectedTaskId: string | null
   setSelectedTaskId: (id: string | null) => void
 
+  /* Active zone — Shell navigation */
+  activeZone: 'neural' | 'etsy' | 'personal' | 'system' | 'analytics'
+  setActiveZone: (z: 'neural' | 'etsy' | 'personal' | 'system' | 'analytics') => void
+
   /* Active domain */
   activeDomain: 'etsy' | 'personal'
   setActiveDomain: (domain: 'etsy' | 'personal') => void
@@ -130,9 +134,30 @@ interface AgentPeXIStore {
   } | null
   setDomainConfig: (cfg: { etsy: { name: string; agents: string[] }; personal: { name: string; agents: string[] } }) => void
 
-  /* Neural brain — last memory_query WS event (live node activation) */
-  lastMemoryQuery: { agent: string; collection: string; ids: string[]; ts: number } | null
-  setLastMemoryQuery: (q: { agent: string; collection: string; ids: string[]; ts: number }) => void
+  /* Autopilot (Header pill + SystemView) */
+  autopilotStatus: 'running' | 'paused' | 'stopped'
+  autopilotCurrentNiche: string | null
+  autopilotItemsToday: number
+  setAutopilotStatus: (s: 'running' | 'paused' | 'stopped', niche?: string | null) => void
+  setAutopilotItemsToday: (n: number) => void
+
+  /* Budget extended (Header mini bars) */
+  imageCostToday: number
+  feeCostToday: number
+  setImageCostToday: (n: number) => void
+  setFeeCostToday:   (n: number) => void
+
+  /* Memory query feed — ultimi 20 eventi memory_query (HUD MemoryStreams) */
+  memoryQueryFeed: Array<{ agent: string; collection: string; ids: string[]; ts: number }>
+  pushMemoryQuery: (q: { agent: string; collection: string; ids: string[]; ts: number }) => void
+
+  /* Knowledge bridge feed — ultimi 20 eventi cross-domain (HUD BridgeActivity) */
+  bridgeFeed: Array<{ topic: string; source_etsy: string; source_personal: string; ts: number }>
+  pushBridgeEvent: (e: { topic: string; source_etsy: string; source_personal: string; ts: number }) => void
+
+  /* Brief overlay (ContextOverlay) */
+  briefOpen: boolean
+  setBriefOpen: (v: boolean) => void
 }
 
 export const useStore = create<AgentPeXIStore>((set) => ({
@@ -229,12 +254,38 @@ export const useStore = create<AgentPeXIStore>((set) => ({
   selectedTaskId: null,
   setSelectedTaskId: (id) => set({ selectedTaskId: id }),
 
+  activeZone: 'neural',
+  setActiveZone: (z) => set({ activeZone: z }),
+
   activeDomain: 'personal',
   setActiveDomain: (domain) => set({ activeDomain: domain }),
 
   domainConfig: null,
   setDomainConfig: (cfg) => set({ domainConfig: cfg }),
 
-  lastMemoryQuery: null,
-  setLastMemoryQuery: (q) => set({ lastMemoryQuery: q }),
+  autopilotStatus: 'stopped',
+  autopilotCurrentNiche: null,
+  autopilotItemsToday: 0,
+  setAutopilotStatus:     (s, niche) => set({ autopilotStatus: s, autopilotCurrentNiche: niche ?? null }),
+  setAutopilotItemsToday: (n) => set({ autopilotItemsToday: n }),
+
+  imageCostToday: 0,
+  feeCostToday:   0,
+  setImageCostToday: (n) => set({ imageCostToday: n }),
+  setFeeCostToday:   (n) => set({ feeCostToday: n }),
+
+  memoryQueryFeed: [],
+  pushMemoryQuery: (q) =>
+    set((s) => ({
+      memoryQueryFeed: [...s.memoryQueryFeed, q].slice(-20),
+    })),
+
+  bridgeFeed: [],
+  pushBridgeEvent: (e) =>
+    set((s) => ({
+      bridgeFeed: [...s.bridgeFeed, e].slice(-20),
+    })),
+
+  briefOpen: false,
+  setBriefOpen: (v) => set({ briefOpen: v }),
 }))

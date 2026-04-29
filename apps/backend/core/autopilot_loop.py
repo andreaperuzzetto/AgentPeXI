@@ -328,6 +328,9 @@ class AutopilotLoop:
         niche_data = await self._bundle_checker()
         if not niche_data:
             niche_data = await self._niche_picker()
+
+        # Traccia avvio tick effettivo [FE-0.5]
+        await self._state_set("loop.last_run_at", str(time.time()))
         if not niche_data:
             logger.debug("Nessuna niche disponibile — attendo")
             await asyncio.sleep(LOOP_SLEEP_EMPTY)
@@ -343,6 +346,7 @@ class AutopilotLoop:
             loop_run_id  = run_id,
         )
         await self._state_set("loop.current_run_id", run_id)
+        await self._state_set("loop.current_niche",  niche_data["niche"])  # [FE-0.5]
         logger.info("Design pipeline avviata: item=%d niche=%s", item_id, niche_data["niche"])
 
         await self._design_pipeline(item_id, niche_data)
@@ -356,9 +360,10 @@ class AutopilotLoop:
         # 10. Gestisci decisione
         await self._handle_decision(item_id, decision)
 
-        # Cleanup eventi
+        # Cleanup eventi e stato niche corrente [FE-0.5]
         self._approval_events.pop(item_id, None)
         self._approval_results.pop(item_id, None)
+        await self._state_set("loop.current_niche", "")
 
         await asyncio.sleep(LOOP_SLEEP_NORMAL)
 

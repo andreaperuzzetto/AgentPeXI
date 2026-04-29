@@ -112,9 +112,14 @@ class EtsyAdsManager:
             logger.warning("activate_ad: listing %s — %s", listing_id, exc)
             return False
 
-    async def pause_ad(self, listing_id: str | int) -> bool:
+    async def pause_ad(self, listing_id: str | int, item_id: int | None = None) -> bool:
         """
         Mette in pausa la campagna ads per un listing.
+
+        Args:
+            listing_id: Etsy listing ID (per la chiamata API).
+            item_id:    ID riga production_queue (opzionale) — se fornito,
+                        aggiorna ads_paused=1 nel DB dopo la pausa riuscita.
 
         Returns:
             True se l'operazione è riuscita (o mock), False in caso di errore.
@@ -129,6 +134,12 @@ class EtsyAdsManager:
                 listing_id,
                 " [MOCK]" if self.mock_mode else "",
             )
+            # Traccia pausa nel DB [FE-0.1]
+            if item_id is not None and self.production_queue is not None:
+                try:
+                    await self.production_queue.set_ads_paused(item_id)
+                except Exception as db_exc:
+                    logger.warning("pause_ad: set_ads_paused(%d) fallito: %s", item_id, db_exc)
             return True
         except Exception as exc:
             logger.warning("pause_ad: listing %s — %s", listing_id, exc)
@@ -251,7 +262,7 @@ class EtsyAdsManager:
                     ads_ctr = clicks / max(impressions, 1)
 
                     if ads_ctr < _ADS_CTR_PAUSE_THRESHOLD:
-                        ok = await self.pause_ad(listing_id)
+                        ok = await self.pause_ad(listing_id, item_id=item.id)
                         if ok:
                             paused += 1
                             title   = item.listing_title or str(listing_id)

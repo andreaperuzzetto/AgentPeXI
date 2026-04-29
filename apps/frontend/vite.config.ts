@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  worker: { format: 'es' },  // Web Worker ES module support (Three.js orb worker)
   server: {
     proxy: {
       '/api': {

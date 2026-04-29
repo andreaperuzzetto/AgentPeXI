@@ -2,7 +2,7 @@ import { useEffect, useState, Component, type ReactNode, type ErrorInfo } from '
 import { useShallow } from 'zustand/react/shallow'
 import { Header } from './components/Header'
 import { PepeOrb } from './components/PepeOrb/PepeOrb'
-import { NeuralBrain } from './components/NeuralBrain/NeuralBrain'
+import { NeuralBrainOrb } from './components/NeuralBrainOrb/NeuralBrainOrb'
 import { PersonalQuickCard } from './components/PersonalQuickCard/PersonalQuickCard'
 import { AnalyticsMiniPanel } from './components/AnalyticsMini/AnalyticsMiniPanel'
 import { DomainCard } from './components/DomainCard/DomainCard'
@@ -171,8 +171,8 @@ export default function App() {
               <div style={{ display: 'none' }} aria-hidden="true">
                 <PepeOrb />
               </div>
-              {/* Neural brain: Canvas 2D graph + particle orb + node drawer */}
-              <NeuralBrain />
+              {/* Three.js memory graph — replaces Canvas-2D NeuralBrain (FE-2.1) */}
+              <NeuralBrainOrb />
               {/* Step cards float above canvas — no pointer-events on graph */}
               <StepCards hidden={drawerOpen} />
               {/* Step drawer can overlap graph (per spec) */}

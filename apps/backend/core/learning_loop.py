@@ -517,14 +517,17 @@ class LearningLoop:
                 f"A/B thumbnail test completed {now_str}."
             )
             winner_meta = {
-                "type":         "design_winner",
-                "niche":        niche,
-                "product_type": product_type,
-                "template":     winner_template,
-                "color_scheme": winner_cs,
-                "source":       "ab_test",
-                "ctr":          str(round(winner_ctr, 4)),
-                "date":         now_str,
+                "type":               "design_winner",
+                "niche":              niche,
+                "product_type":       product_type,
+                "template":           winner_template,
+                "color_scheme":       winner_cs,
+                "ctr":                str(round(winner_ctr, 4)),
+                "loser_template":     loser["template"] or "",
+                "loser_color_scheme": loser["color_scheme"] or "",
+                "loser_ctr":          str(round(loser_ctr, 4)),
+                "source":             "ab_test",
+                "date":               now_str,
             }
             try:
                 await self._memory.store_insight(winner_text, winner_meta)

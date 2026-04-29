@@ -84,6 +84,11 @@ class KnowledgeBridge:
         self.memory = memory
         self._client: anthropic.AsyncAnthropic | None = None   # lazy-init
         self._dedup: deque[str] = deque(maxlen=_DEDUP_CACHE_SIZE)
+        self._ws_broadcaster = None  # iniettato da main.py — async callable
+
+    def set_ws_broadcaster(self, broadcaster) -> None:
+        """Inietta il WS broadcaster per eventi knowledge_bridge (FE-0.7)."""
+        self._ws_broadcaster = broadcaster
 
     # ------------------------------------------------------------------
     # Entry point (callback registrato in MemoryManager)
@@ -155,6 +160,20 @@ class KnowledgeBridge:
             "KnowledgeBridge: insight cross-domain scritto in shared_memory — '%s'",
             synthesis[:80],
         )
+
+        # Emetti evento WS per BridgeActivity HUD panel (FE-0.7)
+        if self._ws_broadcaster is not None:
+            try:
+                import asyncio as _asyncio
+                _asyncio.create_task(self._ws_broadcaster({
+                    "type":            "knowledge_bridge",
+                    "topic":           synthesis[:80],
+                    "source_etsy":     etsy_text[:120],
+                    "source_personal": personal_text[:120],
+                    "ts":              now.timestamp(),
+                }))
+            except Exception as _exc:
+                logger.debug("KnowledgeBridge: WS broadcast fallito (fail-safe): %s", _exc)
 
     # ------------------------------------------------------------------
     # Step 1 — query dominio opposto

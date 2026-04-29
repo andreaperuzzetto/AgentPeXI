@@ -26,6 +26,9 @@ export interface SystemStatus {
   queue_size: number
   active_tasks: number
   mock_mode?: boolean
+  /** Autopilot fields — opzionali, inviati dal backend quando disponibili */
+  autopilot_status?: 'running' | 'paused' | 'stopped'
+  autopilot_niche?:  string | null
 }
 
 export interface ToolCallEvent {
@@ -115,6 +118,14 @@ export interface MemoryQueryEvent {
   ts: string
 }
 
+export interface KnowledgeBridgeEvent {
+  type: 'knowledge_bridge'
+  topic: string
+  source_etsy: string
+  source_personal: string
+  ts: number
+}
+
 export type WSIncoming =
   | AgentStarted
   | AgentCompleted
@@ -128,6 +139,7 @@ export type WSIncoming =
   | WatcherCapture
   | DomainSwitched
   | MemoryQueryEvent
+  | KnowledgeBridgeEvent
 
 /* ── UI models ── */
 
