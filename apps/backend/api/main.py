@@ -140,6 +140,9 @@ async def lifespan(app: FastAPI):
     from apps.backend.agents.finance import FinanceAgent
     from apps.backend.core.learning_loop import LearningLoop
     from apps.backend.core.bundle_strategy import BundleStrategy
+    from apps.backend.core.etsy_ads import EtsyAdsManager
+    from apps.backend.core.finance_tracker import FinanceTracker
+    from apps.backend.core.shop_optimizer import ShopProfileOptimizer
     from apps.backend.agents.recall import RecallAgent
     from apps.backend.agents.remind import RemindAgent
     from apps.backend.agents.summarize import SummarizeAgent
@@ -261,6 +264,28 @@ async def lifespan(app: FastAPI):
     bundle_strategy = BundleStrategy(memory=memory, learning_loop=learning_loop)
     logger.info("BundleStrategy istanziato")
 
+    # 2h-pre. ShopProfileOptimizer — B5/5.1
+    # Istanziato prima di AnalyticsAgent (ordine non stretto, ma coerente con
+    # il pattern: tutti i service prima degli agenti LLM)
+    _mock = getattr(pepe, "mock_mode", False)
+    shop_optimizer = ShopProfileOptimizer(
+        memory=memory,
+        etsy_client=etsy_api,
+        learning_loop=learning_loop,
+        mock_mode=_mock,
+    )
+    logger.info("ShopProfileOptimizer istanziato (mock=%s)", _mock)
+
+    # 2h-pre2. EtsyAdsManager — B5/5.2
+    etsy_ads_manager = EtsyAdsManager(
+        etsy_client=etsy_api,
+        production_queue=production_queue,
+        publication_policy=publication_policy,
+        telegram_broadcaster=telegram_broadcast,
+        mock_mode=_mock,
+    )
+    logger.info("EtsyAdsManager istanziato (mock=%s)", _mock)
+
     # 2h. Analytics Agent
     analytics_agent = AnalyticsAgent(
         anthropic_client=pepe.client,
@@ -281,6 +306,15 @@ async def lifespan(app: FastAPI):
         telegram_broadcaster=telegram_broadcast,
     )
     pepe.register_agent("finance", finance_agent)
+
+    # 2g-post. FinanceTracker — B5/5.4 review notification
+    # Servizio di scrittura P&L: record_sale → prima vendita → Telegram review template.
+    # Istanziato DOPO FinanceAgent perché non ha dipendenze da esso.
+    finance_tracker = FinanceTracker(
+        memory=memory,
+        telegram_broadcaster=telegram_broadcast,
+    )
+    logger.info("FinanceTracker istanziato (B5/5.4)")
 
     # 2h. RecallAgent — Personal domain, tutto su Ollama
     recall_agent = RecallAgent(
@@ -453,6 +487,30 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
+        # B5/5.3 — Rileva niches con ladder_level='ctr_low' recenti (< 14 giorni)
+        # → boost score +30% e flag regen_thumbnail=True per A/B thumbnail testing
+        ctr_low_niches: set[str] = set()
+        try:
+            db_conn = await memory.get_db()
+            cursor  = await db_conn.execute(
+                """
+                SELECT DISTINCT pq.niche
+                FROM listing_performance lp
+                JOIN production_queue pq ON lp.production_queue_id = pq.id
+                WHERE lp.ladder_level = 'ctr_low'
+                  AND lp.snapshot_at > unixepoch() - 14 * 86400
+                """
+            )
+            ctr_rows     = await cursor.fetchall()
+            ctr_low_niches = {r["niche"] for r in ctr_rows}
+            if ctr_low_niches:
+                logger.info(
+                    "niche_picker: %d niche CTR_LOW rilevate → regen_thumbnail boost: %s",
+                    len(ctr_low_niches), list(ctr_low_niches)[:5],
+                )
+        except Exception as exc:
+            logger.debug("niche_picker: lettura ctr_low niches fallita: %s", exc)
+
         # 1. Multi-candidate scoring da niche_intelligence
         try:
             db_conn = await memory.get_db()
@@ -484,11 +542,19 @@ async def lifespan(app: FastAPI):
                 if niche == last_niche:
                     score *= 0.7
 
+                # B5/5.3 — Boost niche CTR_LOW: prioritizza regen thumbnail
+                regen_thumbnail = False
+                if niche in ctr_low_niches:
+                    score          *= 1.3
+                    regen_thumbnail = True
+                    logger.debug("niche_picker: boost CTR_LOW [%s] score→%.3f", niche, score)
+
                 scored.append({
-                    "niche":        niche,
-                    "product_type": product_type,
-                    "entry_score":  round(score, 3),
-                    "keywords":     [],
+                    "niche":            niche,
+                    "product_type":     product_type,
+                    "entry_score":      round(score, 3),
+                    "keywords":         [],
+                    "regen_thumbnail":  regen_thumbnail,
                 })
 
             if scored:
@@ -620,6 +686,11 @@ async def lifespan(app: FastAPI):
         publication_policy = publication_policy,
         autopilot_loop     = autopilot_loop,
         etsy_client        = etsy_api,
+        # Blocco 5
+        shop_optimizer     = shop_optimizer,
+        etsy_ads_manager   = etsy_ads_manager,
+        # Blocco 4 / 5.3
+        learning_loop      = learning_loop,
     )
     # 5. Bot Telegram (stesso event loop di FastAPI)
     _bot_deps = BotDependencies(
@@ -634,6 +705,9 @@ async def lifespan(app: FastAPI):
         analytics_agent=analytics_agent,     # B4/4.3 — /ladder command
         learning_loop=learning_loop,         # B4/4.5 — /learn command
         bundle_strategy=bundle_strategy,     # B4/4.6 — /bundle command
+        shop_optimizer=shop_optimizer,        # B5/5.1 — /shopsetup command
+        etsy_ads_manager=etsy_ads_manager,   # B5/5.2 — auto ads management
+        finance_tracker=finance_tracker,      # B5/5.4 — review notification
     )
     telegram_bot = TelegramBot(_bot_deps)
     await telegram_bot.start()

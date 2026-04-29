@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import time as _time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from apps.backend.core.config import settings
 
@@ -94,8 +94,13 @@ class FinanceTracker:
     Non fa chiamate LLM — è un service di dominio puro.
     """
 
-    def __init__(self, memory: Any) -> None:
-        self._memory = memory
+    def __init__(
+        self,
+        memory: Any,
+        telegram_broadcaster: Callable | None = None,
+    ) -> None:
+        self._memory             = memory
+        self._telegram_broadcast = telegram_broadcaster
 
     async def _db(self):
         return await self._memory.get_db()
@@ -158,7 +163,85 @@ class FinanceTracker:
             "Vendita registrata: listing=%s order=%s gross=%.2f€ net=%.2f€",
             listing_id, order_id, gross_eur, net_data["net_eur"],
         )
+
+        # B5/5.4 — Prima vendita in questa niche → notifica Telegram con template review
+        if niche:
+            try:
+                first = await self._is_first_sale_in_niche(niche, exclude_order=order_id)
+                if first:
+                    template = self._generate_review_request_template(niche)
+                    msg = (
+                        f"🎉 *Prima vendita in '{niche}'\\!*\n\n"
+                        f"Considera di inviare questo messaggio all'acquirente:\n\n"
+                        f"```\n{template}\n```\n\n"
+                        f"_\\(Copia e incolla nell'Etsy Messaging Center\\)_"
+                    )
+                    if self._telegram_broadcast:
+                        await self._telegram_broadcast(msg)
+                    logger.info(
+                        "Prima vendita niche '%s' — review template inviato via Telegram", niche
+                    )
+            except Exception as exc:
+                # Non bloccare il flusso — la notifica è best-effort
+                logger.warning("review_notification fallita (listing=%s): %s", listing_id, exc)
+
         return net_data
+
+    # ------------------------------------------------------------------
+    # Review Strategy helpers — B5/5.4
+    # ------------------------------------------------------------------
+
+    async def _is_first_sale_in_niche(
+        self,
+        niche: str,
+        exclude_order: str = "",
+    ) -> bool:
+        """
+        True se questa è la prima vendita registrata per questa niche.
+
+        Esclude l'ordine appena inserito (via exclude_order) per evitare
+        falsi negativi quando l'INSERT è già avvenuto al momento del controllo.
+
+        Args:
+            niche:         Nome della niche.
+            exclude_order: order_id da escludere dal conteggio (l'ordine corrente).
+        """
+        db = await self._db()
+        try:
+            cursor = await db.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM revenue_events
+                WHERE niche = ?
+                  AND (? = '' OR order_id != ?)
+                """,
+                (niche, exclude_order, exclude_order),
+            )
+            row = await cursor.fetchone()
+            return int(row["n"] or 0) == 0
+        except Exception as exc:
+            logger.warning("_is_first_sale_in_niche errore: %s", exc)
+            return False
+
+    @staticmethod
+    def _generate_review_request_template(niche: str) -> str:
+        """
+        Genera un template messaggio di richiesta review per l'acquirente.
+
+        Il template è in inglese (lingua standard Etsy) e generico per niche.
+        Andrea può copiarlo e incollarlo direttamente nel sistema messaging Etsy.
+
+        Args:
+            niche: Nome della niche (es. "wedding planner", "budget tracker").
+        """
+        return (
+            f"Hi! Thank you so much for your purchase of our {niche} printable! "
+            f"I hope you love it and find it super useful. "
+            f"If you have a moment, a quick review would mean the world to us — "
+            f"it helps other buyers find our shop. "
+            f"If you have any questions or need any adjustments, "
+            f"just send me a message and I'll be happy to help!"
+        )
 
     # ------------------------------------------------------------------
     # Lettura — monthly_summary

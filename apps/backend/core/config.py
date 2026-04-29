@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     ETSY_SHOP_ID: str = ""
     ETSY_ENV: str = "sandbox"
 
+    # POD — Print on Demand (Printify) — B5/5.5 scaffolding
+    # Disabilitato di default. Attivare solo quando Printify è configurato (Blocco 6+).
+    POD_ENABLED: bool = False
+    PRINTIFY_API_KEY: str = ""
+
     # Tools
     TAVILY_API_KEY: str = ""
     REPLICATE_API_KEY: str = ""

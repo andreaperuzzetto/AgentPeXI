@@ -203,15 +203,26 @@ class BundleStrategy:
         merged_keywords = self._merge_keywords(all_keywords)
         score           = await self._get_performance_score(niche)
 
+        # B5/5.5 — POD companion: quando POD sarà attivo, AutopilotLoop
+        # potrà generare un listing POD companion per ogni bundle completato.
+        # Disabilitato di default finché settings.POD_ENABLED = False.
+        try:
+            from apps.backend.core.config import settings as _settings
+            _pod_enabled = _settings.POD_ENABLED
+        except Exception:
+            _pod_enabled = False
+
         spec = {
-            "niche":             niche,
-            "product_type":      "bundle",
-            "component_titles":  component_titles,
-            "component_images":  component_images,
-            "suggested_price":   suggested_price,
-            "keywords":          merged_keywords,
-            "entry_score":       score,
-            "n_components":      len(rows),
+            "niche":              niche,
+            "product_type":       "bundle",
+            "component_titles":   component_titles,
+            "component_images":   component_images,
+            "suggested_price":    suggested_price,
+            "keywords":           merged_keywords,
+            "entry_score":        score,
+            "n_components":       len(rows),
+            # POD companion — None finché POD_ENABLED=False (Blocco 6+)
+            "pod_companion_type": "pod_print" if _pod_enabled else None,
         }
 
         logger.info(

@@ -74,6 +74,11 @@ class Scheduler:
         publication_policy: Any = None,
         autopilot_loop: Any = None,
         etsy_client: Any = None,
+        # Blocco 5 — Shop Intelligence
+        shop_optimizer: Any = None,
+        etsy_ads_manager: Any = None,
+        # Blocco 4 / 5.3 — LearningLoop (A/B thumbnail comparison)
+        learning_loop: Any = None,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
@@ -92,6 +97,11 @@ class Scheduler:
         self.publication_policy = publication_policy
         self.autopilot_loop    = autopilot_loop
         self.etsy_client       = etsy_client
+        # Blocco 5
+        self.shop_optimizer    = shop_optimizer
+        self.etsy_ads_manager  = etsy_ads_manager
+        # Blocco 4 / 5.3
+        self.learning_loop     = learning_loop
         self._scheduler = AsyncIOScheduler()
         # Track job execution state: job_id → {status, last_run}
         self._job_status: dict[str, dict[str, Any]] = {}
@@ -167,6 +177,17 @@ class Scheduler:
             )
             logger.info("Job analytics_poll registrato (ogni 6h)")
 
+        # Blocco 5 — Etsy Ads auto-manager ogni 6h (parallelo ad analytics_poll)
+        if self.etsy_ads_manager is not None:
+            self._scheduler.add_job(
+                self._run_etsy_ads_manager,
+                trigger=IntervalTrigger(hours=6),
+                id="etsy_ads_manager",
+                name="Etsy Ads auto-manager (B5)",
+                replace_existing=True,
+            )
+            logger.info("Job etsy_ads_manager registrato (ogni 6h)")
+
         # Screen cleanup nightly (Blocco 2) — elimina chunk più vecchi di SCREEN_RETENTION_DAYS
         if self.screen_watcher is not None:
             self._scheduler.add_job(
@@ -177,6 +198,17 @@ class Scheduler:
                 replace_existing=True,
             )
             logger.info("Job screen_cleanup registrato (03:00 nightly)")
+
+        # Blocco 5 — Shop profile optimizer ogni lunedì 07:00
+        if self.shop_optimizer is not None:
+            self._scheduler.add_job(
+                self._run_shop_optimizer_job,
+                trigger=CronTrigger(day_of_week="mon", hour=7, minute=0),
+                id="shop_optimizer",
+                name="Shop profile optimizer (B5)",
+                replace_existing=True,
+            )
+            logger.info("Job shop_optimizer registrato (lunedì 07:00)")
 
         # Etsy learning loop domenicale 02:00 — analytics + finance aggiornano i segnali ChromaDB
         # (design_winner, niche_roi_snapshot, finance_directive, finance_insight)
@@ -994,6 +1026,99 @@ class Scheduler:
                 pass
 
     # ------------------------------------------------------------------
+    # Blocco 4 / 5.3 — Etsy learning loop domenicale
+    # ------------------------------------------------------------------
+
+    async def _run_etsy_learning_loop(self) -> None:
+        """Domenicale 02:00 — aggiorna segnali ChromaDB e confronta A/B thumbnail.
+
+        Flusso:
+        1. AnalyticsAgent.poll_listing_performance() — aggiorna listing_performance
+           e diagnostica Ladder System (ctr_low, views_low, conv_low).
+        2. LearningLoop.run_full_update() — ricalcola niche_intelligence da snapshot.
+        3. LearningLoop.compare_ab_thumbnails(niche) — per ogni niche con ctr_low
+           recente: confronta CTR originale vs alternativo, scrivi design_winner
+           o rafforza low_ctr_signal.
+        4. Invia report Telegram aggregato.
+        """
+        report_lines: list[str] = []
+        errors: list[str] = []
+
+        # 1. Poll listing performance
+        if self.analytics_agent is not None:
+            try:
+                await self.analytics_agent.poll_listing_performance()
+                report_lines.append("✅ Poll listing performance completato")
+            except Exception as exc:
+                errors.append(f"poll_listing_performance: {exc}")
+                logger.error("etsy_learning_loop poll_listing: %s", exc)
+        else:
+            report_lines.append("ℹ️ analytics_agent non disponibile — poll skipped")
+
+        # 2. LearningLoop update
+        if self.learning_loop is not None:
+            try:
+                summary = await self.learning_loop.run_full_update()
+                n_updated = summary.get("n_updated", 0)
+                top       = summary.get("top_niches", [])
+                report_lines.append(
+                    f"✅ niche_intelligence: {n_updated} niche aggiornate"
+                    + (f" | top: {', '.join(top[:3])}" if top else "")
+                )
+            except Exception as exc:
+                errors.append(f"run_full_update: {exc}")
+                logger.error("etsy_learning_loop run_full_update: %s", exc)
+
+            # 3. A/B thumbnail comparison — B5/5.3
+            try:
+                db     = await self.memory.get_db()
+                cursor = await db.execute(
+                    """
+                    SELECT DISTINCT pq.niche
+                    FROM listing_performance lp
+                    JOIN production_queue pq ON lp.production_queue_id = pq.id
+                    WHERE lp.ladder_level = 'ctr_low'
+                      AND lp.snapshot_at > unixepoch() - 7 * 86400
+                    """
+                )
+                ctr_low_rows = await cursor.fetchall()
+                ab_compared  = 0
+                ab_skipped   = 0
+
+                for row in ctr_low_rows:
+                    niche = row["niche"]
+                    try:
+                        result = await self.learning_loop.compare_ab_thumbnails(niche)
+                        if result.get("status") == "compared":
+                            ab_compared += 1
+                        else:
+                            ab_skipped += 1
+                    except Exception as exc:
+                        logger.warning("etsy_learning_loop compare_ab [%s]: %s", niche, exc)
+                        ab_skipped += 1
+
+                if ctr_low_rows:
+                    report_lines.append(
+                        f"✅ A/B thumbnail: {ab_compared} confrontati, {ab_skipped} skipped"
+                    )
+            except Exception as exc:
+                errors.append(f"compare_ab_thumbnails: {exc}")
+                logger.error("etsy_learning_loop compare_ab: %s", exc)
+
+        # 4. Report Telegram
+        if errors:
+            report_lines.append(f"⚠️ Errori: {'; '.join(errors[:3])}")
+
+        if report_lines:
+            msg = "📈 *Etsy learning loop* (domenica 02:00)\n\n" + "\n".join(report_lines)
+            await self._notify_telegram(msg)
+
+        logger.info(
+            "etsy_learning_loop completato — %d step, %d errori",
+            len(report_lines), len(errors),
+        )
+
+    # ------------------------------------------------------------------
     # Blocco 4 — polling performance listing
     # ------------------------------------------------------------------
 
@@ -1011,6 +1136,67 @@ class Scheduler:
             await self.analytics_agent.poll_listing_performance()
         except Exception as exc:
             logger.error("poll_listing_performance fallito: %s", exc, exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Blocco 5 — Shop profile optimizer
+    # ------------------------------------------------------------------
+
+    async def _run_shop_optimizer_job(self) -> None:
+        """Lunedì 07:00 — aggiorna il profilo shop Etsy se le top niches sono cambiate.
+
+        Chiama ShopProfileOptimizer.apply_shop_profile() che:
+        - legge top niches da LearningLoop.get_top_niches()
+        - confronta con l'ultima applicazione (config DB)
+        - se cambiate: genera titolo SEO + about via Haiku e applica via Etsy API
+        - se invariate: skip silenzioso
+
+        Notifica Telegram solo se il profilo è stato effettivamente aggiornato.
+        """
+        if self.shop_optimizer is None:
+            return
+        try:
+            result = await self.shop_optimizer.apply_shop_profile()
+            status = result.get("status", "unknown")
+
+            if status == "applied":
+                title = result.get("title", "—")
+                niches = ", ".join(result.get("niches", [])) or "—"
+                await self._notify_telegram(
+                    f"🏪 Shop profile aggiornato\n"
+                    f"📝 Titolo: {title}\n"
+                    f"📊 Niches: {niches}"
+                )
+                logger.info("shop_optimizer_job: profilo applicato — %s", title)
+
+            elif status == "mock":
+                logger.info("shop_optimizer_job: mock mode — nessuna chiamata API")
+
+            elif status == "skipped":
+                logger.info("shop_optimizer_job: niches invariate, skip")
+
+            elif status in ("no_api", "error"):
+                err = result.get("error", status)
+                logger.warning("shop_optimizer_job: status=%s err=%s", status, err)
+                await self._notify_telegram(
+                    f"⚠️ Shop optimizer: {status} — {err}"
+                )
+
+        except Exception as exc:
+            logger.error("shop_optimizer_job fallito: %s", exc)
+
+    async def _run_etsy_ads_manager(self) -> None:
+        """Ogni 6h — gestione automatica campagne Etsy Ads.
+
+        Attiva ads sui listing nuovi (< 14 giorni) se policy.ads_enabled.
+        Pausa ads se CTR < 1.5% dopo 7+ giorni di attività.
+        Notifica Telegram solo se ci sono state azioni (attivazioni o pause).
+        """
+        if self.etsy_ads_manager is None:
+            return
+        try:
+            await self.etsy_ads_manager.auto_manage_ads()
+        except Exception as exc:
+            logger.error("etsy_ads_manager job fallito: %s", exc)
 
     # ------------------------------------------------------------------
     # Broadcast helper

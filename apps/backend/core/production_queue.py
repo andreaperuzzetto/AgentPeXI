@@ -28,7 +28,9 @@ class ProductionQueueItem:
 
     id: int
     niche: str
-    product_type: str
+    product_type: str              # digital_print | digital_art_png | svg_bundle | bundle
+                                   # POD (B5/5.5 scaffolding — attivi quando POD_ENABLED=True):
+                                   #   pod_print | pod_mug | pod_tshirt
     keywords: list[str]          # deserializzata da JSON
     entry_score: float
 

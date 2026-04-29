@@ -397,6 +397,181 @@ class LearningLoop:
         ]
 
     # ------------------------------------------------------------------
+    # A/B Thumbnail comparison — B5/5.3
+    # ------------------------------------------------------------------
+
+    async def compare_ab_thumbnails(self, niche: str) -> dict:
+        """
+        Confronta CTR originale vs alternativo per A/B thumbnail testing.
+
+        Algoritmo:
+        1. Trova listing in questa niche con ladder_level='ctr_low' (originale).
+        2. Cerca un listing alternativo nella stessa niche pubblicato DOPO
+           il segnale ctr_low (generato come regen_thumbnail) con almeno
+           _ABS_MIN_DAYS giorni di dati.
+        3. Confronta avg_ctr di original vs alternative.
+        4. Winner → store design_winner in ChromaDB.
+           Loser  → rinforza low_ctr_signal (re-flag, ChromaDB dedup per ID).
+        5. Ritorna dict con risultati o reason di skip.
+
+        Chiamato da: Scheduler job domenicale (dopo etsy_learning_loop).
+
+        Args:
+            niche: Nome della niche da confrontare.
+
+        Returns:
+            dict: {status: 'compared'|'skipped', winner, loser, niche, ...}
+        """
+        _AB_MIN_DAYS = 7   # giorni minimi di vita per valutare
+
+        db = await self._db()
+
+        # 1. Trova la niche_intelligence row per avere product_type
+        cursor = await db.execute(
+            """
+            SELECT product_type FROM niche_intelligence
+            WHERE niche = ? ORDER BY performance_score DESC LIMIT 1
+            """,
+            (niche,),
+        )
+        row = await cursor.fetchone()
+        product_type = row["product_type"] if row else "digital_print"
+
+        # 2. Tutti i listing in questa niche con performance data
+        cursor = await db.execute(
+            """
+            SELECT
+                pq.id            AS queue_id,
+                pq.etsy_listing_id,
+                pq.listing_title,
+                pq.published_at,
+                lp.ctr,
+                lp.views,
+                lp.clicks,
+                lp.template,
+                lp.color_scheme,
+                lp.ladder_level,
+                lp.snapshot_at
+            FROM production_queue pq
+            JOIN listing_performance lp ON lp.production_queue_id = pq.id
+            WHERE pq.niche = ?
+              AND pq.status = 'published'
+              AND lp.days_live >= ?
+              AND lp.snapshot_at = (
+                  SELECT MAX(lp2.snapshot_at)
+                  FROM listing_performance lp2
+                  WHERE lp2.production_queue_id = pq.id
+              )
+            ORDER BY pq.published_at ASC
+            """,
+            (niche, _AB_MIN_DAYS),
+        )
+        rows = await cursor.fetchall()
+
+        if len(rows) < 2:
+            return {
+                "status": "skipped",
+                "reason": f"solo {len(rows)} listing con dati sufficienti in '{niche}'",
+                "niche":  niche,
+            }
+
+        # 3. Cerca coppia originale (ctr_low) + alternativo (pubblicato dopo)
+        original    = None
+        alternative = None
+
+        for r in rows:
+            if r["ladder_level"] == "ctr_low" and original is None:
+                original = r
+            elif original and r["published_at"] and original["published_at"]:
+                if r["published_at"] > original["published_at"]:
+                    alternative = r
+                    break
+
+        if not original or not alternative:
+            return {
+                "status": "skipped",
+                "reason": "nessuna coppia originale+alternativo trovata",
+                "niche":  niche,
+            }
+
+        orig_ctr = float(original["ctr"] or 0)
+        alt_ctr  = float(alternative["ctr"] or 0)
+
+        # 4. Determina winner/loser
+        alt_wins    = alt_ctr >= orig_ctr
+        winner      = alternative if alt_wins else original
+        loser       = original    if alt_wins else alternative
+        winner_ctr  = alt_ctr  if alt_wins else orig_ctr
+        loser_ctr   = orig_ctr if alt_wins else alt_ctr
+
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # 4a. Scrivi design_winner in ChromaDB
+        winner_template = winner["template"] or ""
+        winner_cs       = winner["color_scheme"] or ""
+        if winner_template or winner_cs:
+            winner_text = (
+                f"A/B winner: niche='{niche}' template='{winner_template}' "
+                f"color_scheme='{winner_cs}' CTR={winner_ctr:.1%} "
+                f"vs loser CTR={loser_ctr:.1%}. "
+                f"A/B thumbnail test completed {now_str}."
+            )
+            winner_meta = {
+                "type":         "design_winner",
+                "niche":        niche,
+                "product_type": product_type,
+                "template":     winner_template,
+                "color_scheme": winner_cs,
+                "source":       "ab_test",
+                "ctr":          str(round(winner_ctr, 4)),
+                "date":         now_str,
+            }
+            try:
+                await self._memory.store_insight(winner_text, winner_meta)
+                logger.info(
+                    "compare_ab: design_winner — niche=%s template=%s/%s CTR=%.1f%%",
+                    niche, winner_template, winner_cs, winner_ctr * 100,
+                )
+            except Exception as exc:
+                logger.warning("compare_ab: store design_winner fallito: %s", exc)
+
+        # 4b. Rinforza low_ctr_signal per il loser
+        loser_template = loser["template"] or ""
+        loser_cs       = loser["color_scheme"] or ""
+        if loser_template or loser_cs:
+            try:
+                await self.flag_low_ctr(
+                    niche=niche,
+                    product_type=product_type,
+                    template=loser_template,
+                    color_scheme=loser_cs,
+                )
+            except Exception as exc:
+                logger.warning("compare_ab: flag_low_ctr loser fallito: %s", exc)
+
+        result = {
+            "status":     "compared",
+            "niche":      niche,
+            "winner": {
+                "template":     winner_template,
+                "color_scheme": winner_cs,
+                "ctr":          round(alt_ctr if alt_ctr >= orig_ctr else orig_ctr, 4),
+            },
+            "loser": {
+                "template":     loser_template,
+                "color_scheme": loser_cs,
+                "ctr":          round(orig_ctr if alt_ctr >= orig_ctr else alt_ctr, 4),
+            },
+        }
+        logger.info(
+            "compare_ab: completato — niche=%s winner_ctr=%.1f%% loser_ctr=%.1f%%",
+            niche,
+            (alt_ctr if alt_ctr >= orig_ctr else orig_ctr) * 100,
+            (orig_ctr if alt_ctr >= orig_ctr else alt_ctr) * 100,
+        )
+        return result
+
+    # ------------------------------------------------------------------
     # Utility — chiamato da /learn (Telegram handler)
     # ------------------------------------------------------------------
 
