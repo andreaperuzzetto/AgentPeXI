@@ -55,6 +55,67 @@ async def cmd_stop(
     await update.message.reply_text(msg)
 
 
+async def cmd_approve(
+    deps: "BotDependencies",
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """/approve <item_id> — approva un listing dalla production queue."""
+    loop = deps.autopilot_loop
+    if loop is None:
+        await update.message.reply_text("⚠️ AutopilotLoop non disponibile.")
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Uso: /approve <item_id>")
+        return
+    try:
+        item_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ item_id deve essere un numero intero.")
+        return
+    loop.register_approval(item_id, "approved")
+    await update.message.reply_text(f"✅ Approvazione registrata per item {item_id}.")
+
+
+async def cmd_queue(
+    deps: "BotDependencies",
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """/queue [clear] — mostra o svuota la coda production."""
+    loop = deps.autopilot_loop
+    if loop is None:
+        await update.message.reply_text("⚠️ AutopilotLoop non disponibile.")
+        return
+    action = (context.args[0] if context.args else "")
+    msg = await loop.cmd_queue(action)
+    await update.message.reply_text(msg)
+
+
+async def cmd_skip(
+    deps: "BotDependencies",
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """/skip <item_id> — salta un listing dalla production queue."""
+    loop = deps.autopilot_loop
+    if loop is None:
+        await update.message.reply_text("⚠️ AutopilotLoop non disponibile.")
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Uso: /skip <item_id>")
+        return
+    try:
+        item_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ item_id deve essere un numero intero.")
+        return
+    loop.register_approval(item_id, "skipped_user")
+    await update.message.reply_text(f"⏭ Skip registrato per item {item_id}.")
+
+
 # ---------------------------------------------------------------------------
 # Callback handler
 # ---------------------------------------------------------------------------
@@ -120,7 +181,10 @@ def register(
     from functools import partial
 
     add = app.add_handler
-    add(CommandHandler("run",  partial(cmd_run,  deps), filters=chat_filter))
-    add(CommandHandler("stop", partial(cmd_stop, deps), filters=chat_filter))
+    add(CommandHandler("run",     partial(cmd_run,     deps), filters=chat_filter))
+    add(CommandHandler("stop",    partial(cmd_stop,    deps), filters=chat_filter))
+    add(CommandHandler("approve", partial(cmd_approve, deps), filters=chat_filter))
+    add(CommandHandler("skip",    partial(cmd_skip,    deps), filters=chat_filter))
+    add(CommandHandler("queue",   partial(cmd_queue,   deps), filters=chat_filter))
     # CallbackQueryHandler non usa chat_filter — auth via is_authorized nel handler
     add(CallbackQueryHandler(partial(handle_approval_callback, deps)))

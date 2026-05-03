@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar
+
+logger = logging.getLogger("agentpexi.research")
 
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_HAIKU, MODEL_SONNET
@@ -134,30 +137,17 @@ class ResearchAgent(AgentBase):
 
     async def _get_entry_point_scorer(self):
         """
-        Lazy init di EntryPointScoring + MarketDataAgent.
-        Importazioni locali per evitare import circolari.
-        mock_mode letto dalla tabella config (default False).
+        Crea EntryPointScoring + MarketDataAgent leggendo mock_mode live da memory.mock_mode.
+        Non viene cachato: mock_mode può cambiare a runtime via /mock on|off.
         """
-        if self._entry_scorer is None:
-            from apps.backend.agents.market_data import MarketDataAgent
-            from apps.backend.core.entry_point_scoring import EntryPointScoring
+        from apps.backend.agents.market_data import MarketDataAgent
+        from apps.backend.core.entry_point_scoring import EntryPointScoring
 
-            mock_mode = False
-            try:
-                db = await self.memory.get_db()
-                cur = await db.execute(
-                    "SELECT value FROM config WHERE key = 'system.mock_mode'"
-                )
-                row = await cur.fetchone()
-                if row:
-                    mock_mode = row["value"].lower() in ("true", "1", "on")
-            except Exception:
-                pass
-
-            market_data = MarketDataAgent(memory=self.memory, mock_mode=mock_mode)
-            self._entry_scorer = EntryPointScoring(
-                memory=self.memory, market_data=market_data
-            )
+        mock_mode = getattr(self.memory, "mock_mode", False)
+        market_data = MarketDataAgent(memory=self.memory, mock_mode=mock_mode)
+        self._entry_scorer = EntryPointScoring(
+            memory=self.memory, market_data=market_data
+        )
         return self._entry_scorer
 
     @staticmethod
@@ -719,6 +709,69 @@ class ResearchAgent(AgentBase):
             f"🔍 Research autonomo: analisi {len(candidates)} candidati in parallelo…"
         )
 
+        # ── Mock mode bypass — skip LLM, ritorna primo candidato come winner ──
+        if getattr(self.memory, "mock_mode", False):
+            winner = candidates[0]
+            mock_niches = [
+                {
+                    "name":                    winner["niche"],
+                    "niche":                   winner["niche"],
+                    "viable":                  True,
+                    "final_score":             winner.get("entry_score", 0.75),
+                    "product_type":            winner.get("product_type", "printable_pdf"),
+                    "recommended_product_type": winner.get("product_type", "printable_pdf"),
+                    "_candidate_product_type": winner.get("product_type", "printable_pdf"),
+                    "_candidate_source":       winner.get("source", "mock"),
+                    "confidence":              0.75,
+                    "why_winner":              "[MOCK MODE] Candidato selezionato per test pipeline.",
+                    "demand":                  {"level": "high", "trend": "rising", "peak_months": ["April", "May"]},
+                    "competition":             {"level": "medium"},
+                    "pricing":                 {"suggested_eur": 3.50, "range": "2.99-4.99"},
+                    "keywords":                winner.get("keywords", ["mock keyword"]),
+                    "etsy_tags_13":            ["mock tag"] * 13,
+                    "selling_signals":         {},
+                    "color_palette_hint":      "warm tones",
+                    "summary":                 "[MOCK MODE] Test listing generato automaticamente.",
+                }
+            ]
+            await self._notify_telegram(
+                f"✅ Research mock completato\n"
+                f"🏆 Winner: {winner['niche']} [{winner.get('product_type', 'printable_pdf')}]\n"
+                f"💡 [MOCK MODE] Nessuna chiamata LLM reale"
+            )
+            return AgentResult(
+                task_id=task.task_id,
+                agent_name=self.name,
+                status=TaskStatus.COMPLETED,
+                output_data={
+                    "niches": mock_niches,
+                    "winner": {
+                        "niche":        winner["niche"],
+                        "product_type": winner.get("product_type", "printable_pdf"),
+                        "why_winner":   "[MOCK MODE] Candidato selezionato per test pipeline.",
+                        "confidence":   0.75,
+                        "brief": {
+                            "template":          "basic_template",
+                            "art_type":          None,
+                            "etsy_tags_13":      ["mock tag"] * 13,
+                            "selling_signals":   {},
+                            "pricing":           {"suggested_eur": 3.50},
+                            "keywords":          ["mock keyword"],
+                            "color_palette_hint": "warm tones",
+                        },
+                    },
+                    "runner_up": {
+                        "niche":        candidates[1]["niche"] if len(candidates) > 1 else "",
+                        "product_type": "printable_pdf",
+                        "why":          "mock runner-up",
+                    },
+                    "summary":             "[MOCK MODE] Pipeline di test completata.",
+                    "candidates_analyzed": len(candidates),
+                    "candidates_viable":   len(candidates),
+                },
+            )
+        # ── Fine mock bypass ──────────────────────────────────────────────────
+
         # Step 2 — analisi parallela con Haiku (semaforo 3)
         sem = asyncio.Semaphore(3)
 
@@ -745,26 +798,51 @@ class ResearchAgent(AgentBase):
 
         for item in raw_results:
             if isinstance(item, Exception):
+                logger.warning("research: sub-agente exception: %s", item)
                 continue
             candidate, result = item
             if result.status == TaskStatus.COMPLETED and isinstance(result.output_data, dict):
                 for niche_entry in result.output_data.get("niches", []):
-                    # Arricchisce l'entry con il product_type suggerito dal mining
                     niche_entry["_candidate_product_type"] = candidate["product_type"]
                     niche_entry["_candidate_source"] = candidate["source"]
-                    # Se Research ha espresso una preferenza di product_type, rispettala
                     if not niche_entry.get("recommended_product_type"):
                         niche_entry["recommended_product_type"] = candidate["product_type"]
                     full_niche_data.append(niche_entry)
             else:
-                failed.append(candidates[raw_results.index(item)]["niche"] if not isinstance(item, Exception) else "unknown")
+                _out      = result.output_data or {}
+                err_msg   = _out.get("error", "no error")
+                conf      = _out.get("confidence", 0)
+                missing   = _out.get("missing_data", [])
+                partial   = _out.get("partial_output", {}) or {}
+                d_sources = partial.get("data_sources", {})
+                logger.warning(
+                    "research: sub-agente FAILED '%s' — error='%s' — confidence=%.2f — "
+                    "data_sources=%s — missing=%s",
+                    candidate["niche"], err_msg, conf, d_sources, missing,
+                )
+                failed.append(candidate["niche"])
 
         if not full_niche_data:
+            logger.warning(
+                "research: nessun dato utilizzabile da %d sub-agenti. "
+                "Cause possibili: (1) Tavily API limit/errore → search_competitors/keywords falliti "
+                "→ LLM marca tutte le nicchie non-viable per assenza dati; "
+                "(2) confidence < 0.50 su tutti i candidati. "
+                "Azione: ricaricare crediti Tavily o usare mock mode per test. "
+                "Candidati analizzati: %s. Sub-agenti falliti: %s",
+                len(candidates), [c["niche"] for c in candidates], failed,
+            )
             return AgentResult(
                 task_id=task.task_id,
                 agent_name=self.name,
                 status=TaskStatus.FAILED,
-                output_data={"error": f"Tutti i sub-agenti hanno fallito. Candidati: {[c['niche'] for c in candidates]}"},
+                output_data={
+                    "error": (
+                        f"Tutti i sub-agenti falliti. Candidati: {[c['niche'] for c in candidates]}. "
+                        f"Causa probabile: Tavily API limit esaurito o confidence < 0.50 per assenza dati Etsy. "
+                        f"Azioni: (1) ricarica crediti Tavily, (2) usa mock mode per test pipeline."
+                    )
+                },
             )
 
         viable = [n for n in full_niche_data if n.get("viable", True)]
@@ -954,6 +1032,7 @@ class ResearchAgent(AgentBase):
         shared_text = await self._read_shared_context(query)
 
         # Step 1 — Ricerca parallela (4 chiamate)
+        # return_exceptions=True: tool failure non propaga eccezione a execute().
         search_results, competitor_results, keyword_results, trend_data = await asyncio.gather(
             self._call_tool(
                 tool_name="tavily",
@@ -984,7 +1063,22 @@ class ResearchAgent(AgentBase):
                 fn=get_google_trends,
                 keyword=query,
             ),
+            return_exceptions=True,
         )
+
+        # Normalizza Exception → dict vuoto + log
+        if isinstance(search_results, Exception):
+            logger.warning("research[%s]: tavily.search fallito: %s", query, search_results)
+            search_results = {}
+        if isinstance(competitor_results, Exception):
+            logger.warning("research[%s]: search_competitors fallito: %s", query, competitor_results)
+            competitor_results = {}
+        if isinstance(keyword_results, Exception):
+            logger.warning("research[%s]: search_keywords fallito: %s", query, keyword_results)
+            keyword_results = {}
+        if isinstance(trend_data, Exception):
+            logger.warning("research[%s]: get_google_trends fallito: %s", query, trend_data)
+            trend_data = {}
 
         # Step 2 — Track data_sources
         data_sources = {
@@ -1139,14 +1233,18 @@ class ResearchAgent(AgentBase):
         shared_text = await self._read_shared_context(niche)
 
         if use_cache and cached_data:
-            # Solo Google Trends fresco
-            trend_data = await self._call_tool(
-                tool_name="google_trends",
-                action="get_trends",
-                input_params={"keyword": niche},
-                fn=get_google_trends,
-                keyword=niche,
-            )
+            # Solo Google Trends fresco — wrapped per sicurezza
+            try:
+                trend_data = await self._call_tool(
+                    tool_name="google_trends",
+                    action="get_trends",
+                    input_params={"keyword": niche},
+                    fn=get_google_trends,
+                    keyword=niche,
+                )
+            except Exception as _gt_exc:
+                logger.warning("research[%s]: google_trends (cache path) fallito: %s", niche, _gt_exc)
+                trend_data = {}
             data_sources = {
                 "pricing":     "cached",
                 "competitors": "cached",
@@ -1174,6 +1272,9 @@ class ResearchAgent(AgentBase):
             )
         else:
             # Step 1 — Ricerca parallela (4 chiamate)
+            # return_exceptions=True: se un tool fallisce non crasha l'intero gather.
+            # _call_tool ri-rilancia eccezioni — senza questo le eccezioni Tavily
+            # (network, API key) propagavano a execute() dando confidence=0.00.
             etsy_direct, competitor_results, keyword_results, trend_data = await asyncio.gather(
                 self._call_tool(
                     tool_name="tavily",
@@ -1203,7 +1304,22 @@ class ResearchAgent(AgentBase):
                     fn=get_google_trends,
                     keyword=niche,
                 ),
+                return_exceptions=True,
             )
+
+            # Normalizza Exception → dict vuoto + log
+            if isinstance(etsy_direct, Exception):
+                logger.warning("research[%s]: search_etsy_direct fallito: %s", niche, etsy_direct)
+                etsy_direct = {}
+            if isinstance(competitor_results, Exception):
+                logger.warning("research[%s]: search_competitors fallito: %s", niche, competitor_results)
+                competitor_results = {}
+            if isinstance(keyword_results, Exception):
+                logger.warning("research[%s]: search_keywords fallito: %s", niche, keyword_results)
+                keyword_results = {}
+            if isinstance(trend_data, Exception):
+                logger.warning("research[%s]: get_google_trends fallito: %s", niche, trend_data)
+                trend_data = {}
 
             # Step 2 — Track data_sources
             etsy_raw = etsy_direct.get("etsy_listings_raw", []) if isinstance(etsy_direct, dict) else []
@@ -1503,6 +1619,10 @@ class ResearchAgent(AgentBase):
         # Tentativo 1
         result = self._try_parse_json(text)
         if result is None:
+            logger.warning(
+                "research: JSON parse fallito (tentativo 1) — raw[:300]='%s'",
+                text[:300].replace("\n", "↵"),
+            )
             # Retry con correction prompt
             corrected = await self._call_llm(
                 messages=[{
@@ -1517,16 +1637,27 @@ class ResearchAgent(AgentBase):
                 system_prompt=system_prompt,
             )
             result = self._try_parse_json(corrected)
+            if result is None:
+                logger.warning(
+                    "research: JSON parse fallito anche dopo retry — raw[:200]='%s'",
+                    corrected[:200].replace("\n", "↵"),
+                )
 
         if result is None:
             return None  # Caller restituirà FAILED
 
         # Validazione campi obbligatori
         if not isinstance(result.get("niches"), list) or len(result["niches"]) == 0:
+            logger.warning("research: _parse_and_validate: 'niches' assente o vuoto nel JSON LLM")
             return None
         for niche in result["niches"]:
             required = ["name", "keywords", "pricing", "recommended_product_type", "demand"]
             if not all(k in niche for k in required):
+                logger.warning(
+                    "research: _parse_and_validate: nicchia '%s' manca campi obbligatori: %s",
+                    niche.get("name", "?"),
+                    [k for k in required if k not in niche],
+                )
                 return None
             if not isinstance(niche.get("keywords"), list) or len(niche["keywords"]) == 0:
                 return None
@@ -1536,9 +1667,22 @@ class ResearchAgent(AgentBase):
             result["niches"][i] = self._validate_and_fix_tags(niche)
 
         # Fix 4 — Viability gate
-        result, _ = self._apply_viability_gate(result)
-        if result is None:
-            return None
+        # NOTA: se l'LLM marca tutte le nicchie viable=false (es. dati assenti),
+        # _apply_viability_gate ritorna None. In quel caso NON trattiamo come "JSON parse failed"
+        # ma restituiamo il result originale (con viable=false su tutto) così la confidence gate
+        # può produrre un errore FAILED con messaggio corretto ("nessuna nicchia viable trovata").
+        filtered_result, discarded = self._apply_viability_gate(result)
+        if filtered_result is None:
+            logger.warning(
+                "research: _parse_and_validate: tutte le nicchie marcate non-viable dall'LLM "
+                "(dati insufficienti o criteri business non soddisfatti). "
+                "Scartate: %s. Restituisco result non-viable per errore leggibile.",
+                [d.get("name") for d in discarded],
+            )
+            # Ritorna il result originale (non filtrato) — confidence gate darà FAILED
+            # con "nessuna nicchia viable trovata" invece di "JSON parsing fallito"
+            return result
+        result = filtered_result
 
         return result
 

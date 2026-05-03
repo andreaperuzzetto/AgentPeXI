@@ -163,6 +163,29 @@ export function useWebSocket() {
         }
       } catch {}
 
+      // CollectionStats — ChromaDB stats (HUD panel)
+      // Senza questa chiamata chromaStats rimane null e il pannello mostra lo skeleton.
+      try {
+        const r = await fetch('/api/memory/stats')
+        if (r.ok) {
+          const data = await r.json()
+          store.setChromaStats({
+            available:     data.available ?? false,
+            count:         data.count     ?? 0,
+            by_collection: data.by_collection ?? undefined,
+          })
+        }
+      } catch {}
+
+      // Autopilot status — HUD pill aggiornamento al mount
+      try {
+        const r = await fetch('/api/autopilot/status')
+        if (r.ok) {
+          const data = await r.json()
+          if (data?.status) store.setAutopilotStatus(data.status, data.current_niche ?? null)
+        }
+      } catch {}
+
     }
 
     function scheduleReconnect() {

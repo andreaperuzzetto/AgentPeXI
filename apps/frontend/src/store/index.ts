@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AgentState, ToolEvent, SystemState, AgentStep, ContextUpdateEvent } from '../types'
+import type { GraphNode, GraphEdge } from '../components/NeuralBrainOrb/NodeDrawer'
 
 export interface CacheStats {
   /** Token serviti dalla cache (cache_read_tokens) */
@@ -105,8 +106,17 @@ interface AgentPeXIStore {
   setAnalyticsSummary: (s: AnalyticsSummary) => void
 
   /* ChromaDB stats (from /api/memory/stats) */
-  chromaStats: { available: boolean; count: number } | null
-  setChromaStats: (s: { available: boolean; count: number }) => void
+  chromaStats: {
+    available:      boolean
+    count:          number
+    /** Per-collection document counts — FE-0.6 backend patch required */
+    by_collection?: Record<string, number>
+  } | null
+  setChromaStats: (s: {
+    available:      boolean
+    count:          number
+    by_collection?: Record<string, number>
+  }) => void
 
   /* WS connected timestamp */
   connectedAt: number | null
@@ -158,6 +168,14 @@ interface AgentPeXIStore {
   /* Brief overlay (ContextOverlay) */
   briefOpen: boolean
   setBriefOpen: (v: boolean) => void
+
+  /* Memory graph — nodes + edges for NeuralBrainOrb */
+  memoryGraph: { nodes: GraphNode[]; edges: GraphEdge[] }
+  setMemoryGraph: (data: { nodes: GraphNode[]; edges: GraphEdge[] }) => void
+
+  /* Active node IDs — pulsating nodes from WS memory_query (auto-clear 2.5s) */
+  activeNodeIds: Set<string>
+  addActiveNodeId: (id: string) => void
 }
 
 export const useStore = create<AgentPeXIStore>((set) => ({
@@ -288,4 +306,19 @@ export const useStore = create<AgentPeXIStore>((set) => ({
 
   briefOpen: false,
   setBriefOpen: (v) => set({ briefOpen: v }),
+
+  memoryGraph: { nodes: [], edges: [] },
+  setMemoryGraph: (data) => set({ memoryGraph: data }),
+
+  activeNodeIds: new Set<string>(),
+  addActiveNodeId: (id) => {
+    set((s) => ({ activeNodeIds: new Set([...s.activeNodeIds, id]) }))
+    setTimeout(() => {
+      set((s) => {
+        const next = new Set(s.activeNodeIds)
+        next.delete(id)
+        return { activeNodeIds: next }
+      })
+    }, 2500)
+  },
 }))

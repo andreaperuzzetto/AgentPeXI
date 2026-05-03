@@ -1150,6 +1150,8 @@ ESEMPI:
     def set_mock_mode(self, value: bool) -> None:
         """Attiva/disattiva mock mode a runtime. Thread-safe (GIL)."""
         self.mock_mode = value
+        # Propaga a MemoryManager — letto da BaseAgent._call_llm e ResearchAgent
+        self.memory.mock_mode = value
         logger.info("Mock mode: %s", "ON" if value else "OFF")
 
     def get_mock_mode(self) -> bool:

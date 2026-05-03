@@ -62,20 +62,17 @@ interface NodeDetail {
   }>
 }
 
-/* ── Zone colors (matches ZONE_COLOR_HEX in NeuralBrainOrb) ────────────── */
+/* ── Collection colors (matches COLL_COLOR in NeuralBrainOrb) ───────────── */
 
-const ZONE_COLOR: Record<string, string> = {
-  neural:    '#B57BFF',
-  memory:    '#B57BFF',
-  etsy:      '#F5A623',
-  personal:  '#1BFF5E',
-  shared:    '#C8C8FF',
-  system:    '#8B8D98',
-  analytics: '#C8C8FF',
+const COLL_COLOR: Record<string, string> = {
+  pepe_memory:     '#F5A623',
+  personal_memory: '#1BFF5E',
+  screen_memory:   '#B57BFF',
+  shared_memory:   '#C8C8FF',
 }
 
-function zoneColor(zone: string): string {
-  return ZONE_COLOR[zone] ?? '#8B8D98'
+function collColor(collection: string): string {
+  return COLL_COLOR[collection] ?? '#8B8D98'
 }
 
 function rgba(hex: string, a: number): string {
@@ -90,7 +87,7 @@ function rgba(hex: string, a: number): string {
 function LoadingRow() {
   return (
     <div style={{
-      fontFamily: "'JetBrains Mono', monospace",
+      fontFamily: 'var(--fmo)',
       fontSize: 11,
       color: '#3a3d47',
       letterSpacing: '0.12em',
@@ -105,7 +102,7 @@ function LoadingRow() {
 function EmptyRow({ text }: { text: string }) {
   return (
     <div style={{
-      fontFamily: "'JetBrains Mono', monospace",
+      fontFamily: 'var(--fmo)',
       fontSize: 11,
       color: '#3a3d47',
       letterSpacing: '0.08em',
@@ -121,7 +118,7 @@ function EmptyRow({ text }: { text: string }) {
 
 export function NodeDrawer({ nodeId, nodes, edges, onClose }: NodeDrawerProps) {
   const node   = nodeId ? (nodes.find(n => n.id === nodeId) ?? null) : null
-  const col    = node ? zoneColor(node.zone) : '#8B8D98'
+  const col    = node ? collColor(node.collection) : '#8B8D98'
 
   const [detail, setDetail] = useState<NodeDetail | null>(null)
   const [loading, setLoading] = useState(false)
@@ -168,7 +165,7 @@ export function NodeDrawer({ nodeId, nodes, edges, onClose }: NodeDrawerProps) {
             top:    0,
             right:  0,
             height: '100%',
-            width:  420,
+            width:  300,
             zIndex: 20,
             display: 'flex',
             flexDirection: 'column',
@@ -194,7 +191,7 @@ export function NodeDrawer({ nodeId, nodes, edges, onClose }: NodeDrawerProps) {
           }}>
             {/* Zone badge */}
             <span style={{
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'var(--fmo)',
               fontSize: 10,
               fontWeight: 600,
               letterSpacing: '0.10em',
@@ -211,7 +208,7 @@ export function NodeDrawer({ nodeId, nodes, edges, onClose }: NodeDrawerProps) {
 
             {/* Node label */}
             <span style={{
-              fontFamily: "'Space Grotesk', sans-serif",
+              fontFamily: 'var(--fui)',
               fontSize: 14,
               fontWeight: 500,
               color: '#e8eaf0',
@@ -257,247 +254,200 @@ export function NodeDrawer({ nodeId, nodes, edges, onClose }: NodeDrawerProps) {
             </button>
           </div>
 
-          {/* ── Body ── */}
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
-
-            {/* ── Left panel: access history + connection chips ── */}
-            <div style={{
-              width: '42%',
-              flexShrink: 0,
-              borderRight: `1px solid ${rgba(col, 0.07)}`,
-              background: 'rgba(0,0,0,0.15)',
-              display: 'flex',
-              flexDirection: 'column',
-              padding: '12px 10px',
-              gap: 4,
-              overflow: 'hidden',
-            }}>
-
-              {/* Access history */}
-              <div style={sectionLabel(col)}>
-                Accessi&nbsp;
-                <span style={{ color: rgba(col, 0.5), fontWeight: 400 }}>
-                  ({detail?.access_history?.length ?? '…'})
-                </span>
-              </div>
-
-              <div style={{
-                flex: 1,
-                overflowY: 'auto',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-                minHeight: 0,
-                scrollbarWidth: 'thin',
-                scrollbarColor: `${rgba(col, 0.10)} transparent`,
-              }}>
-                {loading && <LoadingRow />}
-                {!loading && detail && detail.access_history.length === 0 && (
-                  <EmptyRow text="nessun accesso" />
-                )}
-                {!loading && detail && detail.access_history.map((h, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 3,
-                      padding: '6px 8px',
-                      borderRadius: 5,
-                      background: 'var(--bg-s2, #111318)',
-                      border: `1px solid ${rgba(col, 0.07)}`,
-                    }}
-                  >
-                    <span style={{
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: 10,
-                      fontWeight: 600,
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase',
-                      color: rgba(col, 0.65),
-                    }}>
-                      {h.agent}
-                    </span>
-                    {h.query_text && (
-                      <span style={{
-                        fontFamily: "'Space Grotesk', sans-serif",
-                        fontSize: 12,
-                        color: '#8B8D98',
-                        lineHeight: 1.4,
-                        overflow: 'hidden',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                      }}>
-                        {h.query_text.length > 64
-                          ? h.query_text.slice(0, 62) + '…'
-                          : h.query_text}
-                      </span>
-                    )}
-                    <span style={{
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: 10,
-                      color: '#3a3d47',
-                      letterSpacing: '0.04em',
-                    }}>
-                      {new Date(h.queried_at).toLocaleTimeString('it-IT', {
-                        hour: '2-digit', minute: '2-digit',
-                      })}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Connection chips */}
-              {connectedNodes.length > 0 && (
-                <>
-                  <div style={{ ...sectionLabel(col), marginTop: 12, flexShrink: 0 }}>
-                    Connessioni&nbsp;
-                    <span style={{ color: rgba(col, 0.5), fontWeight: 400 }}>
-                      ({node.connections ?? connectedNodes.length})
-                    </span>
-                  </div>
-                  <div style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: 4,
-                    paddingTop: 2,
-                    flexShrink: 0,
-                  }}>
-                    {connectedNodes.map(cn => {
-                      const nc = zoneColor(cn.zone)
-                      return (
-                        <span
-                          key={cn.id}
-                          style={{
-                            fontFamily: "'Space Grotesk', sans-serif",
-                            fontSize: 11,
-                            fontWeight: 500,
-                            padding: '3px 8px',
-                            borderRadius: 3,
-                            border: `1px solid ${rgba(nc, 0.30)}`,
-                            color: rgba(nc, 0.80),
-                            letterSpacing: '0.02em',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            maxWidth: '100%',
-                            background: rgba(nc, 0.06),
-                          }}
-                          title={cn.label}
-                        >
-                          {cn.label.length > 20 ? cn.label.slice(0, 18) + '…' : cn.label}
-                        </span>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
-
-            </div>
-
-            {/* ── Right panel: document + metadata ── */}
-            <div style={{
+          {/* ── Body — single scrollable column ── */}
+          <div style={{
               flex: 1,
               overflowY: 'auto',
-              padding: '12px 14px',
+              padding: '16px',
               display: 'flex',
               flexDirection: 'column',
-              gap: 10,
-              minHeight: 0,
+              gap: 16,
               scrollbarWidth: 'thin',
               scrollbarColor: `${rgba(col, 0.10)} transparent`,
             }}>
 
-              {/* Collection badge + section label */}
-              <div style={{ ...sectionLabel(col), alignItems: 'center' }}>
-                <span>Contenuto</span>
-                <span style={{
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: 10,
-                  color: rgba(col, 0.45),
-                  letterSpacing: '0.06em',
-                  marginLeft: 'auto',
+              {/* Document text */}
+              <div>
+                <div style={{ ...sectionLabel(col), marginBottom: 8 }}>Contenuto</div>
+                <div style={{
+                  fontFamily: 'var(--fui)',
+                  fontSize: 13,
+                  fontWeight: 400,
+                  color: '#8B8D98',
+                  lineHeight: 1.7,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
                 }}>
-                  {node.collection}
-                </span>
+                  {loading && <LoadingRow />}
+                  {!loading && (
+                    detail?.document
+                      || node.document
+                      || <span style={{ color: '#3a3d47', fontStyle: 'italic' }}>nessun contenuto</span>
+                  )}
+                </div>
               </div>
 
-              {/* Document text */}
-              <div style={{
-                fontFamily: "'Space Grotesk', sans-serif",
-                fontSize: 13,
-                fontWeight: 400,
-                color: '#8B8D98',
-                lineHeight: 1.65,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                flex: 1,
-              }}>
+              {/* Connected nodes */}
+              {connectedNodes.length > 0 && (
+                <div>
+                  <div style={{ ...sectionLabel(col), marginBottom: 8 }}>
+                    Connessioni&nbsp;
+                    <span style={{ color: rgba(col, 0.45), fontWeight: 400 }}>
+                      ({node.connections ?? connectedNodes.length})
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {connectedNodes.map(cn => {
+                      const nc = collColor(cn.collection)
+                      return (
+                        <div key={cn.id} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '6px 10px',
+                          borderRadius: 5,
+                          background: 'var(--bg-s2, #1a2640)',
+                          border: `1px solid ${rgba(nc, 0.12)}`,
+                        }}>
+                          <span style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            background: nc,
+                            flexShrink: 0,
+                          }} />
+                          <span style={{
+                            fontFamily: 'var(--fui)',
+                            fontSize: 12,
+                            color: '#c8cad4',
+                            flex: 1,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }} title={cn.label}>
+                            {cn.label}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Access history */}
+              <div>
+                <div style={{ ...sectionLabel(col), marginBottom: 8 }}>
+                  Accessi&nbsp;
+                  <span style={{ color: rgba(col, 0.45), fontWeight: 400 }}>
+                    ({detail?.access_history?.length ?? '…'})
+                  </span>
+                </div>
                 {loading && <LoadingRow />}
-                {!loading && (
-                  detail?.document
-                    || node.document
-                    || <span style={{ color: '#3a3d47', fontStyle: 'italic' }}>nessun contenuto</span>
+                {!loading && detail && detail.access_history.length === 0 && (
+                  <EmptyRow text="nessun accesso" />
+                )}
+                {!loading && detail && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {detail.access_history.map((h, i) => (
+                      <div key={i} style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 3,
+                        padding: '8px 10px',
+                        borderRadius: 5,
+                        background: 'var(--bg-s2, #1a2640)',
+                        border: `1px solid ${rgba(col, 0.07)}`,
+                      }}>
+                        <span style={{
+                          fontFamily: 'var(--fmo)',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          letterSpacing: '0.08em',
+                          textTransform: 'uppercase',
+                          color: rgba(col, 0.65),
+                        }}>
+                          {h.agent}
+                        </span>
+                        {h.query_text && (
+                          <span style={{
+                            fontFamily: 'var(--fui)',
+                            fontSize: 12,
+                            color: '#8B8D98',
+                            lineHeight: 1.5,
+                            wordBreak: 'break-word',
+                          }}>
+                            {h.query_text.length > 120
+                              ? h.query_text.slice(0, 118) + '…'
+                              : h.query_text}
+                          </span>
+                        )}
+                        <span style={{
+                          fontFamily: 'var(--fmo)',
+                          fontSize: 10,
+                          color: '#3a3d47',
+                          letterSpacing: '0.04em',
+                        }}>
+                          {new Date(h.queried_at).toLocaleTimeString('it-IT', {
+                            hour: '2-digit', minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
 
               {/* Metadata table */}
               {detail && Object.keys(detail.metadata).length > 0 && (
-                <div style={{
-                  borderTop: `1px solid ${rgba(col, 0.08)}`,
-                  paddingTop: 10,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 5,
-                  flexShrink: 0,
-                }}>
-                  {Object.entries(detail.metadata).slice(0, 8).map(([k, v]) => (
-                    <div key={k} style={{
-                      display: 'flex',
-                      gap: 10,
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: 11,
-                    }}>
-                      <span style={{
-                        color: '#3a3d47',
-                        flexShrink: 0,
-                        minWidth: 68,
-                        textTransform: 'lowercase',
-                        letterSpacing: '0.04em',
+                <div>
+                  <div style={{ ...sectionLabel(col), marginBottom: 8 }}>Metadata</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {Object.entries(detail.metadata).slice(0, 8).map(([k, v]) => (
+                      <div key={k} style={{
+                        display: 'flex',
+                        gap: 10,
+                        fontFamily: 'var(--fmo)',
+                        fontSize: 11,
                       }}>
-                        {k}
-                      </span>
-                      <span style={{
-                        color: '#5a5d6a',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        letterSpacing: '0.02em',
-                      }}>
-                        {String(v).slice(0, 52)}
-                        {String(v).length > 52 && '…'}
-                      </span>
-                    </div>
-                  ))}
+                        <span style={{
+                          color: '#3a3d47',
+                          flexShrink: 0,
+                          minWidth: 80,
+                          textTransform: 'lowercase',
+                          letterSpacing: '0.04em',
+                        }}>
+                          {k}
+                        </span>
+                        <span style={{
+                          color: '#5a5d6a',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          letterSpacing: '0.02em',
+                        }}>
+                          {String(v).slice(0, 80)}
+                          {String(v).length > 80 && '…'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
               {/* Node ID footer */}
               <div style={{
                 borderTop: `1px solid rgba(255,255,255,0.04)`,
-                paddingTop: 8,
-                fontFamily: "'JetBrains Mono', monospace",
+                paddingTop: 10,
+                fontFamily: 'var(--fmo)',
                 fontSize: 9,
                 color: '#272930',
                 letterSpacing: '0.06em',
-                flexShrink: 0,
+                wordBreak: 'break-all',
               }}>
                 {node.id}
               </div>
 
             </div>
-          </div>
         </motion.div>
       )}
     </AnimatePresence>
@@ -508,7 +458,7 @@ export function NodeDrawer({ nodeId, nodes, edges, onClose }: NodeDrawerProps) {
 
 function sectionLabel(col: string): React.CSSProperties {
   return {
-    fontFamily:    "'JetBrains Mono', monospace",
+    fontFamily:    'var(--fmo)',
     fontSize:      10,
     fontWeight:    600,
     letterSpacing: '0.12em',

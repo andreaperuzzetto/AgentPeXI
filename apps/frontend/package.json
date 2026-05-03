@@ -12,6 +12,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "@types/three": "^0.184.0",
+    "3d-force-graph": "^1.80.0",
     "d3-force-3d": "^3.0.6",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.14.0",

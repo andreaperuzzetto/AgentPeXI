@@ -208,3 +208,66 @@ export interface CostsBreakdown {
   total: number
   budget_threshold_eur: number
 }
+
+/* ── Niche intelligence (from /api/etsy/niches) ── */
+
+export interface NicheItem {
+  niche:               string
+  product_type:        string | null
+  /* niche_intelligence */
+  performance_score:   number
+  confidence_level:    'low' | 'medium' | 'high' | string
+  avg_ctr:             number | null
+  total_orders:        number
+  total_listings:      number
+  total_revenue_eur:   number
+  last_updated_at:     number | null    // unix timestamp
+  /* market_signals — may be null if no signal collected yet */
+  entry_score:         number | null
+  tier:                number | null    // 1 or 2
+  avg_price_eur:       number | null
+  google_trend_score:  number | null
+}
+
+/* ── Bundle status (from /api/etsy/bundles) ── */
+
+export interface BundleSpec {
+  niche:              string
+  product_type:       string
+  component_titles:   string[]
+  component_images:   string[]
+  suggested_price:    number
+  keywords:           string[]
+  entry_score:        number
+  n_components:       number
+  pod_companion_type: string | null
+}
+
+export interface BundleItem {
+  niche:      string
+  n_listings: number
+  score:      number
+  spec:       BundleSpec
+}
+
+/* ── Production queue (from /api/production-queue) ── */
+
+export interface ProductionQueueItem {
+  id: number
+  task_id: string
+  niche: string
+  product_type: string
+  /** JSON-deserialized by backend */
+  brief: Record<string, unknown> | null
+  status: string    // pending_design | pending_approval | approved | scheduled |
+                    // published | skipped | failed | discarded | planned | in_progress | completed
+  entry_score: number | null
+  listing_price: number | null
+  listing_title: string | null
+  /** JSON-deserialized by backend */
+  file_paths: string[] | null
+  etsy_listing_id: string | null
+  ads_activated: number | null
+  created_at: string
+  updated_at: string
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from abc import ABC, abstractmethod
 from dataclasses import asdict
@@ -217,6 +218,27 @@ class AgentBase(ABC):
                          Se 'personal' → Haiku (economico, affidabile).
                          Altrimenti → Anthropic Sonnet (comportamento invariato).
         """
+        # Mock mode — ritorna stub immediato, zero costi LLM
+        if getattr(self.memory, "mock_mode", False):
+            stub = json.dumps({
+                "mock": True,
+                "viability": 0.75,
+                "final_score": 0.75,
+                "confidence": "medium",
+                "niche": "mock_niche",
+                "product_type": "digital_print",
+                "keywords": ["mock keyword"],
+                "rationale": "[MOCK MODE] Risposta simulata — nessuna chiamata LLM reale.",
+                "differentiation": "Mock differentiation",
+                "target_audience": "Mock audience",
+                "pricing": {"suggested_eur": 3.50},
+                "color_schemes": ["#FFFFFF", "#000000"],
+                "thumbnail_style": "mock style",
+                "why_winner": "Mock winner selection",
+                "score": 0.75,
+            })
+            return stub
+
         use_ollama = domain_name == "personal"
 
         if use_ollama:

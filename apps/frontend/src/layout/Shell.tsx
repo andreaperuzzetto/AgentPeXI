@@ -86,6 +86,8 @@ export function Shell() {
     setAnalyticsSummary,
     setChromaStats,
     setDomainConfig,
+    setImageCostToday,
+    setFeeCostToday,
   } = useStore(
     useShallow((s) => ({
       setCostsData:        s.setCostsData,
@@ -93,6 +95,8 @@ export function Shell() {
       setAnalyticsSummary: s.setAnalyticsSummary,
       setChromaStats:      s.setChromaStats,
       setDomainConfig:     s.setDomainConfig,
+      setImageCostToday:   s.setImageCostToday,
+      setFeeCostToday:     s.setFeeCostToday,
     }))
   )
 
@@ -176,6 +180,8 @@ export function Shell() {
             tokenStats:   t  ?? undefined,
             tokensPerDay: td ?? undefined,
           })
+          if (typeof b.image_cost_today === 'number') setImageCostToday(b.image_cost_today)
+          if (typeof b.fee_cost_today   === 'number') setFeeCostToday(b.fee_cost_today)
         })
         .catch(() => {})
 
@@ -199,24 +205,24 @@ export function Shell() {
     fetchCosts(); fetchAnalytics(); fetchChroma()
     const id = setInterval(() => { fetchCosts(); fetchAnalytics(); fetchChroma() }, 30_000)
     return () => clearInterval(id)
-  }, [setCostsData, setAnalyticsSummary, setChromaStats])
+  }, [setCostsData, setAnalyticsSummary, setChromaStats, setImageCostToday, setFeeCostToday])
 
   return (
     <ErrorBoundary>
       <div style={{ background: 'var(--bg-base)', minHeight: '100vh', overflow: 'hidden' }}>
 
-        {/* ── Left sidebar — fixed 64px ── */}
+        {/* ── Left sidebar — fixed 76px ── */}
         <Sidebar />
 
-        {/* ── Top header — fixed 56px, left 64 ── */}
+        {/* ── Top header — fixed 56px, left 76 ── */}
         <Header />
 
         {/* ── Main content area ── */}
         <main
           style={{
-            marginLeft: 64,
-            marginTop: 56,
-            height: 'calc(100vh - 56px)',
+            marginLeft: 142,
+            marginTop: 76,
+            height: 'calc(100vh - 76px)',
             overflow: 'hidden',
             position: 'relative',
           }}
@@ -229,7 +235,7 @@ export function Shell() {
               animate="animate"
               exit="exit"
               transition={VIEW_TRANSITION}
-              style={{ width: '100%', height: '100%' }}
+              style={{ width: '100%', height: '100%', overflow: 'hidden' }}
             >
               {VIEWS[activeZone]}
             </motion.div>

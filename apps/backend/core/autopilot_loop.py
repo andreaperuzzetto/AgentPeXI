@@ -36,7 +36,7 @@ logger = logging.getLogger("agentpexi.autopilot")
 # Costanti
 # ---------------------------------------------------------------------------
 
-TARGET_QUEUE_DEPTH  = 2    # max item in (pending_design + pending_approval) insieme
+TARGET_QUEUE_DEPTH  = 1    # max item in (pending_design + pending_approval) insieme — 1 = aspetta approvazione prima di creare il prossimo
 
 LOOP_SLEEP_NORMAL   = 30   # secondi tra iterazioni normali
 LOOP_SLEEP_PAUSED   = 60   # secondi in paused_skip / paused_manual
@@ -80,6 +80,7 @@ class AutopilotLoop:
         bot_send,
         bot_send_photo=None,
         bot_send_media_group=None,
+        bot_send_markup=None,
         design_pipeline=None,
         niche_picker=None,
         bundle_checker=None,
@@ -92,6 +93,8 @@ class AutopilotLoop:
         self._bot_send             = bot_send
         self._bot_send_photo       = bot_send_photo       or self._noop_photo
         self._bot_send_media_group = bot_send_media_group or self._noop_media
+        # bot_send_markup(text, reply_markup) — per notifiche con inline keyboard
+        self._bot_send_markup      = bot_send_markup
         self._design_pipeline      = design_pipeline      or self._noop_design
         self._niche_picker         = niche_picker         or self._default_niche_picker
         self._bundle_checker       = bundle_checker       or self._default_bundle_checker
@@ -268,8 +271,7 @@ class AutopilotLoop:
         # 0. Discard stale approvals — solo alla prima iterazione
         if self._first_iteration:
             discarded = await self.queue.discard_stale_approvals()
-            if discarded:
-                logger.info("Startup: scartati %d approval scaduti", discarded)
+            logger.info("Startup: discard_stale_approvals → %d scartati", discarded)
             await self._on_startup_recovery()
             self._first_iteration = False
 
@@ -320,7 +322,41 @@ class AutopilotLoop:
         # 5. Queue depth check
         pending   = await self.queue.get_pending_approval()
         in_design = await self.queue.get_items_by_status("pending_design")
-        if len(pending) + len(in_design) >= TARGET_QUEUE_DEPTH:
+        depth = len(pending) + len(in_design)
+        if depth >= TARGET_QUEUE_DEPTH:
+            # Per ogni item pending_approval senza recovery task attivo → avvia ora.
+            # Questo gestisce item che passano da pending_design a pending_approval
+            # DOPO che _on_startup_recovery ha già girato (race condition al restart).
+            for item in pending:
+                if item.id not in self._approval_events:
+                    evt = asyncio.Event()
+                    self._approval_events[item.id] = evt
+                    logger.info("Queue depth: item %d senza event — avvio recovery + notifica", item.id)
+                    if item.id in self._approval_results:
+                        evt.set()
+                    else:
+                        try:
+                            await self._send_approval_notification(item.id)
+                        except Exception as exc:
+                            logger.warning("Queue depth notifica item %d: %s", item.id, exc)
+
+                    async def _recover_queued(iid: int = item.id) -> None:
+                        try:
+                            decision = await self._wait_for_approval(iid)
+                            await self._handle_decision(iid, decision)
+                        except Exception as exc:
+                            logger.warning("Queue depth recovery item %d: %s", iid, exc)
+                        finally:
+                            self._approval_events.pop(iid, None)
+                            self._approval_results.pop(iid, None)
+
+                    asyncio.create_task(_recover_queued(), name=f"recovery_queued_{item.id}")
+
+            ids = [str(i.id) for i in pending + in_design]
+            logger.info(
+                "Queue depth %d/%d — in attesa item %s — dormo %ds",
+                depth, TARGET_QUEUE_DEPTH, ", ".join(ids) or "—", LOOP_SLEEP_PAUSED,
+            )
             await asyncio.sleep(LOOP_SLEEP_PAUSED)
             return
 
@@ -332,7 +368,7 @@ class AutopilotLoop:
         # Traccia avvio tick effettivo [FE-0.5]
         await self._state_set("loop.last_run_at", str(time.time()))
         if not niche_data:
-            logger.debug("Nessuna niche disponibile — attendo")
+            logger.info("Nessuna niche disponibile in niche_intelligence — attendo %ds", LOOP_SLEEP_EMPTY)
             await asyncio.sleep(LOOP_SLEEP_EMPTY)
             return
 
@@ -392,12 +428,23 @@ class AutopilotLoop:
             f"Rispondi con /approve {item_id} o /skip {item_id}"
         )
 
+        # Inline keyboard — se il callable è disponibile la allega, altrimenti testo puro
+        from apps.backend.telegram.callbacks import build_approval_keyboard
+        keyboard = build_approval_keyboard(item_id)
+
         if item.thumbnail_path:
             try:
                 await self._bot_send_photo(item.thumbnail_path, caption)
                 return
             except Exception as exc:
                 logger.warning("Invio thumbnail fallito: %s", exc)
+
+        if self._bot_send_markup:
+            try:
+                await self._bot_send_markup(caption, keyboard)
+                return
+            except Exception as exc:
+                logger.warning("Invio keyboard fallito, fallback testo: %s", exc)
 
         await self._bot_send(caption)
 
@@ -421,6 +468,9 @@ class AutopilotLoop:
                         return result
                 except asyncio.TimeoutError:
                     pass
+            else:
+                # Event non ancora registrato — sleep breve per evitare busy-wait
+                await asyncio.sleep(APPROVAL_POLL)
 
             # Poll DB — fallback se il segnale è già arrivato
             item = await self.queue.get_item(item_id)
@@ -513,16 +563,63 @@ class AutopilotLoop:
     # ------------------------------------------------------------------
 
     async def _on_startup_recovery(self) -> None:
-        """Al restart, re-invia le notification per item ancora in pending_approval."""
+        """Al restart, avvisa l'utente degli item pendenti e riprende il ciclo
+        wait/handle per ciascuno.
+
+        Flusso:
+          1. Se ci sono item in pending_approval → invia riepilogo coda
+          2. Per ogni item invia notifica con keyboard approve/skip
+          3. Spawna task separato che attende la decisione e la processa
+        """
         pending = await self.queue.get_pending_approval()
+        logger.info("_on_startup_recovery: %d item in pending_approval", len(pending))
+        if not pending:
+            return
+
+        # ── 1. Riepilogo coda ────────────────────────────────────────────────
+        lines = [f"🔄 Coda in attesa: {len(pending)} item da gestire prima che il loop proceda.\n"]
         for item in pending:
-            if item.id not in self._approval_events:
-                self._approval_events[item.id] = asyncio.Event()
+            kw = ", ".join(item.keywords[:3]) if item.keywords else "—"
+            lines.append(
+                f"  • Item {item.id} — {item.niche} [{item.product_type}] "
+                f"score={item.entry_score:.2f}"
+            )
+        lines.append("\nRispondi a ciascuno con i pulsanti qui sotto.")
+        try:
+            await self._bot_send("\n".join(lines))
+        except Exception as exc:
+            logger.warning("Recovery: invio riepilogo coda fallito: %s", exc)
+
+        # ── 2. Notifica + task per ogni item ─────────────────────────────────
+        for item in pending:
+            if item.id in self._approval_events:
+                continue
+
+            evt = asyncio.Event()
+            self._approval_events[item.id] = evt
+
+            if item.id in self._approval_results:
+                # Approvazione già registrata prima di /run → processo immediato
+                evt.set()
+                logger.info("Recovery: approvazione pre-esistente item %d", item.id)
+            else:
                 try:
                     await self._send_approval_notification(item.id)
-                    logger.info("Recovery: re-inviata notification item %d", item.id)
+                    logger.info("Recovery: notifica inviata item %d", item.id)
                 except Exception as exc:
-                    logger.warning("Recovery notification fallita item %d: %s", item.id, exc)
+                    logger.warning("Recovery: notifica fallita item %d: %s", item.id, exc)
+
+            async def _recover_item(iid: int = item.id) -> None:
+                try:
+                    decision = await self._wait_for_approval(iid)
+                    await self._handle_decision(iid, decision)
+                except Exception as exc:
+                    logger.warning("Recovery _handle_decision item %d: %s", iid, exc)
+                finally:
+                    self._approval_events.pop(iid, None)
+                    self._approval_results.pop(iid, None)
+
+            asyncio.create_task(_recover_item(), name=f"recovery_item_{item.id}")
 
     # ------------------------------------------------------------------
     # Comandi Telegram (chiamati da handlers/autopilot.py)
@@ -531,13 +628,65 @@ class AutopilotLoop:
     async def cmd_run(self) -> str:
         status = await self._get_status()
         if status == "running" and self._running:
+            pending = await self.queue.get_pending_approval()
+            if pending:
+                lines = ["▶️ Loop già in esecuzione.\n\n🔄 Item in attesa di risposta:"]
+                for item in pending:
+                    lines.append(f"  • Item {item.id} — {item.niche} [{item.product_type}]")
+                lines.append("\nUsa i pulsanti nelle notifiche sopra, oppure /skip <id> o /approve <id>.")
+                return "\n".join(lines)
             return "▶️ Loop già in esecuzione."
         await self.resume()
+        # Controlla se ci sono item pendenti da gestire
+        pending = await self.queue.get_pending_approval()
+        if pending:
+            lines = ["▶️ AutopilotLoop avviato.\n\n🔄 Trovati item in attesa — gestiscili per sbloccare il loop:"]
+            for item in pending:
+                lines.append(f"  • Item {item.id} — {item.niche} [{item.product_type}] (score={item.entry_score:.2f})")
+            lines.append("\nUsa i pulsanti nelle notifiche qui sopra, oppure /skip <id> o /approve <id>.")
+            return "\n".join(lines)
         return "▶️ AutopilotLoop avviato."
 
     async def cmd_stop(self) -> str:
         await self.stop()
         return "⏸ AutopilotLoop in pausa. Riprendi con /run."
+
+    async def cmd_queue(self, action: str = "") -> str:
+        """Mostra lo stato della coda. /queue clear per scartare tutto."""
+        if action.strip().lower() == "clear":
+            # Manda tutto in pending_approval e pending_design a discarded
+            await self._db.execute(
+                """
+                UPDATE production_queue
+                SET status='discarded', updated_at=?
+                WHERE status IN ('pending_approval', 'pending_design')
+                """,
+                (time.time(),),
+            )
+            await self._db.commit()
+            # Pulisce anche gli event in memoria
+            self._approval_events.clear()
+            self._approval_results.clear()
+            return "🗑 Coda svuotata — tutti gli item pending_approval/pending_design sono ora discarded.\nRiavvia con /run per ripartire da zero."
+
+        # Conta item per stato
+        statuses = [
+            "pending_design", "pending_approval", "approved",
+            "scheduled", "published", "skipped", "failed", "discarded",
+        ]
+        lines = ["📋 *Stato coda production_queue*\n"]
+        total = 0
+        for st in statuses:
+            items = await self.queue.get_items_by_status(st)
+            if items:
+                lines.append(f"  {st}: {len(items)}")
+                if st in ("pending_approval", "pending_design"):
+                    for it in items:
+                        lines.append(f"    • id={it.id} — {it.niche} [{it.product_type}]")
+                total += len(items)
+        lines.append(f"\nTotale: {total} item")
+        lines.append("\nUsa /queue clear per svuotare i pending e ripartire da zero.")
+        return "\n".join(lines)
 
     async def cmd_status(self) -> str:
         status  = await self._get_status()

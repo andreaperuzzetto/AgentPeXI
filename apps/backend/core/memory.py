@@ -397,6 +397,7 @@ class MemoryManager:
         self.__fernet: Fernet | None = None     # lazy-init in _fernet()
         self._ws_broadcaster = None             # callable(event: dict) — impostato da lifespan
         self._bridge_callback = None            # callable(text, domain) — impostato da lifespan
+        self.mock_mode: bool = False            # flag globale — sincronizzato da pepe.set_mock_mode()
 
     # ------------------------------------------------------------------
     # Crypto helpers (OAuth token encryption)
@@ -480,6 +481,12 @@ class MemoryManager:
             "ALTER TABLE niche_intelligence ADD COLUMN avg_days_to_sale REAL",
             # revenue_events — fee listing separata dal design cost [B4]
             "ALTER TABLE revenue_events ADD COLUMN listing_fee_eur REAL DEFAULT 0.18",
+            # production_queue — timestamp base (mancanti nei DB creati prima del DDL aggiornato)
+            "ALTER TABLE production_queue ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE production_queue ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP",
+            # llm_calls — created_at mancante nei DB precedenti (indici idx_llm_calls_*)
+            # NB: SQLite non accetta CURRENT_TIMESTAMP in ALTER TABLE ADD COLUMN → NULL per i record storici
+            "ALTER TABLE llm_calls ADD COLUMN created_at TEXT DEFAULT NULL",
         ]
         for migration_sql in _migrations:
             try:
@@ -522,8 +529,10 @@ class MemoryManager:
                 await self._db.execute(idx_sql)
                 await self._db.commit()
             except Exception as exc:
-                logger.error("Creazione indice DB fallita: %s — %s", idx_sql, exc)
-                raise
+                # Gli indici sono ottimizzazioni — un fallimento non deve bloccare l'avvio.
+                # Cause comuni: colonna non ancora presente (verrà aggiunta alla prossima migration),
+                # oppure indice già esistente con definizione diversa.
+                logger.warning("Creazione indice ignorata: %s — %s", idx_sql, exc)
 
         # ChromaDB + Voyage AI (lazy: fallisce silenziosamente se non disponibile)
         try:
@@ -1064,6 +1073,24 @@ class MemoryManager:
             "total": total_input + total_output,
         }
 
+        # Image cost today (da production_queue.image_cost_usd aggiornato oggi)
+        cursor = await self._db.execute(
+            """SELECT COALESCE(SUM(image_cost_usd), 0.0) AS total
+               FROM production_queue
+               WHERE date(updated_at) = date('now') AND image_cost_usd > 0"""
+        )
+        row = await cursor.fetchone()
+        image_cost_today: float = float((row["total"] if row else None) or 0.0)
+
+        # Fee cost today (listing_fee_usd degli item pubblicati oggi)
+        cursor = await self._db.execute(
+            """SELECT COALESCE(SUM(listing_fee_usd), 0.0) AS total
+               FROM production_queue
+               WHERE date(published_at) = date('now') AND status = 'published'"""
+        )
+        row = await cursor.fetchone()
+        fee_cost_today: float = float((row["total"] if row else None) or 0.0)
+
         return {
             "per_agent": per_agent,
             "per_tool": per_tool,
@@ -1072,6 +1099,8 @@ class MemoryManager:
             "total": total,
             "cache": cache,
             "tokens": tokens,
+            "image_cost_today": image_cost_today,
+            "fee_cost_today":   fee_cost_today,
         }
 
     async def get_agent_logs_summary(self, period_days: int = 14) -> dict:

@@ -114,6 +114,7 @@ production_queue   = None   # apps.backend.core.production_queue.ProductionQueue
 budget_manager     = None   # apps.backend.core.budget_manager.BudgetManager
 publication_policy = None   # apps.backend.core.publication_policy.PublicationPolicy
 autopilot_loop     = None   # apps.backend.core.autopilot_loop.AutopilotLoop
+telegram_bot       = None   # apps.backend.telegram.bot.TelegramBot
 # Blocco 4/5 — Intelligence & Growth Layer
 bundle_strategy    = None   # apps.backend.core.bundle_strategy.BundleStrategy
 shop_optimizer     = None   # apps.backend.core.shop_optimizer.ShopProfileOptimizer
@@ -132,6 +133,7 @@ async def lifespan(app: FastAPI):
     global memory, pepe, storage, etsy_api, scheduler, screen_watcher
     global production_queue, budget_manager, publication_policy, autopilot_loop
     global bundle_strategy, shop_optimizer, etsy_ads_manager, finance_tracker
+    global telegram_bot
 
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.scheduler import Scheduler
@@ -192,6 +194,20 @@ async def lifespan(app: FastAPI):
     async def telegram_broadcast(msg: str) -> None:
         if pepe and hasattr(pepe, "notify_telegram"):
             await pepe.notify_telegram(msg, priority=True)
+
+    # Funzione broadcast con inline keyboard (lazy — telegram_bot istanziato dopo)
+    async def telegram_broadcast_markup(msg: str, reply_markup) -> None:
+        """Invia messaggio con InlineKeyboardMarkup — usata da AutopilotLoop per approve/skip."""
+        if not telegram_bot or not settings.TELEGRAM_CHAT_ID:
+            return
+        try:
+            await telegram_bot._app.bot.send_message(
+                chat_id=int(settings.TELEGRAM_CHAT_ID),
+                text=msg,
+                reply_markup=reply_markup,
+            )
+        except Exception as exc:
+            logger.warning("telegram_broadcast_markup fallito: %s", exc)
 
     # 2b. Registra agenti disponibili
     research_agent = ResearchAgent(
@@ -605,19 +621,54 @@ async def lifespan(app: FastAPI):
         try:
             result = await pepe.dispatch_task(research_task)
             out    = result.output_data or {}
+            logger.info(
+                "niche_picker: ResearchAgent status=%s candidates_analyzed=%s candidates_viable=%s",
+                result.status,
+                out.get("candidates_analyzed", "?"),
+                out.get("candidates_viable", "?"),
+            )
+            if result.status.value not in ("completed",):
+                err = out.get("error", "nessun dettaglio")
+                logger.warning("niche_picker: ResearchAgent FAILED — %s", err)
+                return None
+
+            # Preferisce il campo "winner" (scelto da Sonnet), fallback su niches[0]
+            winner = out.get("winner")
+            if winner and isinstance(winner, dict) and (winner.get("niche") or winner.get("name")):
+                logger.info(
+                    "niche_picker: winner='%s' product_type='%s' confidence=%s",
+                    winner.get("niche") or winner.get("name"),
+                    winner.get("product_type", "printable_pdf"),
+                    winner.get("confidence", "?"),
+                )
+                brief    = winner.get("brief", {}) or {}
+                pricing  = brief.get("pricing") or winner.get("pricing") or {}
+                keywords = brief.get("keywords") or winner.get("keywords") or []
+                return {
+                    "niche":        winner.get("niche") or winner.get("name") or "",
+                    "product_type": winner.get("product_type", "printable_pdf"),
+                    "keywords":     keywords,
+                    "entry_score":  float(winner.get("confidence") or 0.5),
+                    "pricing":      pricing,
+                }
+
             niches = out.get("niches", [])
             if niches and isinstance(niches[0], dict):
                 best = niches[0]
+                logger.info(
+                    "niche_picker: fallback niches[0]='%s'",
+                    best.get("name") or best.get("niche"),
+                )
                 return {
                     "niche":         best.get("name") or best.get("niche") or "",
-                    "product_type":  best.get("product_type", "digital_print"),
+                    "product_type":  best.get("recommended_product_type") or best.get("product_type", "printable_pdf"),
                     "keywords":      best.get("keywords", []),
-                    "entry_score":   float(best.get("final_score") or best.get("score") or 0.5),
-                    "color_schemes": best.get("color_schemes", []),
+                    "entry_score":   float(best.get("final_score") or best.get("confidence") or 0.5),
                     "pricing":       best.get("pricing", {}),
                 }
+            logger.warning("niche_picker: ResearchAgent completato ma nessuna niche usabile nell'output")
         except Exception as exc:
-            logger.error("niche_picker: ResearchAgent fallito: %s", exc)
+            logger.error("niche_picker: ResearchAgent eccezione: %s", exc)
 
         return None
 
@@ -668,6 +719,7 @@ async def lifespan(app: FastAPI):
         budget           = budget_manager,
         policy           = publication_policy,
         bot_send         = telegram_broadcast,
+        bot_send_markup  = telegram_broadcast_markup,
         design_pipeline  = _autopilot_design_pipeline,
         niche_picker     = _autopilot_niche_picker,
         bundle_checker   = _autopilot_bundle_checker,    # B4/4.7
@@ -719,9 +771,17 @@ async def lifespan(app: FastAPI):
     telegram_bot = TelegramBot(_bot_deps)
     await telegram_bot.start()
 
-    # 6. Avvia AutopilotLoop (dopo il bot, così le notifiche arrivano subito)
-    await autopilot_loop.start()
-    logger.info("AutopilotLoop avviato")
+    # 6. AutopilotLoop — ripristina stato precedente invece di partire sempre
+    #    - era "running" prima del restart  → riprende automaticamente
+    #    - primo avvio / /stop / budget     → rimane fermo, l'utente manda /run
+    _ap_prev_status = await autopilot_loop._get_status()
+    if _ap_prev_status == "running":
+        await autopilot_loop.start()
+        logger.info("AutopilotLoop ripreso (stato precedente: running)")
+    else:
+        # Normalizza a paused_manual così /run sa da dove ripartire
+        await autopilot_loop._set_status("paused_manual")
+        logger.info("AutopilotLoop in attesa di /run (stato precedente: %s)", _ap_prev_status)
 
     await scheduler.start()
     logger.info("Scheduler avviato")
@@ -1649,38 +1709,67 @@ async def get_etsy_niches(
     confidence: str | None = None,
 ) -> dict:
     """
-    Legge niche_intelligence — dati aggregati per niche+product_type.
+    Legge niche_intelligence JOIN market_signals (più recente per niche).
 
     Query params opzionali:
       min_score   float — filtra performance_score >= min_score
       confidence  str   — filtra confidence_level (low|medium|high)
+
+    Risposta per niche:
+      niche, product_type,
+      performance_score, confidence_level,
+      avg_ctr, total_orders, total_listings, total_revenue_eur,
+      last_updated_at,
+      entry_score, tier, avg_price_eur, google_trend_score  ← da market_signals
     """
     if not memory:
         return {"niches": []}
     try:
         db = await memory.get_db()
-        conditions = []
+        conditions: list[str] = []
         params: list = []
 
         if min_score is not None:
-            conditions.append("performance_score >= ?")
+            conditions.append("ni.performance_score >= ?")
             params.append(min_score)
         if confidence:
-            conditions.append("confidence_level = ?")
+            conditions.append("ni.confidence_level = ?")
             params.append(confidence)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         cursor = await db.execute(
             f"""
             SELECT
-                niche, product_type,
-                total_listings, total_orders, total_revenue_eur,
-                avg_ctr, avg_conversion_rate, avg_days_to_sale,
-                avg_favorite_rate, performance_score, confidence_level,
-                last_sale_at, last_updated_at
-            FROM niche_intelligence
+                ni.niche,
+                ni.product_type,
+                ni.performance_score,
+                ni.confidence_level,
+                ni.avg_ctr,
+                ni.total_orders,
+                ni.total_listings,
+                ni.total_revenue_eur,
+                ni.last_updated_at,
+                ms.entry_score,
+                ms.tier,
+                ms.avg_price_eur,
+                ms.google_trend_score
+            FROM niche_intelligence ni
+            LEFT JOIN (
+                SELECT ms1.niche,
+                       ms1.entry_score,
+                       ms1.tier,
+                       ms1.avg_price_eur,
+                       ms1.google_trend_score
+                FROM market_signals ms1
+                INNER JOIN (
+                    SELECT niche, MAX(collected_at) AS max_at
+                    FROM market_signals
+                    GROUP BY niche
+                ) latest ON ms1.niche = latest.niche
+                         AND ms1.collected_at = latest.max_at
+            ) ms ON ms.niche = ni.niche
             {where}
-            ORDER BY performance_score DESC
+            ORDER BY COALESCE(ms.entry_score, ni.performance_score) DESC
             """,
             params,
         )

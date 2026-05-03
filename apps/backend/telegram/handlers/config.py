@@ -102,8 +102,22 @@ async def cmd_mock(
     args = context.args or []
     arg = args[0].lower() if args else ""
 
+    async def _persist_mock_mode(value: bool) -> None:
+        """Scrive mock_mode nel DB config per persistenza across restart."""
+        try:
+            db = await deps.pepe.memory.get_db()
+            await db.execute(
+                "INSERT INTO config(key, value) VALUES('system.mock_mode', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                ("true" if value else "false",),
+            )
+            await db.commit()
+        except Exception as exc:
+            logger.warning("cmd_mock: persist config fallita: %s", exc)
+
     if arg == "on":
         deps.pepe.set_mock_mode(True)
+        await _persist_mock_mode(True)
         if deps.pepe._ws_broadcast:
             await deps.pepe._ws_broadcast({
                 "type": "system_status",
@@ -112,7 +126,7 @@ async def cmd_mock(
             })
         await update.message.reply_text(
             "🟡 *MOCK MODE ATTIVO*\n\n"
-            "Etsy API e Replicate sono simulati.\n"
+            "Etsy API, image gen e chiamate LLM sono simulate.\n"
             "I listing vengono salvati nel DB locale.\n"
             "Usa /ask per avviare una pipeline di test.",
             parse_mode="Markdown",
@@ -120,6 +134,7 @@ async def cmd_mock(
 
     elif arg == "off":
         deps.pepe.set_mock_mode(False)
+        await _persist_mock_mode(False)
         if deps.pepe._ws_broadcast:
             await deps.pepe._ws_broadcast({
                 "type": "system_status",

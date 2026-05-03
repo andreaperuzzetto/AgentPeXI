@@ -80,11 +80,11 @@ export function Header() {
         onClick={() => setActiveDomain(activeDomain === 'etsy' ? 'personal' : 'etsy')}
         style={activeDomain === 'etsy' ? {
           color:       'var(--zone-etsy)',
-          borderColor: 'rgba(245,166,35,.32)',
+          borderColor: 'rgba(245,158,11,.32)',
           background:  'rgba(245,166,35,.09)',
         } : {
           color:       'var(--zone-personal)',
-          borderColor: 'rgba(27,255,94,.20)',
+          borderColor: 'rgba(74,222,128,.20)',
           background:  'var(--adim)',
         }}
       >
