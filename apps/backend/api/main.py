@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import apps.backend.api.state as state
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
@@ -769,7 +769,7 @@ app.include_router(finance.router)
 
 
 @app.websocket("/ws/voice")
-async def ws_voice(websocket: WebSocket) -> None:
+async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
     """WebSocket dedicato al canale voce Orb — wake word "Jarvis" via Whisper.
 
     Protocollo a due fasi:
@@ -789,6 +789,11 @@ async def ws_voice(websocket: WebSocket) -> None:
     Dopo la risposta il ciclo riparte dalla Fase 1.
     Canale separato da /ws/chat — non interferisce con gli eventi UI.
     """
+    import hmac
+    api_key = settings.PERSONAL_API_KEY
+    if not api_key or not hmac.compare_digest(key, api_key):
+        await websocket.close(code=4003)
+        return
     from apps.backend.voice.stt import transcribe
     from apps.backend.voice.tts import play_via_say
     from apps.backend.voice.wake import detect_wake_word_in_text
@@ -990,10 +995,15 @@ async def ws_voice(websocket: WebSocket) -> None:
 
 
 @app.websocket("/ws/chat")
-async def ws_chat(ws: WebSocket) -> None:
+async def ws_chat(ws: WebSocket, key: str = Query("")) -> None:
     """WebSocket unidirezionale: broadcast eventi sistema → client (dashboard).
     Il frontend non invia messaggi — usa solo Telegram per interagire con Pepe.
     """
+    import hmac
+    api_key = settings.PERSONAL_API_KEY
+    if not api_key or not hmac.compare_digest(key, api_key):
+        await ws.close(code=4003)
+        return
     await state.ws_manager.connect(ws)
     try:
         while True:

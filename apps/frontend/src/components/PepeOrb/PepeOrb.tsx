@@ -191,7 +191,8 @@ export function PepeOrb() {
   /* ── WebSocket voice — connessione al mount ── */
   useEffect(() => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${proto}//${window.location.host}/ws/voice`
+    const key = encodeURIComponent(import.meta.env.VITE_PERSONAL_KEY ?? '')
+    const wsUrl = `${proto}//${window.location.host}/ws/voice?key=${key}`
     const ws = new WebSocket(wsUrl)
     ws.binaryType = 'arraybuffer'
 
