@@ -7,26 +7,35 @@ import json
 import logging
 import logging.handlers
 import os
-import re
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+import apps.backend.api.state as state
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.routing import APIRouter
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from apps.backend.core.config import settings
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentTask
+
+from apps.backend.api.routers import (
+    autopilot,
+    etsy,
+    finance,
+    memory_routes,
+    personal,
+    screen,
+    system,
+    wiki,
+)
 
 # ------------------------------------------------------------------
 # Logging — console + file rotante in logs/
@@ -43,80 +52,19 @@ logging.basicConfig(
         logging.StreamHandler(),
         logging.handlers.RotatingFileHandler(
             _LOG_DIR / "agentpexi.log",
-            maxBytes=5 * 1024 * 1024,  # 5 MB
+            maxBytes=5 * 1024 * 1024,
             backupCount=5,
             encoding="utf-8",
         ),
     ],
 )
 
-# Silence noisy loggers
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # niente spam GET 200 OK
-logging.getLogger("faster_whisper").setLevel(logging.WARNING)  # niente spam VAD/language detection
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("faster_whisper").setLevel(logging.WARNING)
 
 logger = logging.getLogger("agentpexi.api")
-
-
-# ------------------------------------------------------------------
-# WebSocket connection manager
-# ------------------------------------------------------------------
-
-
-class ConnectionManager:
-    """Gestisce connessioni WebSocket attive e broadcast."""
-
-    def __init__(self) -> None:
-        self._connections: list[WebSocket] = []
-
-    async def connect(self, ws: WebSocket) -> None:
-        await ws.accept()
-        self._connections.append(ws)
-        logger.info("WS client connesso (%d totali)", len(self._connections))
-
-    def disconnect(self, ws: WebSocket) -> None:
-        self._connections.remove(ws)
-        logger.info("WS client disconnesso (%d rimasti)", len(self._connections))
-
-    async def broadcast(self, event: dict[str, Any]) -> None:
-        """Invia evento JSON a tutti i client connessi."""
-        dead: list[WebSocket] = []
-        for ws in self._connections:
-            try:
-                await ws.send_json(event)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            try:
-                self._connections.remove(ws)
-            except ValueError:
-                pass
-
-
-ws_manager = ConnectionManager()
-
-# ------------------------------------------------------------------
-# Singleton condivisi (inizializzati nel lifespan)
-# ------------------------------------------------------------------
-
-memory: MemoryManager | None = None
-pepe = None          # apps.backend.core.pepe.Pepe — assegnato in lifespan
-storage = None       # apps.backend.core.storage.StorageManager — assegnato in lifespan
-etsy_api = None      # apps.backend.tools.etsy_api.EtsyAPI — assegnato in lifespan
-scheduler = None     # apps.backend.core.scheduler.Scheduler — assegnato in lifespan
-screen_watcher = None  # apps.backend.screen.watcher.ScreenWatcher — assegnato in lifespan
-# Blocco 2 — Autonomy Layer
-production_queue   = None   # apps.backend.core.production_queue.ProductionQueueService
-budget_manager     = None   # apps.backend.core.budget_manager.BudgetManager
-publication_policy = None   # apps.backend.core.publication_policy.PublicationPolicy
-autopilot_loop     = None   # apps.backend.core.autopilot_loop.AutopilotLoop
-telegram_bot       = None   # apps.backend.telegram.bot.TelegramBot
-# Blocco 4/5 — Intelligence & Growth Layer
-bundle_strategy    = None   # apps.backend.core.bundle_strategy.BundleStrategy
-shop_optimizer     = None   # apps.backend.core.shop_optimizer.ShopProfileOptimizer
-etsy_ads_manager   = None   # apps.backend.core.etsy_ads.EtsyAdsManager
-finance_tracker    = None   # apps.backend.core.finance_tracker.FinanceTracker
 
 
 # ------------------------------------------------------------------
@@ -127,10 +75,6 @@ finance_tracker    = None   # apps.backend.core.finance_tracker.FinanceTracker
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: MemoryManager, Pepe, workers, Telegram bot. Shutdown: graceful stop."""
-    global memory, pepe, storage, etsy_api, scheduler, screen_watcher
-    global production_queue, budget_manager, publication_policy, autopilot_loop
-    global bundle_strategy, shop_optimizer, etsy_ads_manager, finance_tracker
-    global telegram_bot
 
     from apps.backend.core.pepe import Pepe
     from apps.backend.core.scheduler import Scheduler
@@ -158,15 +102,15 @@ async def lifespan(app: FastAPI):
     from apps.backend.tools.text_extract import TextExtractor
 
     # 1. MemoryManager
-    memory = MemoryManager()
-    await memory.init()
+    state.memory = MemoryManager()
+    await state.memory.init()
     # Inietta WS broadcaster per eventi memory_query (neural brain live activation)
-    memory.set_ws_broadcaster(ws_manager.broadcast)
+    state.memory.set_ws_broadcaster(state.ws_manager.broadcast)
     # Inietta KnowledgeBridge per analisi cross-domain fire-and-forget
     from apps.backend.core.knowledge_bridge import KnowledgeBridge
-    _bridge = KnowledgeBridge(memory=memory)
-    memory.set_bridge_callback(_bridge.on_new_insight)
-    _bridge.set_ws_broadcaster(ws_manager.broadcast)  # eventi knowledge_bridge → BridgeActivity HUD (FE-0.7)
+    _bridge = KnowledgeBridge(memory=state.memory)
+    state.memory.set_bridge_callback(_bridge.on_new_insight)
+    _bridge.set_ws_broadcaster(state.ws_manager.broadcast)  # eventi knowledge_bridge → BridgeActivity HUD (FE-0.7)
     logger.info("MemoryManager inizializzato + KnowledgeBridge registrato")
 
     # 1c. Tools condivisi — istanziati una volta sola (DI negli agenti Personal)
@@ -180,25 +124,25 @@ async def lifespan(app: FastAPI):
     text_extractor = TextExtractor(max_chars=settings.SUMMARIZE_MAX_CHARS)
 
     # 1b. StorageManager (singleton)
-    storage = StorageManager()
-    storage.ensure_dirs()
+    state.storage = StorageManager()
+    state.storage.ensure_dirs()
     logger.info("StorageManager inizializzato")
 
     # 2. Pepe orchestratore
-    pepe = Pepe(memory=memory, ws_broadcaster=ws_manager.broadcast)
+    state.pepe = Pepe(memory=state.memory, ws_broadcaster=state.ws_manager.broadcast)
 
     # Funzione broadcast Telegram — definita subito dopo Pepe (usata da tutti gli agenti)
     async def telegram_broadcast(msg: str) -> None:
-        if pepe and hasattr(pepe, "notify_telegram"):
-            await pepe.notify_telegram(msg, priority=True)
+        if state.pepe and hasattr(state.pepe, "notify_telegram"):
+            await state.pepe.notify_telegram(msg, priority=True)
 
     # Funzione broadcast con inline keyboard (lazy — telegram_bot istanziato dopo)
     async def telegram_broadcast_markup(msg: str, reply_markup) -> None:
         """Invia messaggio con InlineKeyboardMarkup — usata da AutopilotLoop per approve/skip."""
-        if not telegram_bot or not settings.TELEGRAM_CHAT_ID:
+        if not state.telegram_bot or not settings.TELEGRAM_CHAT_ID:
             return
         try:
-            await telegram_bot._app.bot.send_message(
+            await state.telegram_bot._app.bot.send_message(
                 chat_id=int(settings.TELEGRAM_CHAT_ID),
                 text=msg,
                 reply_markup=reply_markup,
@@ -208,24 +152,24 @@ async def lifespan(app: FastAPI):
 
     # 2b. Registra agenti disponibili
     research_agent = ResearchAgent(
-        anthropic_client=pepe.client,
-        memory=memory,
-        ws_broadcaster=ws_manager.broadcast,
+        anthropic_client=state.pepe.client,
+        memory=state.memory,
+        ws_broadcaster=state.ws_manager.broadcast,
         telegram_broadcaster=telegram_broadcast,
     )
-    pepe.register_agent("research", research_agent)
+    state.pepe.register_agent("research", research_agent)
 
     # 2c. Design Agent
     design_agent = DesignAgent(
-        anthropic_client=pepe.client,
-        memory=memory,
-        storage=storage,
-        ws_broadcaster=ws_manager.broadcast,
-        get_mock_mode=pepe.get_mock_mode,
+        anthropic_client=state.pepe.client,
+        memory=state.memory,
+        storage=state.storage,
+        ws_broadcaster=state.ws_manager.broadcast,
+        get_mock_mode=state.pepe.get_mock_mode,
     )
-    pepe.register_agent("design", design_agent)
+    state.pepe.register_agent("design", design_agent)
 
-    await pepe.start()
+    await state.pepe.start()
     logger.info("Pepe avviato")
 
     # 2c-wiki. WikiManager — Step 5.2.5
@@ -241,14 +185,14 @@ async def lifespan(app: FastAPI):
     try:
         wiki_manager = WikiManager(_wiki_base)
         await wiki_manager.init()
-        pepe.wiki = wiki_manager
+        state.pepe.wiki = wiki_manager
         logger.info("WikiManager inizializzato — base: %s", _wiki_base)
     except Exception as exc:
         logger.warning("WikiManager non avviato (fail-safe): %s", exc)
-        pepe.wiki = None
+        state.pepe.wiki = None
 
     # 2d. EtsyAPI
-    etsy_api = EtsyAPI(memory=memory, pepe=pepe)
+    state.etsy_api = EtsyAPI(memory=state.memory, pepe=state.pepe)
     logger.info("EtsyAPI inizializzato")
 
     # 2d-b2. Autonomy Layer — Blocco 2
@@ -257,50 +201,48 @@ async def lifespan(app: FastAPI):
     from apps.backend.core.publication_policy import PublicationPolicy
     from apps.backend.core.autopilot_loop import AutopilotLoop
 
-    _db = await memory.get_db()
-    production_queue   = ProductionQueueService(_db)
-    budget_manager     = BudgetManager(_db)
-    publication_policy = PublicationPolicy(_db)
-    await budget_manager.ensure_defaults()
-    await publication_policy.ensure_defaults()
+    _db = await state.memory.get_db()
+    state.production_queue   = ProductionQueueService(_db)
+    state.budget_manager     = BudgetManager(_db)
+    state.publication_policy = PublicationPolicy(_db)
+    await state.budget_manager.ensure_defaults()
+    await state.publication_policy.ensure_defaults()
     logger.info("Autonomy Layer (B2): ProductionQueueService, BudgetManager, PublicationPolicy inizializzati")
 
     # 2e. Publisher Agent
     publisher_agent = PublisherAgent(
-        anthropic_client=pepe.client,
-        memory=memory,
-        storage=storage,
-        etsy_api=etsy_api,
-        ws_broadcaster=ws_manager.broadcast,
+        anthropic_client=state.pepe.client,
+        memory=state.memory,
+        storage=state.storage,
+        etsy_api=state.etsy_api,
+        ws_broadcaster=state.ws_manager.broadcast,
         telegram_broadcaster=telegram_broadcast,
     )
-    pepe.register_agent("publisher", publisher_agent)
+    state.pepe.register_agent("publisher", publisher_agent)
 
     # 2f. LearningLoop — B4/4.5 (wired prima di AnalyticsAgent che lo usa)
-    learning_loop = LearningLoop(memory=memory)
+    learning_loop = LearningLoop(memory=state.memory)
     logger.info("LearningLoop istanziato")
 
     # 2g. BundleStrategy — B4/4.6
-    bundle_strategy = BundleStrategy(memory=memory, learning_loop=learning_loop)
+    state.bundle_strategy = BundleStrategy(memory=state.memory, learning_loop=learning_loop)
     logger.info("BundleStrategy istanziato")
 
     # 2h-pre. ShopProfileOptimizer — B5/5.1
-    # Istanziato prima di AnalyticsAgent (ordine non stretto, ma coerente con
-    # il pattern: tutti i service prima degli agenti LLM)
-    _mock = getattr(pepe, "mock_mode", False)
-    shop_optimizer = ShopProfileOptimizer(
-        memory=memory,
-        etsy_client=etsy_api,
+    _mock = getattr(state.pepe, "mock_mode", False)
+    state.shop_optimizer = ShopProfileOptimizer(
+        memory=state.memory,
+        etsy_client=state.etsy_api,
         learning_loop=learning_loop,
         mock_mode=_mock,
     )
     logger.info("ShopProfileOptimizer istanziato (mock=%s)", _mock)
 
     # 2h-pre2. EtsyAdsManager — B5/5.2
-    etsy_ads_manager = EtsyAdsManager(
-        etsy_client=etsy_api,
-        production_queue=production_queue,
-        publication_policy=publication_policy,
+    state.etsy_ads_manager = EtsyAdsManager(
+        etsy_client=state.etsy_api,
+        production_queue=state.production_queue,
+        publication_policy=state.publication_policy,
         telegram_broadcaster=telegram_broadcast,
         mock_mode=_mock,
     )
@@ -308,98 +250,86 @@ async def lifespan(app: FastAPI):
 
     # 2h. Analytics Agent
     analytics_agent = AnalyticsAgent(
-        anthropic_client=pepe.client,
-        memory=memory,
-        etsy_api=etsy_api,
-        ws_broadcaster=ws_manager.broadcast,
+        anthropic_client=state.pepe.client,
+        memory=state.memory,
+        etsy_api=state.etsy_api,
+        ws_broadcaster=state.ws_manager.broadcast,
         telegram_broadcaster=telegram_broadcast,
-        production_queue=production_queue,   # B4/4.2 — Ladder System + polling
-        learning_loop=learning_loop,         # B4/4.5 — CTR attribution + score update
+        production_queue=state.production_queue,   # B4/4.2 — Ladder System + polling
+        learning_loop=learning_loop,               # B4/4.5 — CTR attribution + score update
     )
-    pepe.register_agent("analytics", analytics_agent)
+    state.pepe.register_agent("analytics", analytics_agent)
 
     # 2g. Finance Agent (no Etsy dependency)
     finance_agent = FinanceAgent(
-        anthropic_client=pepe.client,
-        memory=memory,
-        ws_broadcaster=ws_manager.broadcast,
+        anthropic_client=state.pepe.client,
+        memory=state.memory,
+        ws_broadcaster=state.ws_manager.broadcast,
         telegram_broadcaster=telegram_broadcast,
     )
-    pepe.register_agent("finance", finance_agent)
+    state.pepe.register_agent("finance", finance_agent)
 
     # 2g-post. FinanceTracker — B5/5.4 review notification
-    # Servizio di scrittura P&L: record_sale → prima vendita → Telegram review template.
-    # Istanziato DOPO FinanceAgent perché non ha dipendenze da esso.
-    finance_tracker = FinanceTracker(
-        memory=memory,
+    state.finance_tracker = FinanceTracker(
+        memory=state.memory,
         telegram_broadcaster=telegram_broadcast,
     )
     logger.info("FinanceTracker istanziato (B5/5.4)")
 
     # 2h. RecallAgent — Personal domain, tutto su Ollama
     recall_agent = RecallAgent(
-        anthropic_client=pepe.client,
-        memory=memory,
-        ws_broadcaster=ws_manager.broadcast,
+        anthropic_client=state.pepe.client,
+        memory=state.memory,
+        ws_broadcaster=state.ws_manager.broadcast,
     )
-    pepe.register_agent("recall", recall_agent)
+    state.pepe.register_agent("recall", recall_agent)
 
     # 2h2. RemindAgent — gestione reminder + Notion Calendar (iniettato da lifespan)
     remind_agent = RemindAgent(
-        anthropic_client=pepe.client,
-        memory=memory,
-        ws_broadcaster=ws_manager.broadcast,
+        anthropic_client=state.pepe.client,
+        memory=state.memory,
+        ws_broadcaster=state.ws_manager.broadcast,
         notion_calendar=notion_calendar,
         telegram_broadcaster=telegram_broadcast,
     )
-    pepe.register_agent("remind", remind_agent)
+    state.pepe.register_agent("remind", remind_agent)
 
     # 2h3. SummarizeAgent — riassume URL, file, testo (Haiku + Ollama fallback)
     summarize_agent = SummarizeAgent(
-        anthropic_client=pepe.client,
-        memory=memory,
-        ws_broadcaster=ws_manager.broadcast,
+        anthropic_client=state.pepe.client,
+        memory=state.memory,
+        ws_broadcaster=state.ws_manager.broadcast,
         text_extractor=text_extractor,
         telegram_broadcaster=telegram_broadcast,
     )
-    pepe.register_agent("summarize", summarize_agent)
+    state.pepe.register_agent("summarize", summarize_agent)
 
     # 2h4. ResearchPersonalAgent — ricerca web DuckDuckGo + sintesi Perplexity-style
     research_personal_agent = ResearchPersonalAgent(
-        anthropic_client=pepe.client,
-        memory=memory,
-        ws_broadcaster=ws_manager.broadcast,
+        anthropic_client=state.pepe.client,
+        memory=state.memory,
+        ws_broadcaster=state.ws_manager.broadcast,
         web_search=web_search,
         telegram_broadcaster=telegram_broadcast,
     )
-    pepe.register_agent("research_personal", research_personal_agent)
+    state.pepe.register_agent("research_personal", research_personal_agent)
 
     # 2i. ScreenWatcher
     _screen_watcher_error: str | None = None
-    screen_watcher = ScreenWatcher(
-        memory=memory,
-        ws_broadcaster=ws_manager.broadcast,
+    state.screen_watcher = ScreenWatcher(
+        memory=state.memory,
+        ws_broadcaster=state.ws_manager.broadcast,
     )
     try:
-        await screen_watcher.start()
+        await state.screen_watcher.start()
         logger.info("ScreenWatcher avviato")
     except Exception as exc:
         logger.warning("ScreenWatcher non avviato: %s", exc)
         _screen_watcher_error = str(exc)
-        screen_watcher = None
+        state.screen_watcher = None
 
     # ---------------------------------------------------------------------------
     # 2j. Callable per AutopilotLoop — design_pipeline + niche_picker
-    #
-    # design_pipeline: riceve (item_id, niche_data), esegue DesignAgent,
-    #   poi chiama production_queue.set_design_ready() per transitare
-    #   l'item a pending_approval con thumbnail e dati listing di base.
-    #   Il SEO completo (titolo lungo, descrizione) viene generato da
-    #   PublisherAgent al momento della pubblicazione effettiva.
-    #
-    # niche_picker: prova prima niche_intelligence (score calcolato da
-    #   LearningLoop — B4/4.5), poi fa fallback su ResearchAgent per
-    #   scoperta autonoma di nuove nicchie.
     # ---------------------------------------------------------------------------
 
     from apps.backend.core.models import AgentTask as _AgentTask, TaskStatus as _TaskStatus
@@ -422,7 +352,7 @@ async def lifespan(app: FastAPI):
             source="autopilot",
         )
         try:
-            result = await pepe.dispatch_task(design_task)
+            result = await state.pepe.dispatch_task(design_task)
         except Exception as exc:
             logger.error("design_pipeline: DesignAgent fallito item=%d: %s", item_id, exc)
             return
@@ -446,8 +376,6 @@ async def lifespan(app: FastAPI):
             image_url      = first.get("image_url") or ""
 
         # SEO placeholder — titolo leggibile da mostrare nell'approvazione Telegram.
-        # Il SEO definitivo (ottimizzato per Etsy) viene generato da PublisherAgent
-        # nella fase di pubblicazione (publish_checker → etsy_client.publish_listing).
         title = (
             f"{niche.replace('_', ' ').title()} — {product_type.replace('_', ' ').title()}"
         )
@@ -460,7 +388,7 @@ async def lifespan(app: FastAPI):
         else:
             price = float(niche_data.get("price") or 4.99)
 
-        await production_queue.set_design_ready(
+        await state.production_queue.set_design_ready(
             item_id       = item_id,
             design_prompt = out.get("cover_title") or out.get("template") or niche,
             image_url     = image_url,
@@ -493,7 +421,7 @@ async def lifespan(app: FastAPI):
         # Leggi l'ultima niche pubblicata per anti-repetition
         last_niche = ""
         try:
-            db_conn    = await memory.get_db()
+            db_conn    = await state.memory.get_db()
             cursor_rep = await db_conn.execute(
                 """
                 SELECT niche FROM production_queue
@@ -507,10 +435,9 @@ async def lifespan(app: FastAPI):
             logger.debug("niche_picker: lettura last_niche fallita (non bloccante): %s", exc)
 
         # B5/5.3 — Rileva niches con ladder_level='ctr_low' recenti (< 14 giorni)
-        # → boost score +30% e flag regen_thumbnail=True per A/B thumbnail testing
         ctr_low_niches: set[str] = set()
         try:
-            db_conn = await memory.get_db()
+            db_conn = await state.memory.get_db()
             cursor  = await db_conn.execute(
                 """
                 SELECT DISTINCT pq.niche
@@ -532,7 +459,7 @@ async def lifespan(app: FastAPI):
 
         # 1. Multi-candidate scoring da niche_intelligence
         try:
-            db_conn = await memory.get_db()
+            db_conn = await state.memory.get_db()
             cursor  = await db_conn.execute(
                 """
                 SELECT niche, product_type, performance_score, confidence_level
@@ -615,7 +542,7 @@ async def lifespan(app: FastAPI):
             source="autopilot",
         )
         try:
-            result = await pepe.dispatch_task(research_task)
+            result = await state.pepe.dispatch_task(research_task)
             out    = result.output_data or {}
             logger.info(
                 "niche_picker: ResearchAgent status=%s candidates_analyzed=%s candidates_viable=%s",
@@ -672,12 +599,9 @@ async def lifespan(app: FastAPI):
         """
         Controlla se esiste una niche bundle-ready e ritorna la spec
         come niche_data da passare alla design pipeline. — B4/4.7
-
-        Priorità: bundle con score più alto tra quelli pronti.
-        Ritorna None se nessuna niche soddisfa i criteri (BundleStrategy.should_create_bundle).
         """
         try:
-            candidates = await bundle_strategy.check_all_niches()
+            candidates = await state.bundle_strategy.check_all_niches()
         except Exception as exc:
             logger.warning("bundle_checker: check_all_niches fallito: %s", exc)
             return None
@@ -708,12 +632,11 @@ async def lifespan(app: FastAPI):
         }
 
     # 3. AutopilotLoop — instanziato prima dello Scheduler e del bot
-    #    così bot_send è il telegram_broadcast già definito sopra
-    autopilot_loop = AutopilotLoop(
+    state.autopilot_loop = AutopilotLoop(
         db               = _db,
-        queue            = production_queue,
-        budget           = budget_manager,
-        policy           = publication_policy,
+        queue            = state.production_queue,
+        budget           = state.budget_manager,
+        policy           = state.publication_policy,
         bot_send         = telegram_broadcast,
         bot_send_markup  = telegram_broadcast_markup,
         design_pipeline  = _autopilot_design_pipeline,
@@ -723,68 +646,66 @@ async def lifespan(app: FastAPI):
     logger.info("AutopilotLoop istanziato")
 
     # 4. Scheduler APScheduler
-    scheduler = Scheduler(
-        memory=memory,
-        ws_broadcaster=ws_manager.broadcast,
-        pepe=pepe,
-        storage=storage,
+    state.scheduler = Scheduler(
+        memory=state.memory,
+        ws_broadcaster=state.ws_manager.broadcast,
+        pepe=state.pepe,
+        storage=state.storage,
         research_agent=research_agent,
         design_agent=design_agent,
         publisher_agent=publisher_agent,
         analytics_agent=analytics_agent,
         finance_agent=finance_agent,
         telegram_broadcaster=telegram_broadcast,
-        screen_watcher=screen_watcher,
+        screen_watcher=state.screen_watcher,
         # Blocco 2
-        production_queue   = production_queue,
-        budget_manager     = budget_manager,
-        publication_policy = publication_policy,
-        autopilot_loop     = autopilot_loop,
-        etsy_client        = etsy_api,
+        production_queue   = state.production_queue,
+        budget_manager     = state.budget_manager,
+        publication_policy = state.publication_policy,
+        autopilot_loop     = state.autopilot_loop,
+        etsy_client        = state.etsy_api,
         # Blocco 5
-        shop_optimizer     = shop_optimizer,
-        etsy_ads_manager   = etsy_ads_manager,
+        shop_optimizer     = state.shop_optimizer,
+        etsy_ads_manager   = state.etsy_ads_manager,
         # Blocco 4 / 5.3
         learning_loop      = learning_loop,
     )
     # 5. Bot Telegram (stesso event loop di FastAPI)
     _bot_deps = BotDependencies(
-        pepe=pepe,
-        scheduler=scheduler,
-        screen_watcher=screen_watcher,
-        autopilot_loop=autopilot_loop,
-        production_queue=production_queue,
-        budget_manager=budget_manager,
-        publication_policy=publication_policy,
-        etsy_api=etsy_api,
+        pepe=state.pepe,
+        scheduler=state.scheduler,
+        screen_watcher=state.screen_watcher,
+        autopilot_loop=state.autopilot_loop,
+        production_queue=state.production_queue,
+        budget_manager=state.budget_manager,
+        publication_policy=state.publication_policy,
+        etsy_api=state.etsy_api,
         analytics_agent=analytics_agent,     # B4/4.3 — /ladder command
         learning_loop=learning_loop,         # B4/4.5 — /learn command
-        bundle_strategy=bundle_strategy,     # B4/4.6 — /bundle command
-        shop_optimizer=shop_optimizer,        # B5/5.1 — /shopsetup command
-        etsy_ads_manager=etsy_ads_manager,   # B5/5.2 — auto ads management
-        finance_tracker=finance_tracker,      # B5/5.4 — review notification
+        bundle_strategy=state.bundle_strategy,     # B4/4.6 — /bundle command
+        shop_optimizer=state.shop_optimizer,        # B5/5.1 — /shopsetup command
+        etsy_ads_manager=state.etsy_ads_manager,   # B5/5.2 — auto ads management
+        finance_tracker=state.finance_tracker,      # B5/5.4 — review notification
     )
-    telegram_bot = TelegramBot(_bot_deps)
-    await telegram_bot.start()
+    state.telegram_bot = TelegramBot(_bot_deps)
+    await state.telegram_bot.start()
 
     # 6. AutopilotLoop — ripristina stato precedente invece di partire sempre
-    #    - era "running" prima del restart  → riprende automaticamente
-    #    - primo avvio / /stop / budget     → rimane fermo, l'utente manda /run
-    _ap_prev_status = await autopilot_loop._get_status()
+    _ap_prev_status = await state.autopilot_loop._get_status()
     if _ap_prev_status == "running":
-        await autopilot_loop.start()
+        await state.autopilot_loop.start()
         logger.info("AutopilotLoop ripreso (stato precedente: running)")
     else:
         # Normalizza a paused_manual così /run sa da dove ripartire
-        await autopilot_loop._set_status("paused_manual")
+        await state.autopilot_loop._set_status("paused_manual")
         logger.info("AutopilotLoop in attesa di /run (stato precedente: %s)", _ap_prev_status)
 
-    await scheduler.start()
+    await state.scheduler.start()
     logger.info("Scheduler avviato")
 
     # Collega notifier Telegram al ScreenWatcher (ora che il bot è attivo)
-    if screen_watcher is not None:
-        screen_watcher.set_error_notifier(telegram_broadcast)
+    if state.screen_watcher is not None:
+        state.screen_watcher.set_error_notifier(telegram_broadcast)
 
     # Notifica startup deferred — inviata solo ora che il bot è attivo
     if _screen_watcher_error:
@@ -798,22 +719,22 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown (ordine inverso)
-    await telegram_bot.stop()
-    if autopilot_loop is not None:
-        await autopilot_loop.stop()
+    await state.telegram_bot.stop()
+    if state.autopilot_loop is not None:
+        await state.autopilot_loop.stop()
         logger.info("AutopilotLoop fermato")
-    await scheduler.stop()
-    if screen_watcher is not None:
-        await screen_watcher.stop()
+    await state.scheduler.stop()
+    if state.screen_watcher is not None:
+        await state.screen_watcher.stop()
         logger.info("ScreenWatcher fermato")
-    if etsy_api is not None:
-        await etsy_api.close()
+    if state.etsy_api is not None:
+        await state.etsy_api.close()
         logger.info("EtsyAPI chiuso")
-    if pepe is not None:
-        await pepe.stop()
+    if state.pepe is not None:
+        await state.pepe.stop()
         logger.info("Pepe fermato")
-    if memory is not None:
-        await memory.close()
+    if state.memory is not None:
+        await state.memory.close()
         logger.info("MemoryManager chiuso")
 
 
@@ -821,14 +742,10 @@ async def lifespan(app: FastAPI):
 # App FastAPI
 # ------------------------------------------------------------------
 
-# Rate limiter — IP-based, in-memory
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
-
 app = FastAPI(title="AgentPeXI", version="0.1.0", lifespan=lifespan)
-app.state.limiter = limiter
+app.state.limiter = state.limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS — solo origini esplicitamente configurate
 _cors_origins = [o.strip() for o in settings.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -838,1347 +755,18 @@ app.add_middleware(
     allow_headers=["X-Personal-Key", "Content-Type"],
 )
 
-
 # ------------------------------------------------------------------
-# Sicurezza — endpoint /api/personal/* e /api/screen/*
-# ------------------------------------------------------------------
-
-
-async def verify_personal_key(request: Request) -> None:
-    """Verifica header X-Personal-Key per endpoint personal e screen.
-
-    Fail-closed: se PERSONAL_API_KEY non è configurata in .env, tutti gli
-    endpoint personal/screen restituiscono 403. Impostare la chiave in .env
-    per abilitare l'accesso.
-    """
-    api_key = settings.PERSONAL_API_KEY
-    if not api_key:
-        raise HTTPException(status_code=403, detail="PERSONAL_API_KEY non configurata")
-    key = request.headers.get("X-Personal-Key", "")
-    if key != api_key:
-        raise HTTPException(status_code=403, detail="Unauthorized")
-
-
-# Router per tutti gli endpoint che richiedono X-Personal-Key
-personal_router = APIRouter(dependencies=[Depends(verify_personal_key)])
-
-
-# ------------------------------------------------------------------
-# REST endpoints
+# Router includes
 # ------------------------------------------------------------------
 
-
-@app.get("/api/health")
-async def health_check() -> dict:
-    """Lightweight liveness probe — risponde anche prima del lifespan completo."""
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.get("/api/status")
-async def get_status() -> dict:
-    """Stato generale del sistema."""
-    agent_statuses = pepe.get_agent_statuses() if pepe else {}
-    return {
-        "status": "running",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "agents": agent_statuses,
-        "queue_size": pepe._queue.qsize() if pepe else 0,
-        "connected_clients": len(ws_manager._connections),
-        "mock_mode": pepe.mock_mode if pepe else False,
-    }
-
-
-@app.get("/api/mock/status")
-async def get_mock_status() -> dict:
-    """Stato corrente del mock mode."""
-    return {"mock_mode": pepe.mock_mode if pepe else False}
-
-
-# ------------------------------------------------------------------
-# Autopilot control endpoints  (FE-Blocco 0.5)
-# ------------------------------------------------------------------
-
-def _map_autopilot_status(raw: str) -> str:
-    """Mappa lo stato interno AutopilotLoop ai 3 stati FE: running|paused|stopped."""
-    if raw == "running":
-        return "running"
-    if raw.startswith("paused"):
-        return "paused"
-    return "stopped"  # idle, "" o qualsiasi altro valore
-
-
-@app.get("/api/autopilot/status")
-async def get_autopilot_status() -> dict:
-    """
-    Stato corrente dell'AutopilotLoop (FE-Blocco 0.5).
-
-    Risposta: { status, current_niche, items_today, last_run_at }
-    """
-    if not autopilot_loop:
-        return {"status": "stopped", "current_niche": None, "items_today": 0, "last_run_at": None}
-    try:
-        raw_status    = await autopilot_loop._get_status()
-        current_niche = await autopilot_loop._state_get("loop.current_niche", "") or None
-        last_run_raw  = await autopilot_loop._state_get("loop.last_run_at", "")
-
-        # items pubblicati oggi
-        items_today = 0
-        if memory:
-            from datetime import date as _date, datetime as _dt, timezone as _tz
-            _today_start = _dt.combine(_date.today(), _dt.min.time()).replace(tzinfo=_tz.utc).timestamp()
-            db = await memory.get_db()
-            cur = await db.execute(
-                "SELECT COUNT(*) AS cnt FROM production_queue WHERE status = 'published' AND published_at >= ?",
-                (_today_start,),
-            )
-            row = await cur.fetchone()
-            items_today = int(row["cnt"]) if row else 0
-
-        return {
-            "status":        _map_autopilot_status(raw_status),
-            "current_niche": current_niche,
-            "items_today":   items_today,
-            "last_run_at":   float(last_run_raw) if last_run_raw else None,
-        }
-    except Exception as exc:
-        logger.exception("get_autopilot_status error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.post("/api/autopilot/start", dependencies=[Depends(verify_personal_key)])
-async def autopilot_start() -> dict:
-    """Avvia o riprende l'AutopilotLoop."""
-    if not autopilot_loop:
-        return JSONResponse(status_code=503, content={"error": "AutopilotLoop non inizializzato"})
-    try:
-        raw = await autopilot_loop._get_status()
-        if raw == "running" and autopilot_loop._running:
-            return {"status": "running", "message": "Loop già in esecuzione"}
-        await autopilot_loop.resume()
-        return {"status": "running"}
-    except Exception as exc:
-        logger.exception("autopilot_start error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.post("/api/autopilot/pause", dependencies=[Depends(verify_personal_key)])
-async def autopilot_pause() -> dict:
-    """Mette in pausa l'AutopilotLoop (paused_manual)."""
-    if not autopilot_loop:
-        return JSONResponse(status_code=503, content={"error": "AutopilotLoop non inizializzato"})
-    try:
-        await autopilot_loop.stop()   # stop() → paused_manual
-        return {"status": "paused"}
-    except Exception as exc:
-        logger.exception("autopilot_pause error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.post("/api/autopilot/stop", dependencies=[Depends(verify_personal_key)])
-async def autopilot_stop() -> dict:
-    """Ferma l'AutopilotLoop e imposta status=stopped."""
-    if not autopilot_loop:
-        return JSONResponse(status_code=503, content={"error": "AutopilotLoop non inizializzato"})
-    try:
-        autopilot_loop._running = False
-        await autopilot_loop._set_status("idle")
-        await autopilot_loop._state_set("loop.current_niche", "")
-        return {"status": "stopped"}
-    except Exception as exc:
-        logger.exception("autopilot_stop error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.post("/api/run/analytics", dependencies=[Depends(verify_personal_key)])
-@limiter.limit("5/minute")
-async def run_analytics_now(request: Request) -> dict:
-    """Trigger manuale analytics (non aspetta le 08:00)."""
-    if not pepe:
-        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    from apps.backend.core.models import AgentTask
-    task = AgentTask(agent_name="analytics", input_data={}, source="api_manual")
-    asyncio.create_task(pepe.dispatch_task(task))
-    return {"status": "started"}
-
-
-@app.get("/api/agents")
-async def get_agents() -> dict:
-    """Stato dettagliato degli agenti registrati."""
-    if not pepe:
-        return {"agents": {}}
-    return {"agents": pepe.get_agent_statuses()}
-
-
-@app.get("/api/domains/config")
-async def get_domains_config() -> dict:
-    """Configurazione domini: lista agenti per dominio, dalla source of truth in domains.py."""
-    from apps.backend.core.domains import DOMAIN_ETSY, PERSONAL_LAYER
-    return {
-        "etsy": {
-            "name":   DOMAIN_ETSY.name,
-            "agents": list(DOMAIN_ETSY.agents.keys()),
-        },
-        "personal": {
-            "name":   "personal",
-            "agents": list(PERSONAL_LAYER.agents.keys()) + ["watcher"],
-        },
-    }
-
-
-
-@app.get("/api/listings")
-async def get_listings() -> dict:
-    """Lista dei listing Etsy dal DB locale."""
-    if not memory:
-        return {"listings": []}
-    listings = await memory.get_etsy_listings(limit=100)
-    return {"listings": listings}
-
-
-@app.get("/api/scheduler")
-async def get_scheduler() -> dict:
-    """Task schedulati: job APScheduler attivi + task da DB."""
-    db_tasks: list[dict] = []
-    if memory:
-        db_tasks = await memory.get_scheduled_tasks()
-
-    apscheduler_jobs: list[dict] = []
-    if scheduler:
-        apscheduler_jobs = scheduler.get_jobs()
-
-    return {"tasks": db_tasks, "jobs": apscheduler_jobs}
-
-
-@app.get("/api/scheduler/jobs")
-async def get_scheduler_jobs() -> dict:
-    """
-    Job APScheduler attivi (FE-Blocco 0.4).
-
-    Risposta pulita per il frontend — solo job APScheduler, senza task DB.
-    Risposta: { jobs: [{ id, name, trigger, next_run, last_run, status }] }
-    """
-    if not scheduler:
-        return {"jobs": []}
-    try:
-        return {"jobs": scheduler.get_jobs()}
-    except Exception as exc:
-        logger.exception("get_scheduler_jobs error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.get("/api/production-queue")
-async def get_production_queue(status: str | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
-    """Lista items dalla production_queue, filtrabili per status."""
-    if not memory:
-        return {"items": []}
-    filter_status = None if status == "all" else status
-    items = await memory.get_production_queue(status=filter_status, limit=limit)
-    return {"items": items}
-
-
-@app.get("/api/tasks/{task_id}/timeline")
-async def get_task_timeline(task_id: str) -> dict:
-    """Timeline completa step/llm/tool per un task (Task Detail View)."""
-    if not memory:
-        return {"timeline": []}
-    timeline = await memory.get_task_timeline(task_id)
-    return {"task_id": task_id, "timeline": timeline}
-
-
-@app.get("/api/tasks/pending-input")
-async def get_pending_input_tasks() -> dict:
-    """Lista task in stato INPUT_REQUIRED — sospesi in attesa di risposta utente."""
-    if not memory:
-        return {"tasks": []}
-    try:
-        tasks = await memory.get_pending_input_tasks()
-        return {"tasks": tasks}
-    except Exception:
-        logger.exception("pending-input error")
-        return JSONResponse(status_code=500, content={"error": "Errore interno"})
-
-
-@app.get("/api/agents/steps/recent")
-async def get_recent_agent_steps(
-    limit:      Annotated[int, Query(ge=1, le=500)] = 50,
-    agent_name: Annotated[str | None, Query()] = None,
-) -> dict:
-    """Ultimi N step — opzionale filtro per agent_name.
-    Usato per reidratare ReasoningPanel e AgentDetailPanel."""
-    if not memory:
-        return {"steps": []}
-    steps = await memory.get_recent_agent_steps(limit, agent_name=agent_name)
-    return {"steps": steps}
-
-
-@app.get("/api/costs")
-async def get_costs(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
-    """Cost breakdown per periodo."""
-    if not memory:
-        return {"breakdown": {}}
-    breakdown = await memory.get_cost_breakdown(period_days=days)
-    breakdown["budget_threshold_eur"] = settings.COST_ALERT_THRESHOLD_EUR
-    breakdown["usd_eur_rate"] = settings.USD_EUR_RATE
-    return {"days": days, "breakdown": breakdown}
-
-
-@app.get("/api/analytics/summary")
-async def get_analytics_summary_endpoint(days: Annotated[int, Query(ge=1, le=365)] = 14) -> dict:
-    """Aggregati task (agent_logs + production_queue) per il pannello Analytics.
-
-    Ritorna: total/completed/failed/running per periodo, per-day breakdown,
-    per-agent stats, production_queue counters.
-    Dati reali senza dipendenza da Etsy.
-    """
-    if not memory:
-        return {"summary": {}}
-    summary = await memory.get_agent_logs_summary(period_days=days)
-    return {"summary": summary}
-
-
-@personal_router.get("/api/screen/status")
-async def get_screen_status() -> dict:
-    """Stato corrente del ScreenWatcher — usato per idratazione al WS connect."""
-    if screen_watcher is None:
-        return {
-            "available": False,
-            "active": False,
-            "paused": False,
-            "captures_today": 0,
-            "last_capture_time": "",
-            "last_capture_app": "",
-        }
-    st = screen_watcher.get_status()
-    return {
-        "available": True,
-        **st,
-    }
-
-
-@personal_router.post("/api/screen/toggle")
-async def toggle_screen_watcher() -> dict:
-    """Attiva o mette in pausa ScreenWatcher.
-
-    - Se attivo (running e non in pausa) → pausa
-    - Se in pausa o fermo → riprende
-    Risposta: { active: bool, available: bool }
-    """
-    if screen_watcher is None:
-        return {"available": False, "active": False}
-    st = screen_watcher.get_status()
-    if st.get("active"):
-        screen_watcher.pause()
-        return {"available": True, "active": False}
-    else:
-        screen_watcher.resume()
-        return {"available": True, "active": True}
-
-
-# ------------------------------------------------------------------
-# Personal endpoints (protetti da personal_router)
-# ------------------------------------------------------------------
-
-
-@personal_router.get("/api/personal/reminders")
-async def get_personal_reminders(limit: Annotated[int, Query(ge=1, le=100)] = 10) -> dict:
-    """Prossimi reminder pending ordinati per trigger_at.
-
-    Restituisce `items` con shape attesa dal PersonalPanel:
-    {id, message, when (ISO8601), status}
-    """
-    if not memory:
-        return {"items": []}
-    raw = await memory.get_pending_reminders() or []
-    items = [
-        {
-            "id":      r.get("id"),
-            "message": r.get("text", ""),
-            "when":    r.get("trigger_at", ""),
-            "status":  r.get("status", "pending"),
-        }
-        for r in raw[:limit]
-    ]
-    return {"items": items}
-
-
-@personal_router.get("/api/personal/recalls")
-async def get_personal_recalls(limit: Annotated[int, Query(ge=1, le=100)] = 10) -> dict:
-    """Ultimi N recall completati.
-
-    Restituisce `items` con shape attesa dal PersonalPanel:
-    {timestamp, agent, query, status}
-    """
-    if not memory:
-        return {"items": []}
-    raw = await memory.get_personal_recalls(limit) or []
-    items = [
-        {
-            "timestamp": r.get("created_at") or r.get("timestamp", ""),
-            "agent":     r.get("agent", "recall"),
-            "query":     r.get("query") or r.get("text", ""),
-            "status":    "ok" if r.get("status") != "failed" else "error",
-        }
-        for r in raw
-    ]
-    return {"items": items}
-
-
-@personal_router.get("/api/personal/mcp/status")
-async def get_mcp_status() -> dict:
-    """Stato connessioni MCP: Notion, Gmail, Calendar.
-    Notion: ping leggero all'API se token configurato.
-    Gmail/Calendar: verifica presenza token OAuth (agenti non ancora implementati).
-    """
-    import aiohttp
-
-    result: dict[str, str] = {}
-
-    # Notion
-    notion_token = getattr(settings, "NOTION_API_TOKEN", "")
-    if not notion_token:
-        result["notion"] = "not_configured"
-    else:
-        try:
-            timeout = aiohttp.ClientTimeout(total=4)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    "https://api.notion.com/v1/users/me",
-                    headers={
-                        "Authorization": f"Bearer {notion_token}",
-                        "Notion-Version": "2022-06-28",
-                    },
-                ) as resp:
-                    result["notion"] = "ok" if resp.status == 200 else f"error_{resp.status}"
-        except Exception:
-            result["notion"] = "error"
-
-    # Gmail / Calendar — stesso OAuth; verifica presenza token
-    google_token = getattr(settings, "GOOGLE_REFRESH_TOKEN", "")
-    if not google_token:
-        result["gmail"] = "not_configured"
-        result["calendar"] = "not_configured"
-    else:
-        # Token presente — agenti non ancora implementati, stato "configured"
-        result["gmail"] = "configured"
-        result["calendar"] = "configured"
-
-    return result
-
-
-@personal_router.get("/api/personal/stats")
-async def get_personal_stats(days: Annotated[int, Query(ge=1, le=365)] = 14) -> dict:
-    """Aggregati agenti Personal: task completati/falliti per agente, ultimi N giorni."""
-    if not memory:
-        return {"stats": {}}
-    stats = await memory.get_domain_agent_stats(domain="personal", days=days)
-    return {"stats": stats, "days": days}
-
-
-@personal_router.get("/api/ollama/status")
-async def get_ollama_status() -> dict:
-    """Stato Ollama: modello caricato, latenza ultima chiamata, keep_alive."""
-    import time
-    import aiohttp
-    from urllib.parse import urlparse
-
-    parsed = urlparse(settings.OLLAMA_BASE_URL)
-    ollama_base = f"{parsed.scheme}://{parsed.netloc}"  # es. http://localhost:11434
-
-    result = {
-        "model": settings.OLLAMA_MODEL,
-        "loaded": False,
-        "latency_ms": None,
-        "keep_alive": getattr(settings, "OLLAMA_KEEP_ALIVE", "-1"),
-    }
-
-    try:
-        timeout = aiohttp.ClientTimeout(total=4)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            t0 = time.monotonic()
-            async with session.get(f"{ollama_base}/api/ps") as resp:
-                latency = int((time.monotonic() - t0) * 1000)
-                result["latency_ms"] = latency
-                if resp.status == 200:
-                    data = await resp.json()
-                    running = [m.get("name", "") for m in data.get("models", [])]
-                    result["loaded"] = any(
-                        settings.OLLAMA_MODEL in m for m in running
-                    )
-    except Exception as exc:
-        logger.debug("get_ollama_status: Ollama non raggiungibile: %s", exc)
-
-    return result
-
-
-@personal_router.post("/api/personal/voice/collect")
-async def set_collect_mode(body: dict) -> dict:
-    """Attiva/disattiva modalità raccolta campioni wake word.
-
-    Body: {"mode": "positive" | "negative" | "off"}
-    - positive: salva ogni blob WebM in training_data/positive/real_*.wav
-    - negative: salva ogni blob WebM in training_data/negative/real_*.wav
-    - off: disattiva la raccolta
-
-    Dopo aver raccolto abbastanza campioni (>=20 per classe):
-      python scripts/train_wake_word.py
-    """
-    from apps.backend.voice import collector
-    mode = (body or {}).get("mode", "off")
-    if mode not in ("positive", "negative", "off"):
-        return JSONResponse(status_code=400, content={"error": "mode deve essere positive | negative | off"})
-    collector.set_mode(mode)
-    return collector.get_status()
-
-
-@personal_router.get("/api/personal/voice/collect/status")
-async def get_collect_status() -> dict:
-    """Stato corrente raccolta campioni: modalità attiva + conteggi per classe."""
-    from apps.backend.voice import collector
-    return collector.get_status()
-
-
-@personal_router.post("/api/personal/ask")
-@limiter.limit("30/minute")
-async def personal_ask(request: Request, body: dict) -> dict:
-    """Endpoint voce: riceve testo trascritto, risponde via Pepe in dominio Personal.
-    Usato dal PepeOrb nel frontend — nessuna pipeline, risposta diretta.
-    """
-    if not pepe:
-        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    text = (body or {}).get("text", "").strip()
-    if not text:
-        return JSONResponse(status_code=400, content={"error": "Campo 'text' mancante o vuoto"})
-    response = await pepe.handle_user_message(
-        text,
-        source="dashboard_voice",
-        session_id="dashboard",
-    )
-    return {"response": response}
-
-
-# ------------------------------------------------------------------
-# Wiki endpoints — Step 5.2.6 (read-only, no auth)
-# ------------------------------------------------------------------
-
-
-def _get_wiki_llms():
-    """Ritorna (llm_etsy, llm_personal) da pepe, oppure (None, None) se non disponibile."""
-    if not pepe:
-        return None, None
-    return getattr(pepe, "client", None), getattr(pepe, "_local_client", None)
-
-
-@app.get("/api/wiki/stats")
-async def get_wiki_stats() -> dict:
-    """Statistiche wiki: file per dominio, raw pending, nicchie Etsy."""
-    if not pepe or not getattr(pepe, "wiki", None):
-        return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
-    try:
-        stats = await pepe.wiki.get_stats()
-        return stats
-    except Exception as exc:
-        logger.exception("wiki stats error")
-        return JSONResponse(status_code=500, content={"error": "Errore interno"})
-
-
-@app.get("/api/wiki/query")
-async def wiki_query(domain: str = "etsy", q: str = "") -> dict:
-    """Query tiered sulla wiki (Pass 1 frontmatter, Pass 2 body se necessario).
-
-    Params: domain=etsy|personal, q=testo della query.
-    """
-    if not pepe or not getattr(pepe, "wiki", None):
-        return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
-    if not q:
-        return JSONResponse(status_code=400, content={"error": "Parametro 'q' obbligatorio"})
-    llm_etsy, llm_personal = _get_wiki_llms()
-    llm = llm_personal if domain == "personal" else llm_etsy
-    if not llm:
-        return JSONResponse(status_code=503, content={"error": "LLM non disponibile"})
-    try:
-        result = await pepe.wiki.query(domain, q, llm)
-        return {"domain": domain, "query": q, "result": result}
-    except Exception as exc:
-        logger.exception("wiki query error")
-        return JSONResponse(status_code=500, content={"error": "Errore interno"})
-
-
-_NICHE_SAFE_RE = re.compile(r'^[A-Za-z0-9 _\-]{1,80}$')
-
-
-@app.get("/api/wiki/niche/{niche}")
-async def get_wiki_niche(niche: str) -> dict:
-    """Contesto wiki per una nicchia Etsy specifica (lettura diretta, no LLM)."""
-    if not _NICHE_SAFE_RE.match(niche):
-        return JSONResponse(status_code=400, content={"error": "Parametro 'niche' non valido"})
-    if not pepe or not getattr(pepe, "wiki", None):
-        return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
-    try:
-        content = await pepe.wiki.get_niche_context(niche)
-        if content is None:
-            return JSONResponse(status_code=404, content={"error": "Niche non trovata"})
-        return {"niche": niche, "content": content}
-    except Exception as exc:
-        logger.exception("wiki niche error")
-        return JSONResponse(status_code=500, content={"error": "Errore interno"})
-
-
-@app.post("/api/wiki/lint", dependencies=[Depends(verify_personal_key)])
-async def wiki_lint(body: dict | None = None) -> dict:
-    """Lint wiki: wikilinks rotti + raw pending + suggerimenti.
-
-    Body: {domain: 'etsy'|'personal'} (default: etsy).
-    """
-    if not pepe or not getattr(pepe, "wiki", None):
-        return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
-    domain = (body or {}).get("domain", "etsy")
-    llm_etsy, llm_personal = _get_wiki_llms()
-    llm = llm_personal if domain == "personal" else llm_etsy
-    if not llm:
-        return JSONResponse(status_code=503, content={"error": "LLM non disponibile"})
-    try:
-        report = await pepe.wiki.lint(domain, llm)
-        return {"domain": domain, "report": report}
-    except Exception as exc:
-        logger.exception("wiki lint error")
-        return JSONResponse(status_code=500, content={"error": "Errore interno"})
-
-
-# ------------------------------------------------------------------
-# Domain switch endpoint (non protetto — controllo UI locale)
-# ------------------------------------------------------------------
-
-
-@app.post("/api/domain", dependencies=[Depends(verify_personal_key)])
-async def switch_domain(body: dict) -> dict:
-    """Cambia dominio attivo. Body: {domain: 'etsy'|'personal'}."""
-    if not pepe:
-        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    from apps.backend.core.domains import DOMAIN_ETSY
-    domain_name = (body or {}).get("domain", "")
-    if domain_name == "personal":
-        pepe.set_active_domain(None)
-    elif domain_name == "etsy":
-        pepe.set_active_domain(DOMAIN_ETSY)
-    else:
-        return JSONResponse(status_code=400, content={"error": f"Dominio sconosciuto: {domain_name}"})
-    await ws_manager.broadcast({"type": "domain_switched", "domain": domain_name})
-    return {"domain": domain_name}
-
-
-@app.get("/api/memory/stats")
-async def get_memory_stats() -> dict:
-    """Statistiche ChromaDB: collection count, disponibilità."""
-    if not memory:
-        return {"chroma": {"available": False, "count": 0}}
-    chroma = await memory.get_chroma_stats()
-    return {"chroma": chroma}
-
-
-@app.get("/api/memory/graph")
-async def get_memory_graph(
-    threshold: float = Query(default=0.72, ge=0.0, le=1.0),
-) -> dict:
-    """Grafo semantico della memoria: nodi dai documenti ChromaDB, archi da similarità coseno.
-
-    Restituisce:
-        {
-          nodes: [{id, label, collection, zone, metadata}],
-          edges: [{source, target, weight}],
-        }
-
-    Params:
-        threshold: soglia coseno minima per creare un arco (default 0.72).
-
-    Le quattro collection sono fetched in parallelo:
-        pepe_memory     → zone "etsy"
-        screen_memory   → zone "memory" (OCR watcher)
-        personal_memory → zone "personal" (structured insights Personal)
-        shared_memory   → zone "shared"  (bridge cross-domain)
-    """
-    import numpy as np
-
-    if not memory:
-        return JSONResponse(status_code=503, content={"error": "MemoryManager non disponibile"})
-
-    async def _fetch_collection(collection) -> tuple[list[str], list[str], list[dict], list[list[float]]]:
-        """Fetch (ids, documents, metadatas, embeddings) da una collection ChromaDB."""
-        if collection is None:
-            return [], [], [], []
-        try:
-            result = await asyncio.to_thread(
-                collection.get,
-                include=["documents", "metadatas", "embeddings"],
-            )
-            ids = result.get("ids") or []
-            docs = result.get("documents") or []
-            metas = result.get("metadatas") or []
-            embeds = result.get("embeddings") or []
-            return ids, docs, metas, embeds
-        except Exception as exc:
-            logger.warning("memory graph fetch fallito: %s", exc)
-            return [], [], [], []
-
-    # Fetch parallelo tutte e quattro le collection
-    (
-        (etsy_ids,     etsy_docs,     etsy_metas,     etsy_embeds),
-        (screen_ids,   screen_docs,   screen_metas,   screen_embeds),
-        (personal_ids, personal_docs, personal_metas, personal_embeds),
-        (shared_ids,   shared_docs,   shared_metas,   shared_embeds),
-    ) = await asyncio.gather(
-        _fetch_collection(memory._chroma_collection),
-        _fetch_collection(memory._screen_memory_collection),
-        _fetch_collection(memory._personal_memory_collection),
-        _fetch_collection(memory._shared_memory_collection),
-    )
-
-    # Helper: aggiungi una lista di nodi alla struttura unificata
-    nodes: list[dict] = []
-    all_ids: list[str] = []
-    all_embeds: list[list[float]] = []
-
-    def _add_nodes(
-        ids: list[str],
-        docs: list[str],
-        metas: list[dict],
-        embeds: list,
-        collection_name: str,
-        default_zone: str,
-    ) -> None:
-        for i, doc_id in enumerate(ids):
-            meta = metas[i] if i < len(metas) else {}
-            label = meta.get("title") or meta.get("type") or meta.get("tag") or doc_id[:40]
-            # screen_memory: zone determinata dall'app_name
-            if collection_name == "screen_memory":
-                app_name = meta.get("app", "")
-                zone = "personal" if any(
-                    k in app_name.lower() for k in ("code", "terminal", "vim", "vscode")
-                ) else "memory"
-            else:
-                zone = default_zone
-            nodes.append({
-                "id":         doc_id,
-                "label":      label,
-                "collection": collection_name,
-                "zone":       zone,
-                "document":   (docs[i] if i < len(docs) else "")[:300],
-                "metadata":   meta,
-            })
-            all_ids.append(doc_id)
-            all_embeds.append(embeds[i] if i < len(embeds) and embeds[i] else None)
-
-    _add_nodes(etsy_ids,     etsy_docs,     etsy_metas,     etsy_embeds,     "pepe_memory",     "etsy")
-    _add_nodes(screen_ids,   screen_docs,   screen_metas,   screen_embeds,   "screen_memory",   "memory")
-    _add_nodes(personal_ids, personal_docs, personal_metas, personal_embeds, "personal_memory", "personal")
-    _add_nodes(shared_ids,   shared_docs,   shared_metas,   shared_embeds,   "shared_memory",   "shared")
-
-    # Calcola archi tramite similarità coseno (solo nodi con embedding)
-    edges: list[dict] = []
-    valid_idx = [i for i, e in enumerate(all_embeds) if e is not None]
-
-    if len(valid_idx) >= 2:
-        try:
-            matrix = np.array([all_embeds[i] for i in valid_idx], dtype=np.float32)
-            # Normalizza righe per ottenere vettori unitari
-            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-            norms = np.where(norms == 0, 1.0, norms)
-            matrix = matrix / norms
-            # Similarità coseno = prodotto scalare di vettori normalizzati
-            sim_matrix = matrix @ matrix.T
-
-            n = len(valid_idx)
-            for a in range(n):
-                for b in range(a + 1, n):
-                    sim = float(sim_matrix[a, b])
-                    if sim >= threshold:
-                        edges.append({
-                            "source": all_ids[valid_idx[a]],
-                            "target": all_ids[valid_idx[b]],
-                            "weight": round(sim, 4),
-                        })
-        except Exception as exc:
-            logger.warning("Calcolo similarità coseno fallito: %s", exc)
-
-    # Arricchisci nodi con connection_count per dimensionare i nodi nel grafico
-    conn_count: dict[str, int] = {}
-    for edge in edges:
-        conn_count[edge["source"]] = conn_count.get(edge["source"], 0) + 1
-        conn_count[edge["target"]] = conn_count.get(edge["target"], 0) + 1
-    for node in nodes:
-        node["connections"] = conn_count.get(node["id"], 0)
-
-    return {
-        "nodes": nodes,
-        "edges": edges,
-        "meta": {
-            "threshold":       threshold,
-            "total_nodes":     len(nodes),
-            "total_edges":     len(edges),
-            "etsy_count":      len(etsy_ids),
-            "screen_count":    len(screen_ids),
-            "personal_count":  len(personal_ids),
-            "shared_count":    len(shared_ids),
-        },
-    }
-
-
-@app.get("/api/memory/node/{doc_id:path}")
-async def get_memory_node(
-    doc_id: str,
-    collection: str = Query(default="pepe_memory"),
-) -> dict:
-    """Dettaglio di un singolo nodo memoria: documento completo + metadati + storia accessi.
-
-    Params:
-        doc_id:     ID documento ChromaDB.
-        collection: 'pepe_memory' | 'screen_memory' | 'personal_memory' | 'shared_memory'.
-
-    Restituisce:
-        {id, document, metadata, collection, access_history: [{agent, query_text, queried_at}]}
-    """
-    if not memory:
-        return JSONResponse(status_code=503, content={"error": "MemoryManager non disponibile"})
-
-    # Fetch documento dalla collection corretta
-    _col_map = {
-        "pepe_memory":     memory._chroma_collection,
-        "screen_memory":   memory._screen_memory_collection,
-        "personal_memory": memory._personal_memory_collection,
-        "shared_memory":   memory._shared_memory_collection,
-    }
-    chroma_col = _col_map.get(collection)
-    if chroma_col is None:
-        return JSONResponse(status_code=503, content={"error": f"Collection '{collection}' non disponibile"})
-
-    try:
-        result = await asyncio.to_thread(
-            chroma_col.get,
-            ids=[doc_id],
-            include=["documents", "metadatas"],
-        )
-        ids = result.get("ids") or []
-        if not ids or ids[0] != doc_id:
-            return JSONResponse(status_code=404, content={"error": f"Nodo '{doc_id}' non trovato"})
-
-        docs = result.get("documents") or []
-        metas = result.get("metadatas") or []
-        document = docs[0] if docs else ""
-        metadata = metas[0] if metas else {}
-    except Exception as exc:
-        logger.exception("Errore fetch nodo %s: %s", doc_id, exc)
-        return JSONResponse(status_code=500, content={"error": "Errore interno fetch documento"})
-
-    # Storico accessi da SQLite
-    access_history = await memory.get_node_access_history(doc_id, collection, limit=20)
-
-    return {
-        "id": doc_id,
-        "document": document,
-        "metadata": metadata,
-        "collection": collection,
-        "access_history": access_history,
-    }
-
-
-
-# ------------------------------------------------------------------
-# Etsy endpoints
-# ------------------------------------------------------------------
-
-
-@app.post("/api/etsy/auth/status")
-async def etsy_auth_status() -> dict:
-    """Verifica se i token Etsy sono validi."""
-    if not etsy_api:
-        return JSONResponse(status_code=503, content={"error": "EtsyAPI non inizializzato"})
-    return await etsy_api.check_auth_status()
-
-
-@app.get("/api/etsy/shop")
-async def etsy_shop_info() -> dict:
-    """Info shop Etsy (test connessione)."""
-    if not etsy_api:
-        return JSONResponse(status_code=503, content={"error": "EtsyAPI non inizializzato"})
-    try:
-        shop = await etsy_api.get_shop()
-        return {"shop": shop}
-    except RuntimeError as exc:
-        logger.warning("etsy shop auth error: %s", exc)
-        return JSONResponse(status_code=401, content={"error": "Token Etsy non valido o scaduto"})
-    except Exception as exc:
-        logger.exception("etsy shop error")
-        return JSONResponse(status_code=502, content={"error": "Errore comunicazione Etsy"})
-
-
-@app.get("/api/etsy/listings")
-async def get_etsy_listings(status: str = "all", limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
-    """Lista listing Etsy con filtro status (draft|active|all)."""
-    if not memory:
-        return {"listings": []}
-    filter_status = None if status == "all" else status
-    listings = await memory.get_etsy_listings(status=filter_status, limit=limit)
-    return {"listings": listings}
-
-
-# ------------------------------------------------------------------
-# Etsy Intelligence endpoints  (FE-Blocco 0.1)
-# ------------------------------------------------------------------
-
-@app.get("/api/etsy/niches")
-async def get_etsy_niches(
-    min_score: float | None = None,
-    confidence: str | None = None,
-) -> dict:
-    """
-    Legge niche_intelligence JOIN market_signals (più recente per niche).
-
-    Query params opzionali:
-      min_score   float — filtra performance_score >= min_score
-      confidence  str   — filtra confidence_level (low|medium|high)
-
-    Risposta per niche:
-      niche, product_type,
-      performance_score, confidence_level,
-      avg_ctr, total_orders, total_listings, total_revenue_eur,
-      last_updated_at,
-      entry_score, tier, avg_price_eur, google_trend_score  ← da market_signals
-    """
-    if not memory:
-        return {"niches": []}
-    try:
-        db = await memory.get_db()
-        conditions: list[str] = []
-        params: list = []
-
-        if min_score is not None:
-            conditions.append("ni.performance_score >= ?")
-            params.append(min_score)
-        if confidence:
-            conditions.append("ni.confidence_level = ?")
-            params.append(confidence)
-
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        cursor = await db.execute(
-            f"""
-            SELECT
-                ni.niche,
-                ni.product_type,
-                ni.performance_score,
-                ni.confidence_level,
-                ni.avg_ctr,
-                ni.total_orders,
-                ni.total_listings,
-                ni.total_revenue_eur,
-                ni.last_updated_at,
-                ms.entry_score,
-                ms.tier,
-                ms.avg_price_eur,
-                ms.google_trend_score
-            FROM niche_intelligence ni
-            LEFT JOIN (
-                SELECT ms1.niche,
-                       ms1.entry_score,
-                       ms1.tier,
-                       ms1.avg_price_eur,
-                       ms1.google_trend_score
-                FROM market_signals ms1
-                INNER JOIN (
-                    SELECT niche, MAX(collected_at) AS max_at
-                    FROM market_signals
-                    GROUP BY niche
-                ) latest ON ms1.niche = latest.niche
-                         AND ms1.collected_at = latest.max_at
-            ) ms ON ms.niche = ni.niche
-            {where}
-            ORDER BY COALESCE(ms.entry_score, ni.performance_score) DESC
-            """,
-            params,
-        )
-        rows = await cursor.fetchall()
-        niches = [dict(r) for r in rows]
-        return {"niches": niches}
-    except Exception as exc:
-        logger.exception("get_etsy_niches error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-# Cache bundle — evita riesecuzione scan ad ogni refresh FE
-_bundles_cache: dict = {"data": None, "cached_at": 0.0}
-_BUNDLES_CACHE_TTL = 600  # 10 minuti
-
-
-@app.get("/api/etsy/bundles")
-async def get_etsy_bundles() -> dict:
-    """
-    Ritorna niches bundle-ready via BundleStrategy.check_all_niches().
-    Cache 10 minuti — non riesegue la scan ad ogni request.
-    """
-    import time as _time
-
-    now = _time.time()
-    if _bundles_cache["data"] is not None and (now - _bundles_cache["cached_at"]) < _BUNDLES_CACHE_TTL:
-        return {"bundles": _bundles_cache["data"], "cached_at": _bundles_cache["cached_at"]}
-
-    if not bundle_strategy:
-        return {"bundles": [], "cached_at": None}
-    try:
-        results = await bundle_strategy.check_all_niches()
-        _bundles_cache["data"]      = results
-        _bundles_cache["cached_at"] = now
-        return {"bundles": results, "cached_at": now}
-    except Exception as exc:
-        logger.exception("get_etsy_bundles error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.get("/api/etsy/ads-status")
-async def get_etsy_ads_status() -> dict:
-    """
-    Riassunto stato Etsy Ads.
-
-    - activated_count: listing con ads_activated=1 in production_queue
-    - paused_count:    listing con ladder_level='ctr_low' (proxy per ads in pausa)
-    - avg_ctr:         CTR medio su listing con ads attive
-    - last_auto_manage_at: ultimo run auto_manage (da config, se presente)
-    """
-    if not memory:
-        return {"activated_count": 0, "paused_count": 0, "avg_ctr": None, "last_auto_manage_at": None}
-    try:
-        db = await memory.get_db()
-
-        # Listing con ads attive
-        cur = await db.execute(
-            "SELECT COUNT(*) AS cnt FROM production_queue WHERE ads_activated = 1"
-        )
-        row = await cur.fetchone()
-        activated_count = row["cnt"] if row else 0
-
-        # Listing con ads esplicitamente messe in pausa da EtsyAdsManager
-        cur = await db.execute(
-            "SELECT COUNT(*) AS cnt FROM production_queue WHERE ads_paused = 1"
-        )
-        row = await cur.fetchone()
-        paused_count = row["cnt"] if row else 0
-
-        # CTR medio sulle listing ads attive
-        cur = await db.execute(
-            """
-            SELECT AVG(lp.ctr) AS avg_ctr
-            FROM listing_performance lp
-            JOIN production_queue pq ON lp.production_queue_id = pq.id
-            WHERE pq.ads_activated = 1 AND lp.ctr > 0
-            """
-        )
-        row = await cur.fetchone()
-        avg_ctr = round(float(row["avg_ctr"]), 4) if row and row["avg_ctr"] else None
-
-        # Ultimo run auto_manage_ads — da config se tracciato
-        cur = await db.execute(
-            "SELECT value FROM config WHERE key = 'etsy_ads.last_auto_manage_at'"
-        )
-        row = await cur.fetchone()
-        last_auto_manage_at = float(row["value"]) if row and row["value"] else None
-
-        return {
-            "activated_count":    activated_count,
-            "paused_count":       paused_count,
-            "avg_ctr":            avg_ctr,
-            "last_auto_manage_at": last_auto_manage_at,
-        }
-    except Exception as exc:
-        logger.exception("get_etsy_ads_status error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.get("/api/etsy/shop-optimizer")
-async def get_etsy_shop_optimizer() -> dict:
-    """
-    Stato corrente ShopProfileOptimizer — ultimo titolo e niches applicati.
-    Legge dalla tabella config (non chiama LLM né Etsy API).
-    """
-    if not memory:
-        return {"last_title": None, "last_niches": [], "last_applied_at": None, "status": "unavailable"}
-    try:
-        db = await memory.get_db()
-
-        cur = await db.execute(
-            "SELECT key, value FROM config WHERE key IN (?, ?, ?)",
-            (
-                "shop_optimizer.last_applied_title",
-                "shop_optimizer.last_applied_niches",
-                "shop_optimizer.last_applied_at",
-            ),
-        )
-        rows = await cur.fetchall()
-        cfg = {r["key"]: r["value"] for r in rows}
-
-        last_title = cfg.get("shop_optimizer.last_applied_title")
-        last_niches_raw = cfg.get("shop_optimizer.last_applied_niches")
-        last_applied_at = cfg.get("shop_optimizer.last_applied_at")
-
-        try:
-            last_niches = json.loads(last_niches_raw) if last_niches_raw else []
-        except (json.JSONDecodeError, TypeError):
-            last_niches = []
-
-        status = "applied" if last_title else "never_applied"
-
-        return {
-            "last_title":      last_title,
-            "last_niches":     last_niches,
-            "last_applied_at": float(last_applied_at) if last_applied_at else None,
-            "status":          status,
-        }
-    except Exception as exc:
-        logger.exception("get_etsy_shop_optimizer error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.post("/api/etsy/shop-optimizer/preview")
-async def etsy_shop_optimizer_preview(body: dict | None = None) -> dict:
-    """
-    Genera anteprima titolo + about senza applicare su Etsy.
-    Chiama ShopProfileOptimizer.preview() — usa LLM ma non Etsy API.
-
-    Body opzionale: { "focus_niche": "wedding planner" }
-    """
-    if not shop_optimizer:
-        return JSONResponse(status_code=503, content={"error": "ShopProfileOptimizer non inizializzato"})
-    try:
-        focus_niche = (body or {}).get("focus_niche")
-        result = await shop_optimizer.preview(focus_niche=focus_niche)
-        return {
-            "title":   result.get("title"),
-            "about":   result.get("about"),
-            "niches":  result.get("niches", []),
-            "changed": result.get("changed", False),
-            "status":  "ok",
-        }
-    except Exception as exc:
-        logger.exception("etsy_shop_optimizer_preview error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-# ------------------------------------------------------------------
-# Analytics endpoints
-# ------------------------------------------------------------------
-
-
-@app.get("/api/finance/summary")
-async def get_finance_summary(
-    year: int | None = None,
-    month: int | None = None,
-) -> dict:
-    """
-    P&L mensile aggregato + breakdown per niche (FE-Blocco 0.2).
-
-    Query params opzionali:
-      year  int — default: anno corrente
-      month int — default: mese corrente
-
-    Risposta: { year, month, n_sales, gross_eur, etsy_fees_eur,
-                listing_fees_eur, design_costs_eur, net_eur, margin_pct,
-                by_niche: [{ niche, gross_eur, net_eur, total_fees_eur, sales_count }] }
-    """
-    if not finance_tracker:
-        return JSONResponse(status_code=503, content={"error": "FinanceTracker non inizializzato"})
-    try:
-        summary = await finance_tracker.monthly_summary(year=year, month=month)
-
-        # Breakdown per niche — stessa finestra temporale usata da monthly_summary
-        from datetime import datetime, timezone as _tz
-        _now   = datetime.now(_tz.utc)
-        _year  = year  or _now.year
-        _month = month or _now.month
-        _start = datetime(_year, _month, 1, tzinfo=_tz.utc).timestamp()
-        _end   = datetime(_year + 1, 1, 1, tzinfo=_tz.utc).timestamp() if _month == 12 \
-                 else datetime(_year, _month + 1, 1, tzinfo=_tz.utc).timestamp()
-
-        db = await memory.get_db()
-        cursor = await db.execute(
-            """
-            SELECT
-                niche,
-                COUNT(*)              AS sales_count,
-                SUM(gross_eur)        AS gross_eur,
-                SUM(net_eur)          AS net_eur,
-                SUM(etsy_fee_eur + listing_fee_eur + design_cost_eur) AS total_fees_eur
-            FROM revenue_events
-            WHERE sold_at >= ? AND sold_at < ?
-              AND niche IS NOT NULL
-            GROUP BY niche
-            ORDER BY gross_eur DESC
-            """,
-            (_start, _end),
-        )
-        rows = await cursor.fetchall()
-        by_niche = [
-            {
-                "niche":          r["niche"],
-                "sales_count":    int(r["sales_count"]),
-                "gross_eur":      round(float(r["gross_eur"] or 0.0), 2),
-                "net_eur":        round(float(r["net_eur"]   or 0.0), 2),
-                "total_fees_eur": round(float(r["total_fees_eur"] or 0.0), 2),
-            }
-            for r in rows
-        ]
-
-        return {**summary, "by_niche": by_niche}
-    except Exception as exc:
-        logger.exception("get_finance_summary error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.get("/api/finance/report")
-async def get_finance_report(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
-    """Ultimo report finance da ChromaDB + trigger run se mai eseguito."""
-    if not memory:
-        return {"report": None}
-    results = await memory.query_chromadb(
-        query="finance report revenue cost margin ROI",
-        n_results=1,
-        where={"type": "finance_report"},
-    )
-    return {"report": results[0] if results else None, "days": days}
-
-
-@app.post("/api/finance/run", dependencies=[Depends(verify_personal_key)])
-@limiter.limit("5/minute")
-async def run_finance_agent(request: Request, body: dict | None = None) -> dict:
-    """Esegue il FinanceAgent manualmente (period_days dal body, default 30)."""
-    if not pepe:
-        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    period_days = max(1, min(int((body or {}).get("period_days", 30)), 365))
-    import uuid
-    task_id = str(uuid.uuid4())
-    task = AgentTask(
-        task_id=task_id,
-        agent_name="finance",
-        input_data={"period_days": period_days},
-        source="web",
-    )
-    await pepe.dispatch_task(task)
-    return {"status": "dispatched", "task_id": task_id, "period_days": period_days}
-
-
-@app.get("/api/analytics/latest")
-async def get_analytics_latest() -> dict:
-    """Ultimo report analytics da ChromaDB."""
-    if not memory:
-        return {"report": None}
-    results = await memory.query_chromadb(
-        query="daily analytics report",
-        n_results=1,
-        where={"type": "analytics_report"},
-    )
-    return {"report": results[0] if results else None}
-
-
-@app.get("/api/analytics/failures")
-async def get_analytics_failures(limit: Annotated[int, Query(ge=1, le=500)] = 20) -> dict:
-    """Ultime failure analysis dai listing."""
-    if not memory:
-        return {"failures": []}
-    failures = await memory.get_all_listing_analyses(limit=limit)
-    return {"failures": failures}
-
-
-@app.get("/api/analytics/ctr-ab")
-async def get_analytics_ctr_ab(limit: Annotated[int, Query(ge=1, le=100)] = 50) -> dict:
-    """
-    Ultimi risultati A/B thumbnail da ChromaDB (FE-Blocco 0.3).
-
-    Ogni documento `type=design_winner` contiene winner + loser template/color_scheme/ctr.
-    Risposta: { results: [{ niche, product_type, winner: {...}, loser: {...}, compared_at }] }
-    """
-    if not memory:
-        return {"results": []}
-    try:
-        raw = await memory.query_chromadb(
-            query="A/B thumbnail winner template color_scheme CTR design test",
-            n_results=limit,
-            where={"type": "design_winner"},
-            agent="api",
-        )
-        results = []
-        for item in raw:
-            meta = item.get("metadata") or {}
-            if not meta.get("niche"):
-                continue
-            results.append({
-                "niche":        meta.get("niche"),
-                "product_type": meta.get("product_type"),
-                "winner": {
-                    "template":     meta.get("template", ""),
-                    "color_scheme": meta.get("color_scheme", ""),
-                    "ctr":          float(meta.get("ctr", 0) or 0),
-                },
-                "loser": {
-                    "template":     meta.get("loser_template", ""),
-                    "color_scheme": meta.get("loser_color_scheme", ""),
-                    "ctr":          float(meta.get("loser_ctr", 0) or 0),
-                },
-                "compared_at": meta.get("date"),
-            })
-        return {"results": results}
-    except Exception as exc:
-        logger.exception("get_analytics_ctr_ab error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.get("/api/analytics/ladder")
-async def get_analytics_ladder() -> dict:
-    """
-    Distribuzione listing per ladder_level (FE-Blocco 0.3).
-
-    Conta listing distinti per livello diagnostico da listing_performance.
-    Risposta: { ok, views_low, ctr_low, conv_low, undiagnosed, total, last_updated }
-    """
-    if not memory:
-        return {"ok": 0, "views_low": 0, "ctr_low": 0, "conv_low": 0, "undiagnosed": 0, "total": 0, "last_updated": None}
-    try:
-        db = await memory.get_db()
-
-        # Conta per ladder_level sull'ultimo snapshot per listing (max snapshot_at)
-        cursor = await db.execute(
-            """
-            SELECT
-                ladder_level,
-                COUNT(DISTINCT etsy_listing_id) AS cnt
-            FROM listing_performance
-            WHERE snapshot_at = (
-                SELECT MAX(lp2.snapshot_at)
-                FROM listing_performance lp2
-                WHERE lp2.etsy_listing_id = listing_performance.etsy_listing_id
-            )
-            GROUP BY ladder_level
-            """
-        )
-        rows = await cursor.fetchall()
-
-        counts: dict[str, int] = {}
-        for r in rows:
-            key = r["ladder_level"] or "undiagnosed"
-            counts[key] = int(r["cnt"])
-
-        # Timestamp ultimo snapshot disponibile
-        cur2 = await db.execute("SELECT MAX(snapshot_at) AS last FROM listing_performance")
-        row2 = await cur2.fetchone()
-        last_updated = float(row2["last"]) if row2 and row2["last"] else None
-
-        total = sum(counts.values())
-        return {
-            "ok":          counts.get("ok", 0),
-            "views_low":   counts.get("views_low", 0),
-            "ctr_low":     counts.get("ctr_low", 0),
-            "conv_low":    counts.get("conv_low", 0),
-            "undiagnosed": counts.get("undiagnosed", 0),
-            "total":       total,
-            "last_updated": last_updated,
-        }
-    except Exception as exc:
-        logger.exception("get_analytics_ladder error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+app.include_router(system.router)
+app.include_router(autopilot.router)
+app.include_router(screen.router)
+app.include_router(personal.router)
+app.include_router(wiki.router)
+app.include_router(memory_routes.router)
+app.include_router(etsy.router)
+app.include_router(finance.router)
 
 
 # ------------------------------------------------------------------
@@ -2242,31 +830,24 @@ async def ws_voice(websocket: WebSocket) -> None:
                 continue
 
             # ── Fase 1: ogni messaggio è un blob WebM completo da 3s ──────────
-            # Il frontend avvia un nuovo MediaRecorder per ogni finestra da 3s
-            # → ogni blob ha l'header EBML e può essere decodificato da Whisper.
             if phase == "wakeword":
                 try:
                     # ── Raccolta campioni (se attiva) ────────────────────────
-                    # Salva il blob PRIMA del classifier — non blocca il flusso normale.
                     if voice_collector.is_active():
                         await asyncio.get_running_loop().run_in_executor(
                             None, voice_collector.save_sample, data
                         )
 
                     # ── Wake word detection ──────────────────────────────────
-                    # Prova modello ML custom; se non disponibile o errore → Whisper.
                     wake_detected = False
 
                     _use_whisper = True
                     try:
                         oww_score = await wake_oww.predict(data)
                         if oww_score is not None:
-                            # Modello ML attivo — Whisper NON viene usato
                             _use_whisper = False
                             wake_detected = wake_oww.is_wake_word(oww_score)
                         else:
-                            # predict() ha ritornato None: ffmpeg fallito o altro errore
-                            # già loggato in wake_oww con WARNING
                             logger.warning("wake_oww: predict() → None, uso Whisper (emergenza)")
                     except Exception as oww_exc:
                         logger.warning("wake_oww eccezione (%s) — uso Whisper (emergenza)", oww_exc)
@@ -2287,21 +868,11 @@ async def ws_voice(websocket: WebSocket) -> None:
                                 pass
 
                     if wake_detected:
-                        # ── Wake ack via ElevenLabs ──────────────────────────
-                        # Riproduce l'ack PRIMA di mandare {"type": "wake"} al
-                        # frontend. Così quando il frontend riceve "wake" e manda
-                        # subito "utterance_ready", il backend è già nel drain loop.
-                        # L'ack è bloccante → zero echo sul microfono.
                         import random
                         _WAKE_ACKS = ["Dimmi.", "Sì?", "Ti ascolto.", "Dimmi pure.", "Eccomi."]
                         await play_via_say(random.choice(_WAKE_ACKS))
-                        # Notifica frontend solo dopo che l'ack è terminato
                         await websocket.send_json({"type": "wake"})
                         # ── Drain handshake ─────────────────────────────────
-                        # Race condition: il frontend può aver già inviato il
-                        # blob successivo del loop wake PRIMA di ricevere il
-                        # messaggio "wake" e fermarsi. Dreniamo quei blob stale
-                        # finché il frontend non manda {"type": "utterance_ready"}.
                         drained = 0
                         while True:
                             raw = await websocket.receive()
@@ -2337,11 +908,6 @@ async def ws_voice(websocket: WebSocket) -> None:
                     logger.info("Voice utterance: '%s'", text[:120])
 
                     if text.strip():
-                        # ── Step 5: Thinking ack (condizionale) ──────────────
-                        # Avvia handle_user_message in background. Se non risponde
-                        # entro _ACK_AFTER_S secondi, suona la frase di attesa.
-                        # Per agenti veloci (remind ~1s) l'ack non parte mai.
-                        # Per agenti lenti (research, finance) riempie il silenzio.
                         import random
                         _THINK_ACKS = [
                             "Vediamo.",
@@ -2353,7 +919,7 @@ async def ws_voice(websocket: WebSocket) -> None:
                         _ACK_AFTER_S = 1.5   # secondi di attesa prima di suonare l'ack
 
                         handle_task = asyncio.create_task(
-                            pepe.handle_user_message(
+                            state.pepe.handle_user_message(
                                 message=text,
                                 session_id="voice_orb",
                                 source="orb_voice",
@@ -2383,9 +949,7 @@ async def ws_voice(websocket: WebSocket) -> None:
                             logger.warning("Voice: Pepe ha restituito risposta vuota — fallback attivo")
 
                         # Controlla se Pepe ha una domanda in sospeso (clarification)
-                        # In quel caso rimaniamo in fase "utterance" — il mic si riapre
-                        # subito dopo la risposta, senza tornare al wake word.
-                        is_clarification = await pepe.has_pending_voice_clarification()
+                        is_clarification = await state.pepe.has_pending_voice_clarification()
 
                         await websocket.send_json({"type": "speaking", "text": reply})
                         await play_via_say(reply)
@@ -2394,12 +958,8 @@ async def ws_voice(websocket: WebSocket) -> None:
                             # Rimane in utterance — manda "clarify" invece di "done"
                             await websocket.send_json({"type": "clarify"})
                             logger.info("Voice: Pepe in attesa di risposta, fase utterance mantenuta")
-                            # phase rimane "utterance", nessun timeout
+                            # phase rimane "utterance"
                         else:
-                            # ── Step 6: post-reply listen window ─────────────
-                            # Apre una finestra di 8s senza wake word: l'utente può
-                            # rispondere direttamente a Pepe. Se non parla entro il
-                            # timeout il loop torna in ascolto wake word.
                             await websocket.send_json({
                                 "type": "post_reply_listen",
                                 "timeout_ms": int(_POST_REPLY_S * 1000),
@@ -2417,11 +977,10 @@ async def ws_voice(websocket: WebSocket) -> None:
                     await websocket.send_json({
                         "type": "error",
                         "message": "Errore elaborazione",
-                        "detail": str(stt_exc),          # full detail → green card (Step 3)
+                        "detail": str(stt_exc),
                         "agent": "stt/pepe",
                         "ts": datetime.now(timezone.utc).isoformat(),
                     })
-                    # In caso di errore: azzera il post-reply window e torna al wake word
                     _post_reply_timeout = None
                     phase = "wakeword"
                 finally:
@@ -2429,9 +988,6 @@ async def ws_voice(websocket: WebSocket) -> None:
                         os.unlink(tmp_utt)
                     except OSError:
                         pass
-                # NOTA: NON c'è più un "phase = 'wakeword'" incondizionale qui.
-                # La fase viene gestita esplicitamente nei branch above (clarify /
-                # post_reply_listen / silent utterance / exception).
 
     except WebSocketDisconnect:
         logger.info("WebSocket /ws/voice disconnesso")
@@ -2444,19 +1000,17 @@ async def ws_chat(ws: WebSocket) -> None:
     """WebSocket unidirezionale: broadcast eventi sistema → client (dashboard).
     Il frontend non invia messaggi — usa solo Telegram per interagire con Pepe.
     """
-    await ws_manager.connect(ws)
+    await state.ws_manager.connect(ws)
     try:
         while True:
             data = await ws.receive_json()
             if data.get("type") == "ping":
                 await ws.send_json({"type": "pong"})
     except WebSocketDisconnect:
-        ws_manager.disconnect(ws)
+        state.ws_manager.disconnect(ws)
     except Exception:
-        ws_manager.disconnect(ws)
+        state.ws_manager.disconnect(ws)
 
-
-app.include_router(personal_router)
 
 # ------------------------------------------------------------------
 # Static files (frontend build) — montati per ultimi
