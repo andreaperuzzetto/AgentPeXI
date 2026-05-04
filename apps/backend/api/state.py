@@ -6,6 +6,7 @@ per evitare import circolari e accoppiamento diretto.
 
 from __future__ import annotations
 
+import hmac
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -81,7 +82,7 @@ async def verify_personal_key(request: Request) -> None:
     if not api_key:
         raise HTTPException(status_code=403, detail="PERSONAL_API_KEY non configurata")
     key = request.headers.get("X-Personal-Key", "")
-    if key != api_key:
+    if not hmac.compare_digest(key, api_key):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
 
