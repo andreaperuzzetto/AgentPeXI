@@ -21,7 +21,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Callable, ClassVar, Coroutine
+from typing import Callable, ClassVar, Coroutine
 
 import anthropic
 

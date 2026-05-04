@@ -13,7 +13,7 @@ from typing import Any, Callable, ClassVar, Coroutine
 import anthropic
 import openai
 
-from apps.backend.core.config import MODEL_HAIKU, MODEL_SONNET, settings
+from apps.backend.core.config import MODEL_HAIKU, settings
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 

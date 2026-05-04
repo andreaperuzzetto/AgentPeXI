@@ -23,7 +23,7 @@ import types
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 # ---------------------------------------------------------------------------
 # Stub dipendenze esterne (evita import di Anthropic, aiosqlite, ChromaDB, …)

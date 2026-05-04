@@ -467,8 +467,6 @@ class ResearchAgent(AgentBase):
         import calendar as _cal
 
         now = datetime.now()
-        import calendar as _cal
-
         # 1-4 in parallelo
         (
             trend_results,

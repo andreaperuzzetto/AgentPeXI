@@ -16,7 +16,6 @@ import asyncio
 import hashlib
 import logging
 import re
-import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Coroutine
 

@@ -14,7 +14,6 @@ Dipendenze: numpy, scikit-learn (entrambi già nel requirements)
 
 from __future__ import annotations
 
-import os
 import pickle
 import struct
 import sys

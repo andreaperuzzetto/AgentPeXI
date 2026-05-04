@@ -25,7 +25,6 @@ bridge insight identici in sessione.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 from collections import deque

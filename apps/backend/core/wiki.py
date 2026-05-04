@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 import anthropic
-import openai
 
 from apps.backend.core.config import MODEL_SONNET, settings
 

@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, ClassVar, Coroutine
+from typing import Callable, ClassVar, Coroutine
 
 import anthropic
 
 from apps.backend.agents.base import AgentBase
-from apps.backend.core.config import MODEL_HAIKU, settings
+from apps.backend.core.config import MODEL_HAIKU
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentCard, AgentResult, AgentTask, TaskStatus
 from apps.backend.tools.text_extract import TextExtractor

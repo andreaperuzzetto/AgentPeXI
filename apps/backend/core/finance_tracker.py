@@ -16,8 +16,6 @@ import time as _time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from apps.backend.core.config import settings
-
 logger = logging.getLogger("agentpexi.finance_tracker")
 
 # ---------------------------------------------------------------------------

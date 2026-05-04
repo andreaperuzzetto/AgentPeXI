@@ -13,7 +13,7 @@ import anthropic
 import openai
 
 from apps.backend.core.config import MODEL_SONNET, MODEL_HAIKU, settings
-from apps.backend.core.domains import DomainContext, DOMAIN_ETSY, PersonalLayer, PERSONAL_LAYER
+from apps.backend.core.domains import DomainContext, PersonalLayer, PERSONAL_LAYER
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentCard, AgentResult, AgentStatus, AgentTask, TaskStatus
 from apps.backend.agents.base import AgentBase

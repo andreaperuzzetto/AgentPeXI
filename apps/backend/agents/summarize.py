@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, ClassVar, Coroutine
+from typing import Callable, ClassVar, Coroutine
 
 import anthropic
 

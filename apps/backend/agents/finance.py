@@ -13,8 +13,8 @@ import json
 import logging
 import math
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, ClassVar, Coroutine
+from datetime import datetime, timezone
+from typing import Callable, ClassVar, Coroutine
 
 import anthropic
 

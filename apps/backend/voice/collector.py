@@ -18,11 +18,9 @@ from __future__ import annotations
 
 import logging
 import os
-import struct
 import subprocess
 import tempfile
 import time
-import wave
 from pathlib import Path
 from typing import Literal, Optional
 

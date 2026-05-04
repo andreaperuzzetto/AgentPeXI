@@ -537,8 +537,6 @@ class MemoryManager:
         # ChromaDB + Voyage AI (lazy: fallisce silenziosamente se non disponibile)
         try:
             import chromadb
-            from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
-
             import voyageai  # noqa: F401 — verifica disponibilità
 
             chroma_client = chromadb.PersistentClient(path=self._chromadb_path)

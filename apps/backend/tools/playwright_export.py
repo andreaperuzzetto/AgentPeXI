@@ -9,7 +9,6 @@ Richiede: pip install playwright && playwright install chromium
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import html
 from pathlib import Path
