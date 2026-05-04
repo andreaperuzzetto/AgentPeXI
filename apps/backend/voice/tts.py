@@ -116,12 +116,11 @@ def _play_elevenlabs_sync(text: str) -> bool:
             logger.error("TTS ElevenLabs: risposta vuota")
             return False
 
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tmp.write(audio_bytes)
-            tmp_path = tmp.name
-
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         try:
-            subprocess.run(["afplay", tmp_path], check=True, timeout=120)
+            tmp.write(audio_bytes)
+            tmp.close()
+            subprocess.run(["afplay", tmp.name], check=True, timeout=120)
             logger.info("TTS ElevenLabs: completato (%d bytes, %d chars)", len(audio_bytes), len(text))
             return True
         except Exception as exc:
@@ -129,9 +128,9 @@ def _play_elevenlabs_sync(text: str) -> bool:
             return False
         finally:
             try:
-                os.unlink(tmp_path)
-            except Exception:
-                logger.exception("Unexpected error")
+                os.unlink(tmp.name)
+            except OSError:
+                pass
     except Exception as exc:
         logger.error("TTS ElevenLabs: errore (%s)", exc)
         return False

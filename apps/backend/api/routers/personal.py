@@ -170,7 +170,6 @@ async def get_collect_status() -> dict:
 
 
 @router.post("/api/personal/ask")
-@state.limiter.limit("30/minute")
 async def personal_ask(request: Request, body: dict) -> dict:
     """Endpoint voce: riceve testo trascritto, risponde via Pepe in dominio Personal.
     Usato dal PepeOrb nel frontend — nessuna pipeline, risposta diretta.

@@ -279,8 +279,8 @@ function RecallFeed() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          {items.map((item, i) => (
-            <div key={i} style={{
+          {items.map((item) => (
+            <div key={`${item.timestamp}-${item.query}`} style={{
               display:       'flex',
               alignItems:    'center',
               gap:           8,

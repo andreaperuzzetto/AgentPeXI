@@ -75,6 +75,7 @@ export function NeuralBrainOrb({ onNodeClick, onBackgroundClick, selectedNodeId 
   const meshMapRef     = useRef<Map<string, THREE.Mesh>>(new Map())
   const hoveredIdRef   = useRef<string | null>(null)
   const edgesRef       = useRef<GraphEdge[]>([])
+  const nodeMapRef     = useRef<Map<string, GraphNode>>(new Map())
 
   const memoryGraph  = useStore(s => s.memoryGraph)
   const activeNodeIds = useStore(s => s.activeNodeIds)
@@ -114,12 +115,8 @@ export function NeuralBrainOrb({ onNodeClick, onBackgroundClick, selectedNodeId 
       .linkColor((l: GLink) => {
         const srcId = typeof l.source === 'string' ? l.source : l.source.id
         const tgtId = typeof l.target === 'string' ? l.target : l.target.id
-        const srcCol = collColor(
-          memoryGraph.nodes.find(n => n.id === srcId)?.collection ?? ''
-        )
-        const tgtCol = collColor(
-          memoryGraph.nodes.find(n => n.id === tgtId)?.collection ?? ''
-        )
+        const srcCol = collColor(nodeMapRef.current.get(srcId)?.collection ?? '')
+        const tgtCol = collColor(nodeMapRef.current.get(tgtId)?.collection ?? '')
         return lerpHex(srcCol, tgtCol, 0.5)
       })
       .linkWidth((l: GLink) => {
@@ -147,6 +144,9 @@ export function NeuralBrainOrb({ onNodeClick, onBackgroundClick, selectedNodeId 
     graphRef.current = graph
     return () => {
       graph.pauseAnimation()
+      const renderer = graph.renderer()
+      renderer.dispose()
+      renderer.forceContextLoss()
       el.innerHTML = ''
       graphRef.current = null
       meshMapRef.current.clear()
@@ -162,6 +162,10 @@ export function NeuralBrainOrb({ onNodeClick, onBackgroundClick, selectedNodeId 
 
     edgesRef.current = memoryGraph.edges
     meshMapRef.current.clear()
+
+    const newNodeMap = new Map<string, GraphNode>()
+    memoryGraph.nodes.forEach(n => newNodeMap.set(n.id, n))
+    nodeMapRef.current = newNodeMap
 
     const graphData = {
       nodes: memoryGraph.nodes.map(n => ({ ...n })) as GNode[],

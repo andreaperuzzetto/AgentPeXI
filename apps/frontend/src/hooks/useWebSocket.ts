@@ -147,7 +147,9 @@ export function useWebSocket() {
           const data = await r.json()
           store.setSystemStatus({ mock_mode: data.mock_mode ?? false })
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[WS] hydrateOnConnect /api/status failed', e)
+      }
 
       // Ripristina stato ScreenWatcher
       try {
@@ -162,7 +164,9 @@ export function useWebSocket() {
             )
           }
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[WS] hydrateOnConnect /api/screen/status failed', e)
+      }
 
       // CollectionStats — ChromaDB stats (HUD panel)
       // Senza questa chiamata chromaStats rimane null e il pannello mostra lo skeleton.
@@ -176,7 +180,9 @@ export function useWebSocket() {
             by_collection: data.by_collection ?? undefined,
           })
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[WS] hydrateOnConnect /api/memory/stats failed', e)
+      }
 
       // Autopilot status — HUD pill aggiornamento al mount
       try {
@@ -185,7 +191,9 @@ export function useWebSocket() {
           const data = await r.json()
           if (data?.status) store.setAutopilotStatus(data.status, data.current_niche ?? null)
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[WS] hydrateOnConnect /api/autopilot/status failed', e)
+      }
 
     }
 
@@ -215,6 +223,7 @@ export function useWebSocket() {
       ws.addEventListener('message', handleMessage)
 
       ws.addEventListener('close', () => {
+        if (unmounted) return
         useStore.getState().setWsConnected(false)
         scheduleReconnect()
       })

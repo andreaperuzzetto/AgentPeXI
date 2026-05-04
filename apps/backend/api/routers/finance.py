@@ -74,7 +74,7 @@ async def get_finance_summary(
         return {**summary, "by_niche": by_niche}
     except Exception as exc:
         logger.exception("get_finance_summary error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.get("/api/finance/report")
@@ -91,7 +91,6 @@ async def get_finance_report(days: Annotated[int, Query(ge=1, le=365)] = 30) -> 
 
 
 @router.post("/api/finance/run")
-@state.limiter.limit("5/minute")
 async def run_finance_agent(request: Request, body: dict | None = None) -> dict:
     """Esegue il FinanceAgent manualmente (period_days dal body, default 30)."""
     if not state.pepe:
@@ -170,7 +169,7 @@ async def get_analytics_ctr_ab(limit: Annotated[int, Query(ge=1, le=100)] = 50) 
         return {"results": results}
     except Exception as exc:
         logger.exception("get_analytics_ctr_ab error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.get("/api/analytics/ladder")
@@ -225,4 +224,4 @@ async def get_analytics_ladder() -> dict:
         }
     except Exception as exc:
         logger.exception("get_analytics_ladder error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})

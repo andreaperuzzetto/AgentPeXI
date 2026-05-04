@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import apps.backend.api.state as state
+from apps.backend.api.middleware import RequestIDFilter, RequestIDMiddleware
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -40,7 +41,7 @@ _LOG_DIR.mkdir(exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+    format="%(asctime)s %(levelname)-8s [%(name)s] [%(request_id)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(),
@@ -52,6 +53,11 @@ logging.basicConfig(
         ),
     ],
 )
+
+# Inject request_id into every log record via ContextVar
+_request_id_filter = RequestIDFilter()
+for _h in logging.root.handlers:
+    _h.addFilter(_request_id_filter)
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
@@ -746,8 +752,9 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["X-Personal-Key", "Content-Type"],
+    allow_headers=["X-Personal-Key", "Content-Type", "X-Request-ID"],
 )
+app.add_middleware(RequestIDMiddleware)
 
 # ------------------------------------------------------------------
 # Router includes
@@ -852,17 +859,17 @@ async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
                         logger.warning("wake_oww eccezione (%s) — uso Whisper (emergenza)", oww_exc)
 
                     if _use_whisper:
-                        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
-                            f.write(data)
-                            tmp_wake = f.name
+                        _tmp_wake = tempfile.NamedTemporaryFile(suffix=".webm", delete=False)
                         try:
-                            wake_text = await transcribe(tmp_wake, language=settings.WHISPER_LANGUAGE, vad_filter=True)
+                            _tmp_wake.write(data)
+                            _tmp_wake.close()
+                            wake_text = await transcribe(_tmp_wake.name, language=settings.WHISPER_LANGUAGE, vad_filter=True)
                             if wake_text:
                                 logger.info("Wake Whisper fallback: '%s'", wake_text[:80])
                             wake_detected = detect_wake_word_in_text(wake_text)
                         finally:
                             try:
-                                os.unlink(tmp_wake)
+                                os.unlink(_tmp_wake.name)
                             except OSError:
                                 pass
 
@@ -898,12 +905,12 @@ async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
 
             # ── Fase 2: trascrivi utterance → Pepe → TTS → risposta ──
             elif phase == "utterance":
-                with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
-                    f.write(data)
-                    tmp_utt = f.name
+                _tmp_utt = tempfile.NamedTemporaryFile(suffix=".webm", delete=False)
                 try:
+                    _tmp_utt.write(data)
+                    _tmp_utt.close()
                     # Utterance: forza lingua italiana per massima accuratezza
-                    text = await transcribe(tmp_utt, language=settings.WHISPER_LANGUAGE, vad_filter=True)
+                    text = await transcribe(_tmp_utt.name, language=settings.WHISPER_LANGUAGE, vad_filter=True)
                     logger.info("Voice utterance: '%s'", text[:120])
 
                     if text.strip():
@@ -984,7 +991,7 @@ async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
                     phase = "wakeword"
                 finally:
                     try:
-                        os.unlink(tmp_utt)
+                        os.unlink(_tmp_utt.name)
                     except OSError:
                         pass
 

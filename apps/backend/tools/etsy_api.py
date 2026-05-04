@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
 import logging
 import random
 import time as _time
@@ -12,7 +10,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
-from cryptography.fernet import Fernet
 from tenacity import (
     retry,
     retry_if_exception,
@@ -21,6 +18,7 @@ from tenacity import (
 )
 
 from apps.backend.core.config import settings
+from apps.backend.core.crypto import get_fernet
 from apps.backend.core.memory import MemoryManager
 
 logger = logging.getLogger("agentpexi.etsy_api")
@@ -280,18 +278,11 @@ class EtsyAPI:
     # Encryption
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _derive_fernet_key(secret: str) -> bytes:
-        digest = hashlib.sha256(secret.encode()).digest()
-        return base64.urlsafe_b64encode(digest)
-
     def _encrypt(self, plaintext: str) -> str:
-        key = self._derive_fernet_key(settings.SECRET_KEY)
-        return Fernet(key).encrypt(plaintext.encode()).decode()
+        return get_fernet().encrypt(plaintext.encode()).decode()
 
     def _decrypt(self, ciphertext: str) -> str:
-        key = self._derive_fernet_key(settings.SECRET_KEY)
-        return Fernet(key).decrypt(ciphertext.encode()).decode()
+        return get_fernet().decrypt(ciphertext.encode()).decode()
 
     # ------------------------------------------------------------------
     # Token management

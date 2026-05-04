@@ -211,9 +211,9 @@ class LlmMixin:
         Costruisce il system prompt con personal layer sempre presente
         e business layer condizionale. Ordine sezioni adattivo per intent.
         """
-        from datetime import datetime as _dt
+        from datetime import datetime as _dt, timezone
         is_personal = self._is_personal_intent(last_message) if last_message else False
-        now_str = _dt.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        now_str = _dt.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
         # ─── IDENTITÀ ────────────────────────────────────────────────────────────
         identity = (

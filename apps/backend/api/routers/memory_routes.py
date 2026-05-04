@@ -118,6 +118,9 @@ async def get_memory_graph(
     # Calcola archi tramite similarità coseno (solo nodi con embedding)
     edges: list[dict] = []
     valid_idx = [i for i, e in enumerate(all_embeds) if e is not None]
+    # Cap at 500 to avoid O(n²) cost on large graphs
+    if len(valid_idx) > 500:
+        valid_idx = valid_idx[:500]
 
     if len(valid_idx) >= 2:
         try:

@@ -12,23 +12,25 @@
  * Tutti i fetch periodici (costs, analytics, chroma, domain config, agent steps)
  * sono stati spostati qui da App.tsx.
  */
-import { useState, useEffect, Component, type ReactNode, type ErrorInfo } from 'react'
+import { useState, useEffect, lazy, Suspense, Component, type ReactNode, type ErrorInfo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useShallow } from 'zustand/react/shallow'
 
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
-import { NeuralView } from '../views/NeuralView'
-import { EtsyView } from '../views/EtsyView'
-import { PersonalView } from '../views/PersonalView'
-import { SystemView } from '../views/SystemView'
-import { AnalyticsView } from '../views/AnalyticsView'
 import { VoiceNotificationStack } from '../components/VoiceNotification/VoiceNotificationStack'
 import { AnalyticsOverlay } from '../components/AnalyticsOverlay/AnalyticsOverlay'
 import { SystemOverlay } from '../components/SystemOverlay/SystemOverlay'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useStore } from '../store'
 import { useCompactLayout } from '../hooks/useCompactLayout'
+
+// ─── Lazy-loaded views (code-split) ──────────────────────────────────────────
+const NeuralView    = lazy(() => import('../views/NeuralView').then(m => ({ default: m.NeuralView })))
+const EtsyView      = lazy(() => import('../views/EtsyView').then(m => ({ default: m.EtsyView })))
+const PersonalView  = lazy(() => import('../views/PersonalView').then(m => ({ default: m.PersonalView })))
+const SystemView    = lazy(() => import('../views/SystemView').then(m => ({ default: m.SystemView })))
+const AnalyticsView = lazy(() => import('../views/AnalyticsView').then(m => ({ default: m.AnalyticsView })))
 
 // ─── Transition spring ────────────────────────────────────────────────────────
 const VIEW_VARIANTS = {
@@ -42,12 +44,12 @@ const VIEW_TRANSITION = {
 }
 
 // ─── View map ─────────────────────────────────────────────────────────────────
-const VIEWS: Record<string, ReactNode> = {
-  neural:    <NeuralView />,
-  etsy:      <EtsyView />,
-  personal:  <PersonalView />,
-  system:    <SystemView />,
-  analytics: <AnalyticsView />,
+const VIEWS = {
+  neural:    NeuralView,
+  etsy:      EtsyView,
+  personal:  PersonalView,
+  system:    SystemView,
+  analytics: AnalyticsView,
 }
 
 // ─── Error boundary ───────────────────────────────────────────────────────────
@@ -207,6 +209,8 @@ export function Shell() {
     return () => { clearInterval(id); controller.abort() }
   }, [setCostsData, setAnalyticsSummary, setChromaStats, setImageCostToday, setFeeCostToday])
 
+  const ActiveView = (activeZone in VIEWS ? VIEWS[activeZone as keyof typeof VIEWS] : VIEWS.neural)
+
   return (
     <ErrorBoundary>
       <div style={{ background: 'var(--bg-base)', minHeight: '100dvh', overflow: 'hidden' }}>
@@ -237,7 +241,9 @@ export function Shell() {
               transition={VIEW_TRANSITION}
               style={{ width: '100%', height: '100%', overflow: 'hidden' }}
             >
-              {VIEWS[activeZone]}
+              <Suspense fallback={<div style={{ width: '100%', height: '100%', background: 'var(--bg-base)' }} />}>
+                <ActiveView />
+              </Suspense>
             </motion.div>
           </AnimatePresence>
         </main>

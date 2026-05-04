@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import type React from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 
 /* ── Public types ───────────────────────────────────────────────────────── */
@@ -348,8 +349,8 @@ export function NodeDrawer({ nodeId, nodes, edges, onClose }: NodeDrawerProps) {
                 )}
                 {!loading && detail && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {detail.access_history.map((h, i) => (
-                      <div key={i} style={{
+                    {detail.access_history.map((h) => (
+                      <div key={`${h.queried_at}-${h.agent}`} style={{
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 3,

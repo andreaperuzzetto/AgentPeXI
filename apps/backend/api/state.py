@@ -68,6 +68,10 @@ class ConnectionManager:
 
 ws_manager = ConnectionManager()
 
+# Rate limiting is intentionally not applied per-endpoint.
+# Enforce request-rate limits at the reverse-proxy / load-balancer level
+# (e.g. nginx limit_req, Cloudflare, or an API gateway) where they cannot
+# be bypassed by direct connections and do not add Python overhead.
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 

@@ -243,8 +243,8 @@ export function ContextOverlay({ open, onClose }: Props) {
                 <span className="an-sub">Nessuna query recente</span>
               ) : (
                 <div className="metric-list">
-                  {recalls.map((rc, i) => (
-                    <div key={i} className="mi">
+                  {recalls.map((rc) => (
+                    <div key={`${rc.timestamp}-${rc.query}`} className="mi">
                       <span className="mi-l" style={{ flex: 1, marginRight: 8 }}>"{rc.query}"</span>
                       <span className="mi-v" style={{ color: 'var(--tf)', flexShrink: 0 }}>{relTime(rc.timestamp)}</span>
                     </div>
@@ -288,8 +288,8 @@ export function ContextOverlay({ open, onClose }: Props) {
                 <span className="an-sub">Nessuna attività recente</span>
               ) : (
                 <div className="metric-list">
-                  {lastEtsySteps.map((s, i) => (
-                    <div key={i} className="mi" style={{ gap: 8 }}>
+                  {lastEtsySteps.map((s) => (
+                    <div key={`${s.agent}-${s.timestamp}`} className="mi" style={{ gap: 8 }}>
                       <span
                         className="mi-l"
                         style={{

@@ -125,9 +125,9 @@ function ActivitySection({ items }: { items: RecentActivity[] }) {
         </div>
       ) : (
         <div style={{ padding: '3px 13px 6px' }}>
-          {items.map((item, i) => (
+          {items.map((item) => (
             <div
-              key={i}
+              key={`${item.timestamp}-${item.agent}`}
               style={{
                 display: 'flex',
                 alignItems: 'center',

@@ -1,15 +1,13 @@
 """Base class, schema, helpers and crypto for MemoryManager."""
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import logging
 import os
 import aiosqlite
-from cryptography.fernet import Fernet
 
 from apps.backend.core.config import settings
+from apps.backend.core.crypto import get_fernet
 
 logger = logging.getLogger("agentpexi.memory")
 
@@ -382,7 +380,6 @@ class MemoryBase:
         self._screen_memory_collection = None   # screen_memory — OCR/watcher (Personal)
         self._personal_memory_collection = None # personal_memory — Personal learning loop
         self._shared_memory_collection = None   # shared_memory — bridge cross-domain
-        self.__fernet: Fernet | None = None     # lazy-init in _fernet()
         self._ws_broadcaster = None             # callable(event: dict) — impostato da lifespan
         self._bridge_callback = None            # callable(text, domain) — impostato da lifespan
         self.mock_mode: bool = False            # flag globale — sincronizzato da pepe.set_mock_mode()
@@ -391,13 +388,9 @@ class MemoryBase:
     # Crypto helpers (OAuth token encryption)
     # ------------------------------------------------------------------
 
-    def _fernet(self) -> Fernet:
-        """Ritorna un'istanza Fernet derivata da SECRET_KEY (lazy, cached)."""
-        if self.__fernet is None:
-            digest = hashlib.sha256(settings.SECRET_KEY.encode()).digest()
-            key = base64.urlsafe_b64encode(digest)
-            self.__fernet = Fernet(key)
-        return self.__fernet
+    def _fernet(self):
+        """Ritorna l'istanza Fernet condivisa da core.crypto (lazy, cached)."""
+        return get_fernet()
 
     # ------------------------------------------------------------------
     # Init / shutdown

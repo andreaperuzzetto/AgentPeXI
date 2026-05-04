@@ -142,7 +142,7 @@ export function TaskDetailOverlay() {
                   Nessun dato per questo task
                 </div>
               ) : (
-                timeline.map((evt, i) => <TimelineRow key={i} evt={evt} />)
+                timeline.map((evt, i) => <TimelineRow key={`${evt.timestamp}-${evt.type}-${evt.step_number ?? i}`} evt={evt} />)
               )}
             </div>
           </div>
@@ -170,7 +170,7 @@ export function TaskDetailOverlay() {
               ) : (
                 <>
                   {llmCalls.map((call, i) => (
-                    <LlmCard key={i} call={call} maxTokens={maxTokens} />
+                    <LlmCard key={`${call.timestamp}-${i}`} call={call} maxTokens={maxTokens} />
                   ))}
 
                   {/* Totals */}

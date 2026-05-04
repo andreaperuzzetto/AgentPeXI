@@ -228,7 +228,7 @@ function BundleRow({ item, index, isLast }: BundleRowProps) {
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                     {spec.component_titles.map((title, i) => (
-                      <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <div key={`${i}-${title}`} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                         <span className="mono-num" style={{
                           fontSize: 9, color: 'rgba(245,166,35,0.60)',
                           flexShrink: 0, minWidth: 16,

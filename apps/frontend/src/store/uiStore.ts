@@ -35,7 +35,7 @@ export const useUiStore = create<UiStore>((set) => ({
     set((s) => ({
       notifications: [
         ...s.notifications,
-        { ...n, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` },
+        { ...n, id: crypto.randomUUID() },
       ],
     })),
   dismissNotification: (id) =>

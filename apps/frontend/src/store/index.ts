@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import type { AgentState, ToolEvent, SystemState, AgentStep, ContextUpdateEvent } from '../types'
 import type { GraphNode, GraphEdge } from '../components/NeuralBrainOrb/NodeDrawer'
 
+// Track active-node expiry timers to prevent accumulation
+const _nodeTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
 export interface CacheStats {
   /** Token serviti dalla cache (cache_read_tokens) */
   readTokens: number
@@ -312,13 +315,17 @@ export const useStore = create<AgentPeXIStore>((set) => ({
 
   activeNodeIds: new Set<string>(),
   addActiveNodeId: (id) => {
+    const existing = _nodeTimers.get(id)
+    if (existing !== undefined) clearTimeout(existing)
     set((s) => ({ activeNodeIds: new Set([...s.activeNodeIds, id]) }))
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      _nodeTimers.delete(id)
       set((s) => {
         const next = new Set(s.activeNodeIds)
         next.delete(id)
         return { activeNodeIds: next }
       })
     }, 2500)
+    _nodeTimers.set(id, timer)
   },
 }))

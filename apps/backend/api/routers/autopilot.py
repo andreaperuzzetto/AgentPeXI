@@ -100,7 +100,6 @@ async def autopilot_stop() -> dict:
 
 
 @router.post("/api/run/analytics")
-@state.limiter.limit("5/minute")
 async def run_analytics_now(request: Request) -> dict:
     """Trigger manuale analytics (non aspetta le 08:00)."""
     if not state.pepe:

@@ -142,8 +142,8 @@ export function PepeOrb() {
           mr.start()
           setTimeout(() => { if (mr.state === 'recording') mr.stop() }, WAKE_SAMPLE_MS)
         })
-      } catch (err) {
-        console.warn('[PepeOrb] Microfono non disponibile:', err)
+      } catch {
+        pushNotification({ type: 'error', message: 'Microfono non disponibile', detail: 'Controlla i permessi del browser.', agent: 'pepe', ts: new Date().toISOString() })
         stream?.getTracks().forEach((t) => t.stop())
         break
       }
@@ -182,8 +182,8 @@ export function PepeOrb() {
         if (mediaRef.current?.state === 'recording') mediaRef.current.stop()
       }, UTTERANCE_TIMEOUT_MS)
 
-    } catch (err) {
-      console.warn('[PepeOrb] Microfono non disponibile:', err)
+    } catch {
+      pushNotification({ type: 'error', message: 'Microfono non disponibile', detail: 'Controlla i permessi del browser.', agent: 'pepe', ts: new Date().toISOString() })
       returnToWakeword()
     }
   }, [setOrbState, returnToWakeword])
@@ -254,7 +254,6 @@ export function PepeOrb() {
         }
 
       } else if (msg.type === 'error' || msg.type === 'warning') {
-        console.warn('[PepeOrb] Notifica voice backend:', msg)
         pushNotification({
           type:    msg.type === 'warning' ? 'warning' : 'error',
           message: (msg as { message?: string }).message ?? '',
@@ -316,7 +315,8 @@ export function PepeOrb() {
       {/* state label */}
       <div className="orb-state-lbl">{LABEL[orbState]}</div>
 
-      {/* state buttons — top-left; solo LISTEN è cliccabile */}
+      {/* state buttons — solo in sviluppo */}
+      {import.meta.env.DEV && (
       <div className="orb-controls">
         {DEBUG_STATES.map((s) => {
           const isListen = s === 'listening'
@@ -332,6 +332,7 @@ export function PepeOrb() {
           )
         })}
       </div>
+      )}
     </>
   )
 }

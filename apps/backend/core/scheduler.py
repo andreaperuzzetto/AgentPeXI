@@ -905,6 +905,9 @@ class Scheduler:
 
     def _on_job_error(self, event: Any) -> None:
         jid = event.job_id
+        logger.exception(
+            "APScheduler job %s failed", jid, exc_info=event.exception
+        )
         if jid not in self._internal_jobs:
             with self._job_status_lock:
                 self._job_status[jid] = {"status": "failed", "last_run": datetime.now(timezone.utc).isoformat()}
