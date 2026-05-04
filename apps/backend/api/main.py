@@ -8,24 +8,18 @@ import logging
 import logging.handlers
 import os
 import tempfile
-import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
 import apps.backend.api.state as state
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from apps.backend.core.config import settings
 from apps.backend.core.memory import MemoryManager
-from apps.backend.core.models import AgentTask
-
 from apps.backend.api.routers import (
     autopilot,
     etsy,

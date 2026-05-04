@@ -4,9 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any
 
-from apps.backend.core.models import AgentResult, AgentStatus, AgentTask, TaskStatus
+from apps.backend.core.models import AgentResult, AgentStatus, AgentTask
 
 logger = logging.getLogger("agentpexi.pepe")
 

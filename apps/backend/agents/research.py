@@ -464,8 +464,6 @@ class ResearchAgent(AgentBase):
 
         Ritorna lista deduplicata di {"niche": str, "product_type": str, "source": str}
         """
-        import calendar as _cal
-
         now = datetime.now()
         # 1-4 in parallelo
         (

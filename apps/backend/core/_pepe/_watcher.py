@@ -1,7 +1,6 @@
 """Watcher and urgency mixin for Pepe."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 
