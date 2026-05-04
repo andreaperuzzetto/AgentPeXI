@@ -1168,8 +1168,7 @@ class FinanceAgent(AgentBase):
             try:
                 await self._telegram_broadcast(message)
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
     @staticmethod
     def _parse_json_response(text: str) -> dict | None:
         """Estrae e parsa il primo blocco JSON trovato nella risposta LLM."""

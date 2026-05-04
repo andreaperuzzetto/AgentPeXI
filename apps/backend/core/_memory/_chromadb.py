@@ -123,8 +123,7 @@ class ChromaDbMixin:
             if results:
                 return results
         except Exception:
-            pass
-
+            logger.exception("ChromaDB recent query (primary window) failed")
         # Tentativo 2 — finestra allargata
         cutoff_fallback = (
             datetime.now(timezone.utc) - timedelta(days=fallback_days)
@@ -144,9 +143,7 @@ class ChromaDbMixin:
                 )
                 return results
         except Exception:
-            pass
-
-        # Nessun dato recente disponibile
+            logger.exception("ChromaDB recent query (fallback window) failed")
         return []
 
     # ------------------------------------------------------------------
@@ -396,8 +393,7 @@ class ChromaDbMixin:
             if results:
                 return results
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         cutoff_fallback = (
             datetime.now(timezone.utc) - timedelta(days=fallback_days)
         ).strftime("%Y-%m-%d")
@@ -417,8 +413,7 @@ class ChromaDbMixin:
                 )
                 return results
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         return []
 
     async def get_personal_memory_stats(self) -> dict:

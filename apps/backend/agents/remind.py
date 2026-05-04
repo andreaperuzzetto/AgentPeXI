@@ -115,8 +115,7 @@ class RemindAgent(AgentBase):
             try:
                 await self._telegram_broadcast(message)
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
     # ------------------------------------------------------------------
     # Init Notion (lazy, una volta sola)
     # ------------------------------------------------------------------
@@ -300,8 +299,7 @@ class RemindAgent(AgentBase):
                 weight_delta=0.05,
             )
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         if trigger_at:
             _voice_when = self._format_rel_time(trigger_at)
             _reply_voice = f"Ok, ti ricordo di {text} {_voice_when}."

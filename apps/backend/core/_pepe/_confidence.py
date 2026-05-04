@@ -60,7 +60,7 @@ class ConfidenceMixin:
                             "ts": _dt.now(_tz.utc).isoformat(),
                         })
                     except Exception:
-                        pass
+                        logger.exception("Unexpected error")
             else:
                 reply = await self._synthesize_error(agent_name, error_msg, {}, missing_data)
             await self.memory.save_message(session_id, "assistant", reply, source)

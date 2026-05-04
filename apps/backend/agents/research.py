@@ -133,8 +133,7 @@ class ResearchAgent(AgentBase):
             try:
                 await self._telegram_broadcast(message)
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
     async def _get_entry_point_scorer(self):
         """
         Crea EntryPointScoring + MarketDataAgent leggendo mock_mode live da memory.mock_mode.
@@ -209,8 +208,7 @@ class ResearchAgent(AgentBase):
                             f"{sales} vendite, €{margin} margine netto"
                         )
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         # 2. Finance insight — economia di pricing (break-even, costo per listing)
         #    Critico per la pricing analysis: Research deve sapere il costo reale
         #    per listing e quante vendite servono per coprirlo.
@@ -243,8 +241,7 @@ class ResearchAgent(AgentBase):
                             f"Raccomanda prezzi che rendano questo realistico."
                         )
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         # 2. Direttiva strategica Finance (nicchie da scalare / abbandonare)
         try:
             directive_docs = await self.memory.query_chromadb_recent(
@@ -281,8 +278,7 @@ class ResearchAgent(AgentBase):
                     if to_abandon:
                         lines.append(f"  Nicchie da abbandonare: {to_abandon.replace('|', ', ')}")
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         if not lines:
             return ""
 
@@ -609,7 +605,7 @@ class ResearchAgent(AgentBase):
                     blocked.add(niche_lower)
                     continue
             except Exception:
-                pass
+                logger.exception("Unexpected error")
             deduped.append(c)
 
         # Se dedup ha svuotato tutto (cold-start o tutto già prodotto), ripristina i default

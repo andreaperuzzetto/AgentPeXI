@@ -146,8 +146,7 @@ class ResearchPersonalAgent(AgentBase):
             try:
                 await self._telegram_broadcast(message)
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
     # ------------------------------------------------------------------
     # run()
     # ------------------------------------------------------------------

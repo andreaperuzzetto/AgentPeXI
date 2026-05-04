@@ -131,8 +131,7 @@ def _play_elevenlabs_sync(text: str) -> bool:
             try:
                 os.unlink(tmp_path)
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
     except Exception as exc:
         logger.error("TTS ElevenLabs: errore (%s)", exc)
         return False

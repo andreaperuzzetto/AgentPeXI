@@ -656,8 +656,7 @@ class Scheduler:
                         msg += "\n📝 Sintesi settimanale personal_memory generata."
                     await self.pepe.notify_telegram(msg)
                 except Exception:
-                    pass
-
+                    logger.exception("Unexpected error")
             logger.info("Learning loop completato — decayed=%d synthesis=%s", decayed, synthesis_generated)
 
         except Exception as exc:
@@ -1015,13 +1014,12 @@ class Scheduler:
             try:
                 await self._telegram_broadcast(message)
             except Exception:
-                pass
+                logger.exception("Unexpected error")
         elif self.pepe and hasattr(self.pepe, "notify_telegram"):
             try:
                 await self.pepe.notify_telegram(message, priority=True)
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
     # ------------------------------------------------------------------
     # Blocco 4 / 5.3 — Etsy learning loop domenicale
     # ------------------------------------------------------------------
@@ -1204,4 +1202,4 @@ class Scheduler:
             try:
                 await self._ws_broadcast(event)
             except Exception:
-                pass
+                logger.exception("Unexpected error")

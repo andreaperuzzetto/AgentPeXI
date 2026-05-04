@@ -60,7 +60,7 @@ class ImageGenerator:
                 from apps.backend.core.config import settings as _settings
                 api_token = _settings.REPLICATE_API_KEY or None
             except Exception:
-                pass
+                logger.exception("Unexpected error")
         self._token = api_token or os.getenv("REPLICATE_API_KEY") or os.getenv("REPLICATE_API_TOKEN")
         self._available = bool(self._token)
         if not self._available:
@@ -350,7 +350,7 @@ class NanaBananaGenerator:
                 from apps.backend.core.config import settings as _settings
                 api_key = _settings.FAL_KEY or None
             except Exception:
-                pass
+                logger.exception("Unexpected error")
         self._api_key = api_key or os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY")
         self._available = bool(self._api_key)
         if self._available:

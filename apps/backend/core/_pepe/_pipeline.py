@@ -109,12 +109,7 @@ class PipelineMixin:
                     f"• Scegliere una nicchia diversa"
                 )
         except Exception:
-            pass
-
-        return None
-
-    # ------------------------------------------------------------------
-    # Pipeline & analytics summary (Intervento 6)
+            logger.exception("Duplicate check failed — proceeding without duplicate detection")
     # ------------------------------------------------------------------
 
     async def _get_pipeline_summary(self) -> str:
@@ -189,7 +184,7 @@ class PipelineMixin:
                         weight_delta=weight_delta,
                     )
                 except Exception:
-                    pass
+                    logger.exception("Unexpected error")
             await self.memory.delete_pending_action("urgency_proposal")
             if normalized in yes_words:
                 # Segnala a Pepe di gestire — per ora risposta testuale

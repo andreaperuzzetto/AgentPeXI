@@ -867,8 +867,7 @@ class PublisherAgent(AgentBase):
                     for f in failures[:5]
                 ]
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         # 3. ChromaDB — success pattern recenti per niche simili
         try:
             successes = await self.memory.query_chromadb_recent(
@@ -887,8 +886,7 @@ class PublisherAgent(AgentBase):
                     for s in successes
                 ]
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         # 4. Analytics DB — niche simili con 0 vendite dopo views
         try:
             failed_listings = await self.memory.get_stale_listings_without_sales(
@@ -969,4 +967,4 @@ class PublisherAgent(AgentBase):
             try:
                 await self._telegram_broadcast(message)
             except Exception:
-                pass
+                logger.exception("Unexpected error")

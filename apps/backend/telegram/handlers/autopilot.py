@@ -157,17 +157,14 @@ async def handle_approval_callback(
             await query.edit_message_reply_markup(reply_markup=None)
             await query.message.reply_text(f"✅ Approvazione registrata per item {item_id}.")
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
     elif action == "skip":
         loop.register_approval(item_id, "skipped_user")
         try:
             await query.edit_message_reply_markup(reply_markup=None)
             await query.message.reply_text(f"⏭ Skip registrato per item {item_id}.")
         except Exception:
-            pass
-
-
+            logger.exception("Unexpected error")
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------

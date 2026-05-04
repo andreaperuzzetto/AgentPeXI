@@ -363,5 +363,5 @@ class EntryPointScoring:
             if row:
                 return int(row["value"])
         except Exception:
-            pass
+            logger.exception("Unexpected error")
         return _DEFAULT_COOLDOWN_DAYS

@@ -280,7 +280,7 @@ async def cmd_screen(
                 from datetime import datetime
                 last_time = datetime.fromisoformat(last_time).strftime("%d/%m %H:%M")
             except Exception:
-                pass
+                logger.exception("Unexpected error")
         await update.message.reply_text(
             f"{icon} *Screen Watcher*: {stato}\n\n"
             f"📸 Catture oggi: {st['captures_today']}\n"

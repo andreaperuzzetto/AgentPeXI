@@ -136,10 +136,7 @@ class AutopilotLoop:
             if row:
                 return {"niche": row[0], "product_type": row[1]}
         except Exception:
-            pass
-        return None
-
-    async def _default_bundle_checker(self) -> dict | None:
+            logger.exception("_default_niche_picker failed — no niche selected")(self) -> dict | None:
         """Placeholder — BundleStrategy implementata in Block 4."""
         return None
 

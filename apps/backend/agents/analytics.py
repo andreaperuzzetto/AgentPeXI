@@ -866,8 +866,7 @@ class AnalyticsAgent(AgentBase):
             try:
                 await self._telegram_broadcast(message)
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
     # ------------------------------------------------------------------
     # Confidence scoring
     # ------------------------------------------------------------------
@@ -969,8 +968,7 @@ class AnalyticsAgent(AgentBase):
                     template     = ml.get("template") or ""
                     color_scheme = ml.get("color_scheme") or ""
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
             await db.execute(
                 """
                 INSERT INTO listing_performance

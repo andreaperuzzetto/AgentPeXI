@@ -186,7 +186,7 @@ class ScreenWatcher:
                                 f"Ultimo: {exc}\n\nIl watcher continua a girare."
                             )
                         except Exception:
-                            pass
+                            logger.exception("Unexpected error")
             await asyncio.sleep(30)
 
     async def _check_and_capture(self) -> None:
@@ -419,8 +419,7 @@ class ScreenWatcher:
                         "last_capture_app": app_name,
                     })
                 except Exception:
-                    pass
-
+                    logger.exception("Unexpected error")
     # ------------------------------------------------------------------
     # Blocklist check
     # ------------------------------------------------------------------
@@ -438,8 +437,7 @@ class ScreenWatcher:
                     "last_capture_app": self._last_capture_app,
                 })
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
     def _is_blocked(self, app_name: str, bundle_id: str) -> bool:
         """Controlla se l'app è nella blocklist."""
         if bundle_id in self._blocklist_bundles:

@@ -768,8 +768,7 @@ Return exactly:
                             raise ValueError(f"Invalid hex: {val}")
                     return data
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         return {
             "primary": preset_data["accent_color"],
             "secondary": preset_data["bg_color"],
@@ -863,8 +862,7 @@ Respond with ONLY the template name, exactly as listed."""
             if result in templates:
                 return result
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         return templates[0]
 
     async def _should_include_dates(
@@ -1073,7 +1071,7 @@ Respond with ONLY: dated or undated"""
                     result["low_ctr_combos"] = low_ctr_combos
                 return result
         except Exception:
-            pass
+            logger.exception("Unexpected error")
         return None
 
     # ------------------------------------------------------------------

@@ -112,8 +112,7 @@ class ContextMixin:
                     event["timestamp"] = datetime.now(timezone.utc).isoformat()
                 await self._ws_broadcast(event)
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
     async def _broadcast_context_update(
         self,
         confidence: float | None = None,
@@ -138,8 +137,7 @@ class ContextMixin:
             for agent_name in self._agents:
                 failure_count += await self.memory.get_agent_error_count(agent_name, hours=1)
         except Exception:
-            pass
-
+            logger.exception("Unexpected error")
         # Determina next_action dal registro stato agenti
         if next_action is None:
             running_agents = [
@@ -371,8 +369,7 @@ class ContextMixin:
                         for d in failure_docs
                     ]
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
             # Success pattern recenti da ChromaDB
             try:
                 successes = await self.memory.query_chromadb_recent(
@@ -391,8 +388,7 @@ class ContextMixin:
                         for d in successes
                     ]
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
             # Design outcome recenti da ChromaDB
             try:
                 design_wins = await self.memory.query_chromadb_recent(
@@ -411,8 +407,7 @@ class ContextMixin:
                         for d in design_wins
                     ]
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
             # Performance storica nicchie simili da etsy_listings
             try:
                 if hasattr(self.memory, "get_listings_by_niche"):
@@ -429,8 +424,7 @@ class ContextMixin:
                             for l in existing[:5]
                         ]
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
         # Per Design Agent: inietta sempre research_context se presente in sessione
         if agent_name == "design" and not enriched.get("research_context"):
             try:
@@ -446,6 +440,5 @@ class ContextMixin:
                         "cached_summary": cached[0].get("document", "")
                     }
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
         return enriched

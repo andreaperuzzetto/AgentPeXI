@@ -135,8 +135,7 @@ class LlmMixin:
                     "duration_ms": duration_ms,
                 })
             except Exception:
-                pass
-
+                logger.exception("Unexpected error")
         logger.debug(
             "_pepe_llm_call [%s]: model=%s in=%d out=%d cost=$%.5f dur=%dms",
             label, model, input_tokens, output_tokens, cost_usd, duration_ms,
