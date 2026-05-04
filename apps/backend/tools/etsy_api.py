@@ -15,7 +15,7 @@ import httpx
 from cryptography.fernet import Fernet
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -27,6 +27,14 @@ logger = logging.getLogger("agentpexi.etsy_api")
 
 ETSY_BASE_URL = "https://api.etsy.com/v3"
 ETSY_TOKEN_URL = "https://api.etsy.com/v3/public/oauth/token"
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Riprova solo su 429 (rate limit) o 5xx (server error), non su 4xx client error."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or code >= 500
+    return False
 
 
 class EtsyAPIError(Exception):
@@ -386,7 +394,7 @@ class EtsyAPI:
     # ------------------------------------------------------------------
 
     @retry(
-        retry=retry_if_exception_type(httpx.HTTPStatusError),
+        retry=retry_if_exception(_is_retryable),
         wait=wait_exponential(multiplier=1, min=2, max=60),
         stop=stop_after_attempt(5),
         reraise=True,
