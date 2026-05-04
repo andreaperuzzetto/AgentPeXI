@@ -374,20 +374,19 @@ async def lifespan(app: FastAPI):
     )
     pepe.register_agent("research_personal", research_personal_agent)
 
-    # 2i. ScreenWatcher — TEMPORANEAMENTE DISABILITATO per debug event loop
+    # 2i. ScreenWatcher
     _screen_watcher_error: str | None = None
-    screen_watcher = None
-    # screen_watcher = ScreenWatcher(
-    #     memory=memory,
-    #     ws_broadcaster=ws_manager.broadcast,
-    # )
-    # try:
-    #     await screen_watcher.start()
-    #     logger.info("ScreenWatcher avviato")
-    # except Exception as exc:
-    #     logger.warning("ScreenWatcher non avviato: %s", exc)
-    #     _screen_watcher_error = str(exc)
-    #     screen_watcher = None
+    screen_watcher = ScreenWatcher(
+        memory=memory,
+        ws_broadcaster=ws_manager.broadcast,
+    )
+    try:
+        await screen_watcher.start()
+        logger.info("ScreenWatcher avviato")
+    except Exception as exc:
+        logger.warning("ScreenWatcher non avviato: %s", exc)
+        _screen_watcher_error = str(exc)
+        screen_watcher = None
 
     # ---------------------------------------------------------------------------
     # 2j. Callable per AutopilotLoop — design_pipeline + niche_picker
