@@ -92,21 +92,22 @@ function InfraRow() {
   const [mcp, setMcp] = useState<McpStatus | null>(null)
   const [mem, setMem] = useState<MemStats  | null>(null)
 
-  const fetchAll = useCallback(() => {
-    fetch('/api/personal/mcp/status')
+  const fetchAll = useCallback((signal?: AbortSignal) => {
+    fetch('/api/personal/mcp/status', { signal })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d) setMcp(d) })
-      .catch(() => {})
-    fetch('/api/memory/stats')
+      .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
+    fetch('/api/memory/stats', { signal })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d?.chroma) setMem(d.chroma) })
-      .catch(() => {})
+      .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
   }, [])
 
   useEffect(() => {
-    fetchAll()
-    const id = setInterval(fetchAll, 120_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchAll(controller.signal)
+    const id = setInterval(() => fetchAll(controller.signal), 120_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [fetchAll])
 
   const personalCount = mem?.by_collection?.['personal_memory'] ?? '—'
@@ -175,17 +176,18 @@ interface Reminder { id: string | number; message: string; when: string; status:
 function RemindersSection() {
   const [items, setItems] = useState<Reminder[]>([])
 
-  const fetchReminders = useCallback(() => {
-    fetch('/api/personal/reminders?limit=10')
+  const fetchReminders = useCallback((signal?: AbortSignal) => {
+    fetch('/api/personal/reminders?limit=10', { signal })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d?.items) setItems(d.items) })
-      .catch(() => {})
+      .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
   }, [])
 
   useEffect(() => {
-    fetchReminders()
-    const id = setInterval(fetchReminders, 60_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchReminders(controller.signal)
+    const id = setInterval(() => fetchReminders(controller.signal), 60_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [fetchReminders])
 
   return (
@@ -243,17 +245,18 @@ interface RecallItem { timestamp: string; agent: string; query: string; status: 
 function RecallFeed() {
   const [items, setItems] = useState<RecallItem[]>([])
 
-  const fetchRecalls = useCallback(() => {
-    fetch('/api/personal/recalls?limit=10')
+  const fetchRecalls = useCallback((signal?: AbortSignal) => {
+    fetch('/api/personal/recalls?limit=10', { signal })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d?.items) setItems(d.items) })
-      .catch(() => {})
+      .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
   }, [])
 
   useEffect(() => {
-    fetchRecalls()
-    const id = setInterval(fetchRecalls, 30_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchRecalls(controller.signal)
+    const id = setInterval(() => fetchRecalls(controller.signal), 30_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [fetchRecalls])
 
   return (
@@ -354,17 +357,18 @@ function ScreenWatcherCard() {
   const [toggling, setToggling] = useState(false)
   const watcherStep = useStore((s) => s.agentSteps['watcher'])
 
-  const fetchStatus = useCallback(() => {
-    fetch('/api/screen/status')
+  const fetchStatus = useCallback((signal?: AbortSignal) => {
+    fetch('/api/screen/status', { signal })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d) setSt(d) })
-      .catch(() => {})
+      .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
   }, [])
 
   useEffect(() => {
-    fetchStatus()
-    const id = setInterval(fetchStatus, 30_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchStatus(controller.signal)
+    const id = setInterval(() => fetchStatus(controller.signal), 30_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [fetchStatus])
 
   const handleToggle = async () => {

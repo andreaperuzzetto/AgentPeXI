@@ -59,16 +59,20 @@ export function SchedulerPanel() {
   const [items, setItems] = useState<QueueItem[]>([])
   const [filter, setFilter] = useState<string>('all')
 
-  const fetchQueue = () =>
-    fetch('/api/production-queue?limit=50')
+  const fetchQueue = (signal?: AbortSignal) =>
+    fetch('/api/production-queue?limit=50', { signal })
       .then((r) => (r.ok ? r.json() : { items: [] }))
       .then((data) => setItems(Array.isArray(data.items) ? data.items : []))
-      .catch(() => setItems([]))
+      .catch((e: unknown) => {
+        if ((e as DOMException).name === 'AbortError') return
+        setItems([])
+      })
 
   useEffect(() => {
-    fetchQueue()
-    const id = setInterval(fetchQueue, 20_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchQueue(controller.signal)
+    const id = setInterval(() => fetchQueue(controller.signal), 20_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [])
 
   const statusFilters: { key: string; label: string }[] = [

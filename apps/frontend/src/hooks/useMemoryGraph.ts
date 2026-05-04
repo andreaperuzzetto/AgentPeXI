@@ -17,8 +17,8 @@ interface GraphAPIResponse {
   edges: GraphEdge[]
 }
 
-async function fetchGraph(): Promise<GraphAPIResponse> {
-  const r = await fetch('/api/memory/graph?threshold=0.68')
+async function fetchGraph(signal?: AbortSignal): Promise<GraphAPIResponse> {
+  const r = await fetch('/api/memory/graph?threshold=0.68', { signal })
   if (!r.ok) throw new Error(`graph fetch ${r.status}`)
   return r.json() as Promise<GraphAPIResponse>
 }
@@ -38,11 +38,14 @@ export function useMemoryGraph() {
 
   /* Initial fetch + 60s polling */
   useEffect(() => {
+    const controller = new AbortController()
+
     async function load() {
       try {
-        const data = await fetchGraph()
+        const data = await fetchGraph(controller.signal)
         applyGraph(data)
-      } catch {
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
         // API unavailable — use mock data
         useStore.getState().setMemoryGraph({ nodes: MOCK_NODES, edges: MOCK_EDGES })
       }
@@ -51,7 +54,7 @@ export function useMemoryGraph() {
     load()
     intervalRef.current = setInterval(load, 60_000)
 
-    return () => clearInterval(intervalRef.current)
+    return () => { clearInterval(intervalRef.current); controller.abort() }
   }, [])
 
   /* WS activation — memory_query events pulse matching nodes */

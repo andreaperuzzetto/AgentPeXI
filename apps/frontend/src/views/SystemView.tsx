@@ -602,17 +602,18 @@ function formatJobTime(iso: string | null | undefined): string {
 function SchedulerJobsPanel() {
   const [jobs, setJobs] = useState<SchedulerJob[]>([])
 
-  const fetchJobs = useCallback(() => {
-    fetch('/api/scheduler/jobs')
+  const fetchJobs = useCallback((signal?: AbortSignal) => {
+    fetch('/api/scheduler/jobs', { signal })
       .then((r) => r.ok ? r.json() : { jobs: [] })
       .then((d) => setJobs(Array.isArray(d.jobs) ? d.jobs : []))
-      .catch(() => {})
+      .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
   }, [])
 
   useEffect(() => {
-    fetchJobs()
-    const id = setInterval(fetchJobs, 30_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchJobs(controller.signal)
+    const id = setInterval(() => fetchJobs(controller.signal), 30_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [fetchJobs])
 
   return (
@@ -692,22 +693,23 @@ function ConfigPanel() {
   const [autopilot,  setAutopilot]  = useState<{ status: string; items_today: number } | null>(null)
   const budgetMax = useStore((s) => s.budgetMonthlyUsd)
 
-  const refresh = useCallback(() => {
-    fetch('/api/mock/status')
+  const refresh = useCallback((signal?: AbortSignal) => {
+    fetch('/api/mock/status', { signal })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d) setMockMode(d.mock_mode) })
-      .catch(() => {})
+      .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
 
-    fetch('/api/autopilot/status')
+    fetch('/api/autopilot/status', { signal })
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d) setAutopilot({ status: d.status ?? '—', items_today: d.items_today ?? 0 }) })
-      .catch(() => {})
+      .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
   }, [])
 
   useEffect(() => {
-    refresh()
-    const id = setInterval(refresh, 30_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    refresh(controller.signal)
+    const id = setInterval(() => refresh(controller.signal), 30_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [refresh])
 
   const configRows: Array<{ label: string; value: string }> = [
@@ -765,8 +767,8 @@ export function SystemView() {
   const handleClose = useCallback(() => setSelectedDef(null), [])
 
   useEffect(() => {
-    const fetchAgents = () =>
-      fetch('/api/agents')
+    const fetchAgents = (signal?: AbortSignal) =>
+      fetch('/api/agents', { signal })
         .then((r) => r.ok ? r.json() : null)
         .then((d) => {
           if (!d?.agents) return
@@ -774,20 +776,21 @@ export function SystemView() {
             setAgentStatus(name, status as 'idle' | 'running' | 'error')
           })
         })
-        .catch(() => {})
+        .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
 
-    const fetchAutopilot = () =>
-      fetch('/api/autopilot/status')
+    const fetchAutopilot = (signal?: AbortSignal) =>
+      fetch('/api/autopilot/status', { signal })
         .then((r) => r.ok ? r.json() : null)
         .then((d) => {
           if (d?.status) setAutopilotStatus(d.status, d.current_niche ?? null)
         })
-        .catch(() => {})
+        .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
 
-    fetchAgents(); fetchAutopilot()
-    const id1 = setInterval(fetchAgents, 15_000)
-    const id2 = setInterval(fetchAutopilot, 30_000)
-    return () => { clearInterval(id1); clearInterval(id2) }
+    const controller = new AbortController()
+    fetchAgents(controller.signal); fetchAutopilot(controller.signal)
+    const id1 = setInterval(() => fetchAgents(controller.signal), 15_000)
+    const id2 = setInterval(() => fetchAutopilot(controller.signal), 30_000)
+    return () => { clearInterval(id1); clearInterval(id2); controller.abort() }
   }, [setAgentStatus, setAutopilotStatus])
 
   return (

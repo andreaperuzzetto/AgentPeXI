@@ -102,14 +102,15 @@ export function AdsStatus() {
   const budgetMonthlyUsd = useStore(s => s.budgetMonthlyUsd)
   const dailySlice = budgetMonthlyUsd > 0 ? `$${(budgetMonthlyUsd / 30).toFixed(2)}` : '—'
 
-  const fetchStatus = useCallback(async () => {
+  const fetchStatus = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/etsy/ads-status')
+      const res = await fetch('/api/etsy/ads-status', { signal })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json() as AdsStatusData
       setData(json)
       setError(null)
-    } catch {
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return
       setError('Connessione fallita. Riprova.')
     } finally {
       setLoading(false)
@@ -117,9 +118,10 @@ export function AdsStatus() {
   }, [])
 
   useEffect(() => {
-    void fetchStatus()
-    const id = setInterval(() => { void fetchStatus() }, 60_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    void fetchStatus(controller.signal)
+    const id = setInterval(() => { void fetchStatus(controller.signal) }, 60_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [fetchStatus])
 
   /* CTR color: green if ≥2%, amber if ≥1%, muted if < 1% or null */

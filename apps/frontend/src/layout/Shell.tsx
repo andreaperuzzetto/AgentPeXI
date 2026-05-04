@@ -150,8 +150,8 @@ export function Shell() {
 
   // ── Periodic fetches: costs / analytics / chroma ogni 30s ─────────────────
   useEffect(() => {
-    const fetchCosts = () =>
-      fetch('/api/costs?days=30')
+    const fetchCosts = (signal?: AbortSignal) =>
+      fetch('/api/costs?days=30', { signal })
         .then((r) => r.ok ? r.json() : null)
         .then((data) => {
           if (!data?.breakdown) return
@@ -181,28 +181,30 @@ export function Shell() {
           if (typeof b.image_cost_today === 'number') setImageCostToday(b.image_cost_today)
           if (typeof b.fee_cost_today   === 'number') setFeeCostToday(b.fee_cost_today)
         })
-        .catch(() => {})
+        .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
 
-    const fetchAnalytics = () =>
-      fetch('/api/analytics/summary?days=14')
+    const fetchAnalytics = (signal?: AbortSignal) =>
+      fetch('/api/analytics/summary?days=14', { signal })
         .then((r) => r.ok ? r.json() : null)
         .then((data) => {
           if (data?.summary) { setAnalyticsSummary(data.summary); return }
           if (import.meta.env.DEV) setAnalyticsSummary({ days: 14, total: 263, completed: 263, failed: 0, running: 0, by_status: {}, per_day: {}, per_agent: {}, production_queue: {} })
         })
-        .catch(() => {
+        .catch((e: unknown) => {
+          if ((e as DOMException).name === 'AbortError') return
           if (import.meta.env.DEV) setAnalyticsSummary({ days: 14, total: 263, completed: 263, failed: 0, running: 0, by_status: {}, per_day: {}, per_agent: {}, production_queue: {} })
         })
 
-    const fetchChroma = () =>
-      fetch('/api/memory/stats')
+    const fetchChroma = (signal?: AbortSignal) =>
+      fetch('/api/memory/stats', { signal })
         .then((r) => r.ok ? r.json() : null)
         .then((data) => { if (data?.chroma) setChromaStats(data.chroma) })
-        .catch(() => {})
+        .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
 
-    fetchCosts(); fetchAnalytics(); fetchChroma()
-    const id = setInterval(() => { fetchCosts(); fetchAnalytics(); fetchChroma() }, 30_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchCosts(controller.signal); fetchAnalytics(controller.signal); fetchChroma(controller.signal)
+    const id = setInterval(() => { fetchCosts(controller.signal); fetchAnalytics(controller.signal); fetchChroma(controller.signal) }, 30_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [setCostsData, setAnalyticsSummary, setChromaStats, setImageCostToday, setFeeCostToday])
 
   return (

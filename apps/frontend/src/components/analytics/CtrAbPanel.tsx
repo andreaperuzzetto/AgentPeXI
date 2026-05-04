@@ -72,8 +72,8 @@ export function CtrAbPanel() {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState<string | null>(null)
 
-  const fetchData = () => {
-    fetch('/api/analytics/ctr-ab?limit=20')
+  const fetchData = (signal?: AbortSignal) => {
+    fetch('/api/analytics/ctr-ab?limit=20', { signal })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
@@ -84,15 +84,17 @@ export function CtrAbPanel() {
         setError(null)
       })
       .catch((e: Error) => {
+        if ((e as DOMException).name === 'AbortError') return
         setError(e.message)
         setLoading(false)
       })
   }
 
   useEffect(() => {
-    fetchData()
-    const id = setInterval(fetchData, 60_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchData(controller.signal)
+    const id = setInterval(() => fetchData(controller.signal), 60_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [])
 
   const TH_STYLE: React.CSSProperties = {

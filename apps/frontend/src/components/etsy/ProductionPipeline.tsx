@@ -252,14 +252,15 @@ export function ProductionPipeline() {
   const [nicheFilter,  setNicheFilter]  = useState('')
 
   /* Fetch */
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/production-queue?limit=200')
+      const res = await fetch('/api/production-queue?limit=200', { signal })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json() as { items: ProductionQueueItem[] }
       setItems(data.items ?? [])
       setError(null)
-    } catch {
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return
       setError('Connessione fallita. Riprova.')
     } finally {
       setLoading(false)
@@ -267,9 +268,10 @@ export function ProductionPipeline() {
   }, [])
 
   useEffect(() => {
-    void fetchItems()
-    const id = setInterval(() => { void fetchItems() }, 20_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    void fetchItems(controller.signal)
+    const id = setInterval(() => { void fetchItems(controller.signal) }, 20_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [fetchItems])
 
   /* ── Pipeline bar segments ── */

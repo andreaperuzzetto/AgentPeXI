@@ -25,19 +25,23 @@ export function ListingsPanel() {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    const fetchListings = () =>
-      fetch('/api/listings')
+    const fetchListings = (signal?: AbortSignal) =>
+      fetch('/api/listings', { signal })
         .then((r) => (r.ok ? r.json() : { listings: [] }))
         .then((data) => {
           const items = data?.listings ?? (Array.isArray(data) ? data : [])
           setListings(items)
           setLoaded(true)
         })
-        .catch(() => { setListings([]); setLoaded(true) })
+        .catch((e: unknown) => {
+          if ((e as DOMException).name === 'AbortError') return
+          setListings([]); setLoaded(true)
+        })
 
-    fetchListings()
-    const id = setInterval(fetchListings, 30_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchListings(controller.signal)
+    const id = setInterval(() => fetchListings(controller.signal), 30_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [])
 
   return (

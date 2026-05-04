@@ -354,34 +354,35 @@ export function PersonalPanel() {
   const [ollama, setOllama] = useState<OllamaStatus | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const fetchAll = (): Promise<void> => {
+  const fetchAll = (signal?: AbortSignal): Promise<void> => {
     return Promise.allSettled([
-      fetch('/api/personal/recalls?limit=8')
+      fetch('/api/personal/recalls?limit=8', { signal })
         .then((r) => r.ok ? r.json() : { items: [] })
         .then((d) => setActivity(Array.isArray(d.items) ? d.items : []))
-        .catch(() => {}),
+        .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return }),
 
-      fetch('/api/personal/reminders?limit=10')
+      fetch('/api/personal/reminders?limit=10', { signal })
         .then((r) => r.ok ? r.json() : { items: [] })
         .then((d) => setReminders(Array.isArray(d.items) ? d.items : []))
-        .catch(() => {}),
+        .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return }),
 
-      fetch('/api/personal/mcp/status')
+      fetch('/api/personal/mcp/status', { signal })
         .then((r) => r.ok ? r.json() : null)
         .then((d) => { if (d) setMcp(d) })
-        .catch(() => {}),
+        .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return }),
 
-      fetch('/api/ollama/status')
+      fetch('/api/ollama/status', { signal })
         .then((r) => r.ok ? r.json() : null)
         .then((d) => { if (d) setOllama(d) })
-        .catch(() => {}),
+        .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return }),
     ]).then(() => {})
   }
 
   useEffect(() => {
-    fetchAll().finally(() => setLoading(false))
-    const id = setInterval(fetchAll, 30_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchAll(controller.signal).finally(() => setLoading(false))
+    const id = setInterval(() => fetchAll(controller.signal), 30_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [])
 
   return (

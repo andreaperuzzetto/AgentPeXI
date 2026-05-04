@@ -100,15 +100,17 @@ export function PersonalQuickCard({ onOpen }: { onOpen?: () => void }) {
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
 
     const fetchAll = async () => {
       try {
-        const r = await fetch('/api/personal/reminders?limit=10')
+        const r = await fetch('/api/personal/reminders?limit=10', { signal: controller.signal })
         if (!cancelled) {
           const d = r.ok ? await r.json() : { items: [] }
           setReminders(Array.isArray(d.items) ? d.items : [])
         }
-      } catch {
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
         if (!cancelled && import.meta.env.DEV) {
           setReminders([
             { id: 1, message: 'Check analytics dashboard', when: new Date(Date.now() + 2 * 3600_000).toISOString(), status: 'pending' },
@@ -118,29 +120,33 @@ export function PersonalQuickCard({ onOpen }: { onOpen?: () => void }) {
       }
 
       try {
-        const r = await fetch('/api/personal/recalls?limit=1')
+        const r = await fetch('/api/personal/recalls?limit=1', { signal: controller.signal })
         if (!cancelled) {
           const d = r.ok ? await r.json() : { items: [] }
           setLastRecall(Array.isArray(d.items) && d.items.length ? d.items[0] : null)
         }
-      } catch {
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
         if (!cancelled && import.meta.env.DEV) {
           setLastRecall({ timestamp: new Date(Date.now() - 3 * 60_000).toISOString(), agent: 'recall', query: 'branding handmade', status: 'ok' })
         }
       }
 
       try {
-        const r = await fetch('/api/personal/mcp/status')
+        const r = await fetch('/api/personal/mcp/status', { signal: controller.signal })
         if (!cancelled) {
           const d = r.ok ? await r.json() : null
           if (d) setMcp(d)
         }
-      } catch { /* stay null */ }
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        /* stay null */
+      }
     }
 
     fetchAll()
     const id = setInterval(fetchAll, 30_000)
-    return () => { cancelled = true; clearInterval(id) }
+    return () => { cancelled = true; clearInterval(id); controller.abort() }
   }, [])
 
   /* ── Etsy: last pipeline step ── */

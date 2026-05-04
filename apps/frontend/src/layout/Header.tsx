@@ -158,15 +158,18 @@ export function Header() {
   // Fetch autopilot status al mount e ogni 15s come fallback al WS
   const autopilotPollRef = useRef<ReturnType<typeof setInterval>>(undefined)
   useEffect(() => {
-    const fetchStatus = () => {
-      fetch('/api/autopilot/status')
+    const fetchStatus = (signal?: AbortSignal) => {
+      fetch('/api/autopilot/status', { signal })
         .then((r) => r.ok ? r.json() : null)
         .then((data) => { if (data?.status) setAutopilotStatus(data.status, data.current_niche ?? null) })
-        .catch(() => {})
+        .catch((e: unknown) => {
+          if ((e as DOMException).name === 'AbortError') return
+        })
     }
-    fetchStatus()
-    autopilotPollRef.current = setInterval(fetchStatus, 15_000)
-    return () => clearInterval(autopilotPollRef.current)
+    const controller = new AbortController()
+    fetchStatus(controller.signal)
+    autopilotPollRef.current = setInterval(() => fetchStatus(controller.signal), 15_000)
+    return () => { clearInterval(autopilotPollRef.current); controller.abort() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

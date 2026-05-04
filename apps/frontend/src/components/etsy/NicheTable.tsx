@@ -209,14 +209,15 @@ export function NicheTable() {
   const [nicheFilter, setNicheFilter] = useState('')
   const [sortKey,     setSortKey]     = useState<SortKey>('entry_score')
 
-  const fetchNiches = useCallback(async () => {
+  const fetchNiches = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/etsy/niches')
+      const res = await fetch('/api/etsy/niches', { signal })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json() as { niches: NicheItem[] }
       setNiches(data.niches ?? [])
       setError(null)
-    } catch {
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return
       setError('Connessione fallita. Riprova.')
     } finally {
       setLoading(false)
@@ -224,9 +225,10 @@ export function NicheTable() {
   }, [])
 
   useEffect(() => {
-    void fetchNiches()
-    const id = setInterval(() => { void fetchNiches() }, 60_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    void fetchNiches(controller.signal)
+    const id = setInterval(() => { void fetchNiches(controller.signal) }, 60_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [fetchNiches])
 
   /* ── Filtered + sorted rows ── */

@@ -135,8 +135,8 @@ export function LadderSummary() {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState<string | null>(null)
 
-  const fetchData = () => {
-    fetch('/api/analytics/ladder')
+  const fetchData = (signal?: AbortSignal) => {
+    fetch('/api/analytics/ladder', { signal })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
@@ -147,15 +147,17 @@ export function LadderSummary() {
         setError(null)
       })
       .catch((e: Error) => {
+        if ((e as DOMException).name === 'AbortError') return
         setError(e.message)
         setLoading(false)
       })
   }
 
   useEffect(() => {
-    fetchData()
-    const id = setInterval(fetchData, 60_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchData(controller.signal)
+    const id = setInterval(() => fetchData(controller.signal), 60_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [])
 
   const pieData = data

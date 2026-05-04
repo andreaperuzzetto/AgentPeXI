@@ -287,15 +287,16 @@ export function BundleStatus() {
   const [error,    setError]    = useState<string | null>(null)
   const [cachedAt, setCachedAt] = useState<number | null>(null)
 
-  const fetchBundles = useCallback(async () => {
+  const fetchBundles = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/etsy/bundles')
+      const res = await fetch('/api/etsy/bundles', { signal })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json() as { bundles: BundleItem[]; cached_at: number | null }
       setBundles(data.bundles ?? [])
       setCachedAt(data.cached_at ?? null)
       setError(null)
-    } catch {
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return
       setError('Connessione fallita. Riprova.')
     } finally {
       setLoading(false)
@@ -303,10 +304,11 @@ export function BundleStatus() {
   }, [])
 
   useEffect(() => {
-    void fetchBundles()
+    const controller = new AbortController()
+    void fetchBundles(controller.signal)
     /* Polling ogni 5 min — il server ha cache 10 min */
-    const id = setInterval(() => { void fetchBundles() }, 5 * 60_000)
-    return () => clearInterval(id)
+    const id = setInterval(() => { void fetchBundles(controller.signal) }, 5 * 60_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [fetchBundles])
 
   return (

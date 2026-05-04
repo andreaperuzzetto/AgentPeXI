@@ -136,8 +136,8 @@ export function FinancePanel() {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState<string | null>(null)
 
-  const fetchData = () => {
-    fetch('/api/finance/summary')
+  const fetchData = (signal?: AbortSignal) => {
+    fetch('/api/finance/summary', { signal })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
@@ -148,15 +148,17 @@ export function FinancePanel() {
         setError(null)
       })
       .catch((e: Error) => {
+        if ((e as DOMException).name === 'AbortError') return
         setError(e.message)
         setLoading(false)
       })
   }
 
   useEffect(() => {
-    fetchData()
-    const id = setInterval(fetchData, 60_000)
-    return () => clearInterval(id)
+    const controller = new AbortController()
+    fetchData(controller.signal)
+    const id = setInterval(() => fetchData(controller.signal), 60_000)
+    return () => { clearInterval(id); controller.abort() }
   }, [])
 
   const totalFees = data
