@@ -20,7 +20,22 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from apps.backend.core.config import settings
-from apps.backend.core.memory import MemoryManager
+from apps.backend.core.memory import MemoryManager  # noqa: F401 — used by routes via state
+from apps.backend.core.startup import (
+    init_memory,
+    init_tools,
+    init_storage,
+    init_pepe,
+    init_wiki,
+    init_etsy,
+    init_autonomy_services,
+    init_all_agents,
+    init_screen_watcher,
+    build_autopilot_callables,
+    init_autopilot_loop,
+    init_scheduler,
+    init_telegram_bot,
+)
 from apps.backend.api.routers import (
     autopilot,
     etsy,
@@ -76,67 +91,16 @@ logger = logging.getLogger("agentpexi.api")
 async def lifespan(app: FastAPI):
     """Startup: MemoryManager, Pepe, workers, Telegram bot. Shutdown: graceful stop."""
 
-    from apps.backend.core.pepe import Pepe
-    from apps.backend.core.scheduler import Scheduler
-    from apps.backend.core.storage import StorageManager
-    from apps.backend.telegram.bot import TelegramBot
-    from apps.backend.telegram.dependencies import BotDependencies
-    from apps.backend.tools.etsy_api import EtsyAPI
-    from apps.backend.agents.research import ResearchAgent
-    from apps.backend.agents.design import DesignAgent
-    from apps.backend.agents.publisher import PublisherAgent
-    from apps.backend.agents.analytics import AnalyticsAgent
-    from apps.backend.agents.finance import FinanceAgent
-    from apps.backend.core.learning_loop import LearningLoop
-    from apps.backend.core.bundle_strategy import BundleStrategy
-    from apps.backend.core.etsy_ads import EtsyAdsManager
-    from apps.backend.core.finance_tracker import FinanceTracker
-    from apps.backend.core.shop_optimizer import ShopProfileOptimizer
-    from apps.backend.agents.recall import RecallAgent
-    from apps.backend.agents.remind import RemindAgent
-    from apps.backend.agents.summarize import SummarizeAgent
-    from apps.backend.agents.research_personal import ResearchPersonalAgent
-    from apps.backend.screen.watcher import ScreenWatcher
-    from apps.backend.tools.notion_calendar import NotionCalendar
-    from apps.backend.tools.web_search import WebSearchTool
-    from apps.backend.tools.text_extract import TextExtractor
+    # ── Phase 1: Memory + tools + storage ──────────────────────────────────
+    state.memory = await init_memory(settings, state.ws_manager.broadcast)
+    notion_calendar, web_search, text_extractor = await init_tools(settings)
+    state.storage = await init_storage()
 
-    # 1. MemoryManager
-    state.memory = MemoryManager()
-    await state.memory.init()
-    # Inietta WS broadcaster per eventi memory_query (neural brain live activation)
-    state.memory.set_ws_broadcaster(state.ws_manager.broadcast)
-    # Inietta KnowledgeBridge per analisi cross-domain fire-and-forget
-    from apps.backend.core.knowledge_bridge import KnowledgeBridge
-    _bridge = KnowledgeBridge(memory=state.memory)
-    state.memory.set_bridge_callback(_bridge.on_new_insight)
-    _bridge.set_ws_broadcaster(state.ws_manager.broadcast)  # eventi knowledge_bridge → BridgeActivity HUD (FE-0.7)
-    logger.info("MemoryManager inizializzato + KnowledgeBridge registrato")
-
-    # 1c. Tools condivisi — istanziati una volta sola (DI negli agenti Personal)
-    notion_calendar = NotionCalendar(token=getattr(settings, "NOTION_API_TOKEN", ""))
-    try:
-        await notion_calendar.ensure_database()
-        logger.info("Notion Calendar database pronto")
-    except Exception as exc:
-        logger.warning("notion_calendar.ensure_database fallito (fail-safe): %s", exc)
-    web_search = WebSearchTool()
-    text_extractor = TextExtractor(max_chars=settings.SUMMARIZE_MAX_CHARS)
-
-    # 1b. StorageManager (singleton)
-    state.storage = StorageManager()
-    state.storage.ensure_dirs()
-    logger.info("StorageManager inizializzato")
-
-    # 2. Pepe orchestratore
-    state.pepe = Pepe(memory=state.memory, ws_broadcaster=state.ws_manager.broadcast)
-
-    # Funzione broadcast Telegram — definita subito dopo Pepe (usata da tutti gli agenti)
+    # ── Telegram broadcast helpers (lazy closures — read state at call time) ─
     async def telegram_broadcast(msg: str) -> None:
         if state.pepe and hasattr(state.pepe, "notify_telegram"):
             await state.pepe.notify_telegram(msg, priority=True)
 
-    # Funzione broadcast con inline keyboard (lazy — telegram_bot istanziato dopo)
     async def telegram_broadcast_markup(msg: str, reply_markup) -> None:
         """Invia messaggio con InlineKeyboardMarkup — usata da AutopilotLoop per approve/skip."""
         if not state.telegram_bot or not settings.TELEGRAM_CHAT_ID:
@@ -150,528 +114,89 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.warning("telegram_broadcast_markup fallito: %s", exc)
 
-    # 2b. Registra agenti disponibili
-    research_agent = ResearchAgent(
-        anthropic_client=state.pepe.client,
-        memory=state.memory,
-        ws_broadcaster=state.ws_manager.broadcast,
-        telegram_broadcaster=telegram_broadcast,
-    )
-    state.pepe.register_agent("research", research_agent)
+    # ── Phase 2: Pepe orchestrator + core agents ────────────────────────────
+    _pepe = await init_pepe(state.memory, state.storage, state.ws_manager.broadcast, telegram_broadcast)
+    state.pepe = _pepe.pepe
 
-    # 2c. Design Agent
-    design_agent = DesignAgent(
-        anthropic_client=state.pepe.client,
-        memory=state.memory,
-        storage=state.storage,
-        ws_broadcaster=state.ws_manager.broadcast,
-        get_mock_mode=state.pepe.get_mock_mode,
-    )
-    state.pepe.register_agent("design", design_agent)
+    await init_wiki(state.pepe, settings)
 
-    await state.pepe.start()
-    logger.info("Pepe avviato")
+    # ── Phase 3: Etsy + Autonomy Layer ─────────────────────────────────────
+    state.etsy_api = await init_etsy(state.memory, state.pepe)
 
-    # 2c-wiki. WikiManager — Step 5.2.5
-    # WIKI_BASE_PATH può essere relativo (es. "knowledge_base") o assoluto
-    # (es. vault Obsidian). Path resolution: relativo → radice progetto.
-    from apps.backend.core.wiki import WikiManager
-    _wiki_base_raw = settings.WIKI_BASE_PATH
-    _wiki_base = (
-        Path(_wiki_base_raw)
-        if Path(_wiki_base_raw).is_absolute()
-        else Path(__file__).resolve().parents[3] / _wiki_base_raw
-    )
-    try:
-        wiki_manager = WikiManager(_wiki_base)
-        await wiki_manager.init()
-        state.pepe.wiki = wiki_manager
-        logger.info("WikiManager inizializzato — base: %s", _wiki_base)
-    except Exception as exc:
-        logger.warning("WikiManager non avviato (fail-safe): %s", exc)
-        state.pepe.wiki = None
+    _autonomy = await init_autonomy_services(state.memory)
+    state.production_queue = _autonomy.production_queue
+    state.budget_manager = _autonomy.budget_manager
+    state.publication_policy = _autonomy.publication_policy
 
-    # 2d. EtsyAPI
-    state.etsy_api = EtsyAPI(memory=state.memory, pepe=state.pepe)
-    logger.info("EtsyAPI inizializzato")
-
-    # 2d-b2. Autonomy Layer — Blocco 2
-    from apps.backend.core.production_queue import ProductionQueueService
-    from apps.backend.core.budget_manager import BudgetManager
-    from apps.backend.core.publication_policy import PublicationPolicy
-    from apps.backend.core.autopilot_loop import AutopilotLoop
-
-    _db = await state.memory.get_db()
-    state.production_queue   = ProductionQueueService(_db)
-    state.budget_manager     = BudgetManager(_db)
-    state.publication_policy = PublicationPolicy(_db)
-    await state.budget_manager.ensure_defaults()
-    await state.publication_policy.ensure_defaults()
-    logger.info("Autonomy Layer (B2): ProductionQueueService, BudgetManager, PublicationPolicy inizializzati")
-
-    # 2e. Publisher Agent
-    publisher_agent = PublisherAgent(
-        anthropic_client=state.pepe.client,
+    # ── Phase 4: All agents + intelligence/growth singletons ────────────────
+    _agents = await init_all_agents(
+        pepe=state.pepe,
         memory=state.memory,
         storage=state.storage,
         etsy_api=state.etsy_api,
-        ws_broadcaster=state.ws_manager.broadcast,
-        telegram_broadcaster=telegram_broadcast,
-    )
-    state.pepe.register_agent("publisher", publisher_agent)
-
-    # 2f. LearningLoop — B4/4.5 (wired prima di AnalyticsAgent che lo usa)
-    learning_loop = LearningLoop(memory=state.memory)
-    logger.info("LearningLoop istanziato")
-
-    # 2g. BundleStrategy — B4/4.6
-    state.bundle_strategy = BundleStrategy(memory=state.memory, learning_loop=learning_loop)
-    logger.info("BundleStrategy istanziato")
-
-    # 2h-pre. ShopProfileOptimizer — B5/5.1
-    _mock = getattr(state.pepe, "mock_mode", False)
-    state.shop_optimizer = ShopProfileOptimizer(
-        memory=state.memory,
-        etsy_client=state.etsy_api,
-        learning_loop=learning_loop,
-        mock_mode=_mock,
-    )
-    logger.info("ShopProfileOptimizer istanziato (mock=%s)", _mock)
-
-    # 2h-pre2. EtsyAdsManager — B5/5.2
-    state.etsy_ads_manager = EtsyAdsManager(
-        etsy_client=state.etsy_api,
+        ws_broadcast=state.ws_manager.broadcast,
+        telegram_broadcast=telegram_broadcast,
+        notion_calendar=notion_calendar,
+        web_search=web_search,
+        text_extractor=text_extractor,
         production_queue=state.production_queue,
         publication_policy=state.publication_policy,
-        telegram_broadcaster=telegram_broadcast,
-        mock_mode=_mock,
     )
-    logger.info("EtsyAdsManager istanziato (mock=%s)", _mock)
+    state.bundle_strategy = _agents.bundle_strategy
+    state.shop_optimizer = _agents.shop_optimizer
+    state.etsy_ads_manager = _agents.etsy_ads_manager
+    state.finance_tracker = _agents.finance_tracker
 
-    # 2h. Analytics Agent
-    analytics_agent = AnalyticsAgent(
-        anthropic_client=state.pepe.client,
+    # ── Phase 5: Screen watcher ─────────────────────────────────────────────
+    state.screen_watcher, _screen_watcher_error = await init_screen_watcher(
+        state.memory, state.ws_manager.broadcast
+    )
+
+    # ── Phase 6: AutopilotLoop ──────────────────────────────────────────────
+    _design_pipeline, _niche_picker, _bundle_checker = build_autopilot_callables(
         memory=state.memory,
-        etsy_api=state.etsy_api,
-        ws_broadcaster=state.ws_manager.broadcast,
-        telegram_broadcaster=telegram_broadcast,
-        production_queue=state.production_queue,   # B4/4.2 — Ladder System + polling
-        learning_loop=learning_loop,               # B4/4.5 — CTR attribution + score update
+        pepe=state.pepe,
+        production_queue=state.production_queue,
+        bundle_strategy=state.bundle_strategy,
+        learning_loop=_agents.learning_loop,
     )
-    state.pepe.register_agent("analytics", analytics_agent)
+    state.autopilot_loop = await init_autopilot_loop(
+        db=_autonomy.db,
+        production_queue=state.production_queue,
+        budget_manager=state.budget_manager,
+        publication_policy=state.publication_policy,
+        bot_send=telegram_broadcast,
+        bot_send_markup=telegram_broadcast_markup,
+        design_pipeline=_design_pipeline,
+        niche_picker=_niche_picker,
+        bundle_checker=_bundle_checker,
+    )
 
-    # 2g. Finance Agent (no Etsy dependency)
-    finance_agent = FinanceAgent(
-        anthropic_client=state.pepe.client,
+    # ── Phase 7: Scheduler ──────────────────────────────────────────────────
+    state.scheduler = await init_scheduler(
         memory=state.memory,
-        ws_broadcaster=state.ws_manager.broadcast,
-        telegram_broadcaster=telegram_broadcast,
-    )
-    state.pepe.register_agent("finance", finance_agent)
-
-    # 2g-post. FinanceTracker — B5/5.4 review notification
-    state.finance_tracker = FinanceTracker(
-        memory=state.memory,
-        telegram_broadcaster=telegram_broadcast,
-    )
-    logger.info("FinanceTracker istanziato (B5/5.4)")
-
-    # 2h. RecallAgent — Personal domain, tutto su Ollama
-    recall_agent = RecallAgent(
-        anthropic_client=state.pepe.client,
-        memory=state.memory,
-        ws_broadcaster=state.ws_manager.broadcast,
-    )
-    state.pepe.register_agent("recall", recall_agent)
-
-    # 2h2. RemindAgent — gestione reminder + Notion Calendar (iniettato da lifespan)
-    remind_agent = RemindAgent(
-        anthropic_client=state.pepe.client,
-        memory=state.memory,
-        ws_broadcaster=state.ws_manager.broadcast,
-        notion_calendar=notion_calendar,
-        telegram_broadcaster=telegram_broadcast,
-    )
-    state.pepe.register_agent("remind", remind_agent)
-
-    # 2h3. SummarizeAgent — riassume URL, file, testo (Haiku + Ollama fallback)
-    summarize_agent = SummarizeAgent(
-        anthropic_client=state.pepe.client,
-        memory=state.memory,
-        ws_broadcaster=state.ws_manager.broadcast,
-        text_extractor=text_extractor,
-        telegram_broadcaster=telegram_broadcast,
-    )
-    state.pepe.register_agent("summarize", summarize_agent)
-
-    # 2h4. ResearchPersonalAgent — ricerca web DuckDuckGo + sintesi Perplexity-style
-    research_personal_agent = ResearchPersonalAgent(
-        anthropic_client=state.pepe.client,
-        memory=state.memory,
-        ws_broadcaster=state.ws_manager.broadcast,
-        web_search=web_search,
-        telegram_broadcaster=telegram_broadcast,
-    )
-    state.pepe.register_agent("research_personal", research_personal_agent)
-
-    # 2i. ScreenWatcher
-    _screen_watcher_error: str | None = None
-    state.screen_watcher = ScreenWatcher(
-        memory=state.memory,
-        ws_broadcaster=state.ws_manager.broadcast,
-    )
-    try:
-        await state.screen_watcher.start()
-        logger.info("ScreenWatcher avviato")
-    except Exception as exc:
-        logger.warning("ScreenWatcher non avviato: %s", exc)
-        _screen_watcher_error = str(exc)
-        state.screen_watcher = None
-
-    # ---------------------------------------------------------------------------
-    # 2j. Callable per AutopilotLoop — design_pipeline + niche_picker
-    # ---------------------------------------------------------------------------
-
-    from apps.backend.core.models import AgentTask as _AgentTask, TaskStatus as _TaskStatus
-
-    async def _autopilot_design_pipeline(item_id: int, niche_data: dict) -> None:
-        """Esegue DesignAgent e salva output in production_queue."""
-        niche        = niche_data.get("niche", "")
-        product_type = niche_data.get("product_type", "digital_print")
-        keywords     = niche_data.get("keywords", [])
-
-        design_task = _AgentTask(
-            agent_name="design",
-            input_data={
-                "niche":         niche,
-                "product_type":  product_type,
-                "keywords":      keywords,
-                "color_schemes": niche_data.get("color_schemes", []),
-                "source":        "autopilot",
-            },
-            source="autopilot",
-        )
-        try:
-            result = await state.pepe.dispatch_task(design_task)
-        except Exception as exc:
-            logger.error("design_pipeline: DesignAgent fallito item=%d: %s", item_id, exc)
-            return
-
-        if result.status != _TaskStatus.COMPLETED:
-            logger.warning(
-                "design_pipeline: DesignAgent non completato item=%d status=%s",
-                item_id, result.status,
-            )
-            return
-
-        out      = result.output_data or {}
-        variants = out.get("variants", [])
-
-        # Thumbnail: primo variant con output_path disponibile
-        thumbnail_path = ""
-        image_url      = ""
-        if variants:
-            first          = variants[0]
-            thumbnail_path = first.get("thumbnail_path") or first.get("output_path") or ""
-            image_url      = first.get("image_url") or ""
-
-        # SEO placeholder — titolo leggibile da mostrare nell'approvazione Telegram.
-        title = (
-            f"{niche.replace('_', ' ').title()} — {product_type.replace('_', ' ').title()}"
-        )
-        tags  = keywords[:13]
-
-        pricing    = niche_data.get("pricing") or {}
-        price: float
-        if isinstance(pricing, dict) and pricing.get("price"):
-            price = float(pricing["price"])
-        else:
-            price = float(niche_data.get("price") or 4.99)
-
-        await state.production_queue.set_design_ready(
-            item_id       = item_id,
-            design_prompt = out.get("cover_title") or out.get("template") or niche,
-            image_url     = image_url,
-            thumbnail_path= thumbnail_path,
-            title         = title,
-            description   = "",   # generato da PublisherAgent al publish
-            tags          = tags,
-            price         = price,
-            llm_cost      = result.cost_usd or 0.0,
-            image_cost    = float(out.get("image_cost_usd") or 0.0),
-        )
-        logger.info(
-            "design_pipeline: item=%d → pending_approval (niche=%s, thumbnail=%s)",
-            item_id, niche, thumbnail_path or "nessuna",
-        )
-
-    async def _autopilot_niche_picker() -> dict | None:
-        """
-        Sceglie la prossima niche con rotazione data-driven. — B4/4.7
-
-        Strategia a cascata:
-          1. niche_intelligence — multi-candidate scoring:
-               - legge top 10 per performance_score
-               - filtra niche "perdenti certificate" (score < 0.3 + confidence=high)
-               - evita la niche dell'ultimo listing pubblicato (anti-repetition)
-               - final_score = performance_score  (boost implicito: già pesa CTR+conv+rev)
-          2. Unexplored candidates (LearningLoop) — niches con score ma 0 listing recenti
-          3. ResearchAgent discovery autonoma — solo se non c'è niente nei dati locali
-        """
-        # Leggi l'ultima niche pubblicata per anti-repetition
-        last_niche = ""
-        try:
-            db_conn    = await state.memory.get_db()
-            cursor_rep = await db_conn.execute(
-                """
-                SELECT niche FROM production_queue
-                WHERE status = 'published'
-                ORDER BY published_at DESC LIMIT 1
-                """
-            )
-            rep_row   = await cursor_rep.fetchone()
-            last_niche = rep_row["niche"] if rep_row else ""
-        except Exception as exc:
-            logger.debug("niche_picker: lettura last_niche fallita (non bloccante): %s", exc)
-
-        # B5/5.3 — Rileva niches con ladder_level='ctr_low' recenti (< 14 giorni)
-        ctr_low_niches: set[str] = set()
-        try:
-            db_conn = await state.memory.get_db()
-            cursor  = await db_conn.execute(
-                """
-                SELECT DISTINCT pq.niche
-                FROM listing_performance lp
-                JOIN production_queue pq ON lp.production_queue_id = pq.id
-                WHERE lp.ladder_level = 'ctr_low'
-                  AND lp.snapshot_at > unixepoch() - 14 * 86400
-                """
-            )
-            ctr_rows     = await cursor.fetchall()
-            ctr_low_niches = {r["niche"] for r in ctr_rows}
-            if ctr_low_niches:
-                logger.info(
-                    "niche_picker: %d niche CTR_LOW rilevate → regen_thumbnail boost: %s",
-                    len(ctr_low_niches), list(ctr_low_niches)[:5],
-                )
-        except Exception as exc:
-            logger.debug("niche_picker: lettura ctr_low niches fallita: %s", exc)
-
-        # 1. Multi-candidate scoring da niche_intelligence
-        try:
-            db_conn = await state.memory.get_db()
-            cursor  = await db_conn.execute(
-                """
-                SELECT niche, product_type, performance_score, confidence_level
-                FROM niche_intelligence
-                WHERE performance_score IS NOT NULL AND performance_score > 0
-                ORDER BY performance_score DESC
-                LIMIT 10
-                """
-            )
-            rows = await cursor.fetchall()
-
-            scored = []
-            for row in rows:
-                niche        = row["niche"]
-                product_type = row["product_type"]
-                score        = float(row["performance_score"])
-                confidence   = row["confidence_level"] or "low"
-
-                # Filtra niche perdenti certificate
-                if score < 0.3 and confidence == "high":
-                    logger.debug("niche_picker: skip perdente [%s] score=%.3f conf=%s",
-                                 niche, score, confidence)
-                    continue
-
-                # Penalità leggera alla niche dell'ultimo listing (evita ripetizione)
-                if niche == last_niche:
-                    score *= 0.7
-
-                # B5/5.3 — Boost niche CTR_LOW: prioritizza regen thumbnail
-                regen_thumbnail = False
-                if niche in ctr_low_niches:
-                    score          *= 1.3
-                    regen_thumbnail = True
-                    logger.debug("niche_picker: boost CTR_LOW [%s] score→%.3f", niche, score)
-
-                scored.append({
-                    "niche":            niche,
-                    "product_type":     product_type,
-                    "entry_score":      round(score, 3),
-                    "keywords":         [],
-                    "regen_thumbnail":  regen_thumbnail,
-                })
-
-            if scored:
-                # Ordina per final_score (dopo eventuali penalità)
-                scored.sort(key=lambda x: x["entry_score"], reverse=True)
-                winner = scored[0]
-                logger.info(
-                    "niche_picker: selezionata [%s/%s] score=%.3f",
-                    winner["niche"], winner["product_type"], winner["entry_score"],
-                )
-                return winner
-
-        except Exception as exc:
-            logger.warning("niche_picker: lettura niche_intelligence fallita: %s", exc)
-
-        # 2. Unexplored candidates — niches con score ma 0 listing recenti
-        try:
-            unexplored = await learning_loop.get_unexplored_candidates()
-            if unexplored:
-                best = unexplored[0]
-                logger.info(
-                    "niche_picker: unexplored [%s/%s] score=%.3f",
-                    best["niche"], best["product_type"], best["performance_score"],
-                )
-                return {
-                    "niche":        best["niche"],
-                    "product_type": best["product_type"],
-                    "entry_score":  best["performance_score"],
-                    "keywords":     [],
-                }
-        except Exception as exc:
-            logger.warning("niche_picker: get_unexplored_candidates fallito: %s", exc)
-
-        # 3. Ultimate fallback: ResearchAgent discovery autonoma (LLM cost)
-        logger.info("niche_picker: nessun dato locale — avvio ResearchAgent")
-        research_task = _AgentTask(
-            agent_name="research",
-            input_data={"mode": "autonomous_discovery", "source": "autopilot"},
-            source="autopilot",
-        )
-        try:
-            result = await state.pepe.dispatch_task(research_task)
-            out    = result.output_data or {}
-            logger.info(
-                "niche_picker: ResearchAgent status=%s candidates_analyzed=%s candidates_viable=%s",
-                result.status,
-                out.get("candidates_analyzed", "?"),
-                out.get("candidates_viable", "?"),
-            )
-            if result.status.value not in ("completed",):
-                err = out.get("error", "nessun dettaglio")
-                logger.warning("niche_picker: ResearchAgent FAILED — %s", err)
-                return None
-
-            # Preferisce il campo "winner" (scelto da Sonnet), fallback su niches[0]
-            winner = out.get("winner")
-            if winner and isinstance(winner, dict) and (winner.get("niche") or winner.get("name")):
-                logger.info(
-                    "niche_picker: winner='%s' product_type='%s' confidence=%s",
-                    winner.get("niche") or winner.get("name"),
-                    winner.get("product_type", "printable_pdf"),
-                    winner.get("confidence", "?"),
-                )
-                brief    = winner.get("brief", {}) or {}
-                pricing  = brief.get("pricing") or winner.get("pricing") or {}
-                keywords = brief.get("keywords") or winner.get("keywords") or []
-                return {
-                    "niche":        winner.get("niche") or winner.get("name") or "",
-                    "product_type": winner.get("product_type", "printable_pdf"),
-                    "keywords":     keywords,
-                    "entry_score":  float(winner.get("confidence") or 0.5),
-                    "pricing":      pricing,
-                }
-
-            niches = out.get("niches", [])
-            if niches and isinstance(niches[0], dict):
-                best = niches[0]
-                logger.info(
-                    "niche_picker: fallback niches[0]='%s'",
-                    best.get("name") or best.get("niche"),
-                )
-                return {
-                    "niche":         best.get("name") or best.get("niche") or "",
-                    "product_type":  best.get("recommended_product_type") or best.get("product_type", "printable_pdf"),
-                    "keywords":      best.get("keywords", []),
-                    "entry_score":   float(best.get("final_score") or best.get("confidence") or 0.5),
-                    "pricing":       best.get("pricing", {}),
-                }
-            logger.warning("niche_picker: ResearchAgent completato ma nessuna niche usabile nell'output")
-        except Exception as exc:
-            logger.error("niche_picker: ResearchAgent eccezione: %s", exc)
-
-        return None
-
-    async def _autopilot_bundle_checker() -> dict | None:
-        """
-        Controlla se esiste una niche bundle-ready e ritorna la spec
-        come niche_data da passare alla design pipeline. — B4/4.7
-        """
-        try:
-            candidates = await state.bundle_strategy.check_all_niches()
-        except Exception as exc:
-            logger.warning("bundle_checker: check_all_niches fallito: %s", exc)
-            return None
-
-        if not candidates:
-            return None
-
-        # Ordina per score e prendi il migliore
-        candidates.sort(key=lambda c: c["score"], reverse=True)
-        best = candidates[0]
-        spec = best["spec"]
-
-        logger.info(
-            "bundle_checker: bundle-ready [%s] score=%.3f (%d componenti)",
-            spec["niche"], best["score"], spec["n_components"],
-        )
-
-        # Formatta come niche_data compatibile con design_pipeline
-        return {
-            "niche":            spec["niche"],
-            "product_type":     "bundle",
-            "keywords":         spec.get("keywords", []),
-            "entry_score":      spec.get("entry_score", best["score"]),
-            "suggested_price":  spec.get("suggested_price"),
-            "component_titles": spec.get("component_titles", []),
-            "component_images": spec.get("component_images", []),
-            "is_bundle":        True,
-        }
-
-    # 3. AutopilotLoop — instanziato prima dello Scheduler e del bot
-    state.autopilot_loop = AutopilotLoop(
-        db               = _db,
-        queue            = state.production_queue,
-        budget           = state.budget_manager,
-        policy           = state.publication_policy,
-        bot_send         = telegram_broadcast,
-        bot_send_markup  = telegram_broadcast_markup,
-        design_pipeline  = _autopilot_design_pipeline,
-        niche_picker     = _autopilot_niche_picker,
-        bundle_checker   = _autopilot_bundle_checker,    # B4/4.7
-    )
-    logger.info("AutopilotLoop istanziato")
-
-    # 4. Scheduler APScheduler
-    state.scheduler = Scheduler(
-        memory=state.memory,
-        ws_broadcaster=state.ws_manager.broadcast,
+        ws_broadcast=state.ws_manager.broadcast,
         pepe=state.pepe,
         storage=state.storage,
-        research_agent=research_agent,
-        design_agent=design_agent,
-        publisher_agent=publisher_agent,
-        analytics_agent=analytics_agent,
-        finance_agent=finance_agent,
-        telegram_broadcaster=telegram_broadcast,
+        research_agent=_pepe.research_agent,
+        design_agent=_pepe.design_agent,
+        publisher_agent=_agents.publisher_agent,
+        analytics_agent=_agents.analytics_agent,
+        finance_agent=_agents.finance_agent,
+        telegram_broadcast=telegram_broadcast,
         screen_watcher=state.screen_watcher,
-        # Blocco 2
-        production_queue   = state.production_queue,
-        budget_manager     = state.budget_manager,
-        publication_policy = state.publication_policy,
-        autopilot_loop     = state.autopilot_loop,
-        etsy_client        = state.etsy_api,
-        # Blocco 5
-        shop_optimizer     = state.shop_optimizer,
-        etsy_ads_manager   = state.etsy_ads_manager,
-        # Blocco 4 / 5.3
-        learning_loop      = learning_loop,
+        production_queue=state.production_queue,
+        budget_manager=state.budget_manager,
+        publication_policy=state.publication_policy,
+        autopilot_loop=state.autopilot_loop,
+        etsy_api=state.etsy_api,
+        shop_optimizer=state.shop_optimizer,
+        etsy_ads_manager=state.etsy_ads_manager,
+        learning_loop=_agents.learning_loop,
     )
-    # 5. Bot Telegram (stesso event loop di FastAPI)
-    _bot_deps = BotDependencies(
+
+    # ── Phase 8: Telegram bot ───────────────────────────────────────────────
+    state.telegram_bot = await init_telegram_bot(
         pepe=state.pepe,
         scheduler=state.scheduler,
         screen_watcher=state.screen_watcher,
@@ -680,34 +205,29 @@ async def lifespan(app: FastAPI):
         budget_manager=state.budget_manager,
         publication_policy=state.publication_policy,
         etsy_api=state.etsy_api,
-        analytics_agent=analytics_agent,     # B4/4.3 — /ladder command
-        learning_loop=learning_loop,         # B4/4.5 — /learn command
-        bundle_strategy=state.bundle_strategy,     # B4/4.6 — /bundle command
-        shop_optimizer=state.shop_optimizer,        # B5/5.1 — /shopsetup command
-        etsy_ads_manager=state.etsy_ads_manager,   # B5/5.2 — auto ads management
-        finance_tracker=state.finance_tracker,      # B5/5.4 — review notification
+        analytics_agent=_agents.analytics_agent,
+        learning_loop=_agents.learning_loop,
+        bundle_strategy=state.bundle_strategy,
+        shop_optimizer=state.shop_optimizer,
+        etsy_ads_manager=state.etsy_ads_manager,
+        finance_tracker=state.finance_tracker,
     )
-    state.telegram_bot = TelegramBot(_bot_deps)
-    await state.telegram_bot.start()
 
-    # 6. AutopilotLoop — ripristina stato precedente invece di partire sempre
+    # ── AutopilotLoop: restore previous run state ───────────────────────────
     _ap_prev_status = await state.autopilot_loop._get_status()
     if _ap_prev_status == "running":
         await state.autopilot_loop.start()
         logger.info("AutopilotLoop ripreso (stato precedente: running)")
     else:
-        # Normalizza a paused_manual così /run sa da dove ripartire
         await state.autopilot_loop._set_status("paused_manual")
         logger.info("AutopilotLoop in attesa di /run (stato precedente: %s)", _ap_prev_status)
 
     await state.scheduler.start()
     logger.info("Scheduler avviato")
 
-    # Collega notifier Telegram al ScreenWatcher (ora che il bot è attivo)
     if state.screen_watcher is not None:
         state.screen_watcher.set_error_notifier(telegram_broadcast)
 
-    # Notifica startup deferred — inviata solo ora che il bot è attivo
     if _screen_watcher_error:
         await telegram_broadcast(
             f"⚠️ ScreenWatcher non avviato all'avvio del server.\n"
@@ -718,7 +238,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown (ordine inverso)
+    # ── Shutdown (reverse order) ─────────────────────────────────────────────
     await state.telegram_bot.stop()
     if state.autopilot_loop is not None:
         await state.autopilot_loop.stop()

@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import re
+import time as _time_module
 from typing import Any
 
 import anthropic
@@ -12,6 +13,37 @@ import anthropic
 from apps.backend.core.config import MODEL_SONNET, MODEL_HAIKU, settings
 
 logger = logging.getLogger("agentpexi.pepe")
+
+
+# ---------------------------------------------------------------------------
+# Circuit breaker — protects the Anthropic API call site only
+# ---------------------------------------------------------------------------
+
+class _SimpleBreaker:
+    """Lightweight async-compatible circuit breaker."""
+
+    def __init__(self, fail_max: int = 5, reset_timeout: float = 60.0) -> None:
+        self._failures = 0
+        self._opened_at = 0.0
+        self._fail_max = fail_max
+        self._reset = reset_timeout
+
+    async def call_async(self, fn, *args, **kwargs):
+        if self._failures >= self._fail_max:
+            if _time_module.monotonic() - self._opened_at < self._reset:
+                raise RuntimeError("Circuit open — Anthropic API unavailable")
+            self._failures = 0  # half-open: allow one attempt through
+        try:
+            result = await fn(*args, **kwargs)
+            self._failures = 0
+            return result
+        except Exception:
+            self._failures += 1
+            self._opened_at = _time_module.monotonic()
+            raise
+
+
+_anthropic_breaker = _SimpleBreaker(fail_max=5, reset_timeout=60)
 
 # ------------------------------------------------------------------
 # Tool definition per delega agenti (Anthropic tool_use)
@@ -77,8 +109,12 @@ class LlmMixin:
         response = None
         for attempt in range(3):
             try:
-                response = await self.client.messages.create(**kwargs)
+                response = await _anthropic_breaker.call_async(
+                    self.client.messages.create, **kwargs
+                )
                 break
+            except RuntimeError:
+                raise  # circuit open — propagate immediately
             except anthropic.RateLimitError as exc:
                 last_exc = exc
                 await asyncio.sleep(2 ** attempt)
