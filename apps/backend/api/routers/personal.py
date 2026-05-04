@@ -8,10 +8,10 @@ from fastapi.responses import JSONResponse
 from apps.backend.core.config import settings
 
 logger = logging.getLogger("agentpexi.api")
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 
-@router.get("/api/personal/reminders", dependencies=[Depends(state.verify_personal_key)])
+@router.get("/api/personal/reminders")
 async def get_personal_reminders(limit: Annotated[int, Query(ge=1, le=100)] = 10) -> dict:
     """Prossimi reminder pending ordinati per trigger_at.
 
@@ -33,7 +33,7 @@ async def get_personal_reminders(limit: Annotated[int, Query(ge=1, le=100)] = 10
     return {"items": items}
 
 
-@router.get("/api/personal/recalls", dependencies=[Depends(state.verify_personal_key)])
+@router.get("/api/personal/recalls")
 async def get_personal_recalls(limit: Annotated[int, Query(ge=1, le=100)] = 10) -> dict:
     """Ultimi N recall completati.
 
@@ -55,7 +55,7 @@ async def get_personal_recalls(limit: Annotated[int, Query(ge=1, le=100)] = 10) 
     return {"items": items}
 
 
-@router.get("/api/personal/mcp/status", dependencies=[Depends(state.verify_personal_key)])
+@router.get("/api/personal/mcp/status")
 async def get_mcp_status() -> dict:
     """Stato connessioni MCP: Notion, Gmail, Calendar.
     Notion: ping leggero all'API se token configurato.
@@ -97,7 +97,7 @@ async def get_mcp_status() -> dict:
     return result
 
 
-@router.get("/api/personal/stats", dependencies=[Depends(state.verify_personal_key)])
+@router.get("/api/personal/stats")
 async def get_personal_stats(days: Annotated[int, Query(ge=1, le=365)] = 14) -> dict:
     """Aggregati agenti Personal: task completati/falliti per agente, ultimi N giorni."""
     if not state.memory:
@@ -106,7 +106,7 @@ async def get_personal_stats(days: Annotated[int, Query(ge=1, le=365)] = 14) -> 
     return {"stats": stats, "days": days}
 
 
-@router.get("/api/ollama/status", dependencies=[Depends(state.verify_personal_key)])
+@router.get("/api/ollama/status")
 async def get_ollama_status() -> dict:
     """Stato Ollama: modello caricato, latenza ultima chiamata, keep_alive."""
     import time
@@ -142,7 +142,7 @@ async def get_ollama_status() -> dict:
     return result
 
 
-@router.post("/api/personal/voice/collect", dependencies=[Depends(state.verify_personal_key)])
+@router.post("/api/personal/voice/collect")
 async def set_collect_mode(body: dict) -> dict:
     """Attiva/disattiva modalità raccolta campioni wake word.
 
@@ -162,14 +162,14 @@ async def set_collect_mode(body: dict) -> dict:
     return collector.get_status()
 
 
-@router.get("/api/personal/voice/collect/status", dependencies=[Depends(state.verify_personal_key)])
+@router.get("/api/personal/voice/collect/status")
 async def get_collect_status() -> dict:
     """Stato corrente raccolta campioni: modalità attiva + conteggi per classe."""
     from apps.backend.voice import collector
     return collector.get_status()
 
 
-@router.post("/api/personal/ask", dependencies=[Depends(state.verify_personal_key)])
+@router.post("/api/personal/ask")
 @state.limiter.limit("30/minute")
 async def personal_ask(request: Request, body: dict) -> dict:
     """Endpoint voce: riceve testo trascritto, risponde via Pepe in dominio Personal.

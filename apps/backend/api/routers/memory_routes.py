@@ -4,11 +4,11 @@ import logging
 import numpy as np
 
 import apps.backend.api.state as state
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("agentpexi.api")
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 
 @router.get("/api/memory/stats")

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 import apps.backend.api.state as state
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from apps.backend.core.config import settings
@@ -18,7 +18,7 @@ async def health_check() -> dict:
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
-@router.get("/api/status")
+@router.get("/api/status", dependencies=[Depends(state.verify_personal_key)])
 async def get_status() -> dict:
     """Stato generale del sistema."""
     agent_statuses = state.pepe.get_agent_statuses() if state.pepe else {}
@@ -32,13 +32,13 @@ async def get_status() -> dict:
     }
 
 
-@router.get("/api/mock/status")
+@router.get("/api/mock/status", dependencies=[Depends(state.verify_personal_key)])
 async def get_mock_status() -> dict:
     """Stato corrente del mock mode."""
     return {"mock_mode": state.pepe.mock_mode if state.pepe else False}
 
 
-@router.get("/api/agents")
+@router.get("/api/agents", dependencies=[Depends(state.verify_personal_key)])
 async def get_agents() -> dict:
     """Stato dettagliato degli agenti registrati."""
     if not state.pepe:
@@ -46,7 +46,7 @@ async def get_agents() -> dict:
     return {"agents": state.pepe.get_agent_statuses()}
 
 
-@router.get("/api/domains/config")
+@router.get("/api/domains/config", dependencies=[Depends(state.verify_personal_key)])
 async def get_domains_config() -> dict:
     """Configurazione domini: lista agenti per dominio, dalla source of truth in domains.py."""
     from apps.backend.core.domains import DOMAIN_ETSY, PERSONAL_LAYER
@@ -62,7 +62,7 @@ async def get_domains_config() -> dict:
     }
 
 
-@router.get("/api/listings")
+@router.get("/api/listings", dependencies=[Depends(state.verify_personal_key)])
 async def get_listings() -> dict:
     """Lista dei listing Etsy dal DB locale."""
     if not state.memory:
@@ -71,7 +71,7 @@ async def get_listings() -> dict:
     return {"listings": listings}
 
 
-@router.get("/api/scheduler")
+@router.get("/api/scheduler", dependencies=[Depends(state.verify_personal_key)])
 async def get_scheduler() -> dict:
     """Task schedulati: job APScheduler attivi + task da DB."""
     db_tasks: list[dict] = []
@@ -85,7 +85,7 @@ async def get_scheduler() -> dict:
     return {"tasks": db_tasks, "jobs": apscheduler_jobs}
 
 
-@router.get("/api/scheduler/jobs")
+@router.get("/api/scheduler/jobs", dependencies=[Depends(state.verify_personal_key)])
 async def get_scheduler_jobs() -> dict:
     """
     Job APScheduler attivi (FE-Blocco 0.4).
@@ -102,7 +102,7 @@ async def get_scheduler_jobs() -> dict:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.get("/api/production-queue")
+@router.get("/api/production-queue", dependencies=[Depends(state.verify_personal_key)])
 async def get_production_queue(status: str | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
     """Lista items dalla production_queue, filtrabili per status."""
     if not state.memory:
@@ -112,7 +112,7 @@ async def get_production_queue(status: str | None = None, limit: Annotated[int, 
     return {"items": items}
 
 
-@router.get("/api/tasks/{task_id}/timeline")
+@router.get("/api/tasks/{task_id}/timeline", dependencies=[Depends(state.verify_personal_key)])
 async def get_task_timeline(task_id: str) -> dict:
     """Timeline completa step/llm/tool per un task (Task Detail View)."""
     if not state.memory:
@@ -121,7 +121,7 @@ async def get_task_timeline(task_id: str) -> dict:
     return {"task_id": task_id, "timeline": timeline}
 
 
-@router.get("/api/tasks/pending-input")
+@router.get("/api/tasks/pending-input", dependencies=[Depends(state.verify_personal_key)])
 async def get_pending_input_tasks() -> dict:
     """Lista task in stato INPUT_REQUIRED — sospesi in attesa di risposta utente."""
     if not state.memory:
@@ -134,7 +134,7 @@ async def get_pending_input_tasks() -> dict:
         return JSONResponse(status_code=500, content={"error": "Errore interno"})
 
 
-@router.get("/api/agents/steps/recent")
+@router.get("/api/agents/steps/recent", dependencies=[Depends(state.verify_personal_key)])
 async def get_recent_agent_steps(
     limit:      Annotated[int, Query(ge=1, le=500)] = 50,
     agent_name: Annotated[str | None, Query()] = None,
@@ -147,7 +147,7 @@ async def get_recent_agent_steps(
     return {"steps": steps}
 
 
-@router.get("/api/costs")
+@router.get("/api/costs", dependencies=[Depends(state.verify_personal_key)])
 async def get_costs(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
     """Cost breakdown per periodo."""
     if not state.memory:
@@ -158,7 +158,7 @@ async def get_costs(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
     return {"days": days, "breakdown": breakdown}
 
 
-@router.get("/api/analytics/summary")
+@router.get("/api/analytics/summary", dependencies=[Depends(state.verify_personal_key)])
 async def get_analytics_summary_endpoint(days: Annotated[int, Query(ge=1, le=365)] = 14) -> dict:
     """Aggregati task (agent_logs + production_queue) per il pannello Analytics.
 

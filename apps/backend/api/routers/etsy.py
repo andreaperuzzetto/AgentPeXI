@@ -4,11 +4,11 @@ import time as _time
 from typing import Annotated
 
 import apps.backend.api.state as state
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("agentpexi.api")
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 _bundles_cache: dict = {"data": None, "cached_at": 0.0}
 _BUNDLES_CACHE_TTL = 600

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("agentpexi.api")
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 _NICHE_SAFE_RE = re.compile(r'^[A-Za-z0-9 _\-]{1,80}$')
 
@@ -70,7 +70,7 @@ async def get_wiki_niche(niche: str) -> dict:
         return JSONResponse(status_code=500, content={"error": "Errore interno"})
 
 
-@router.post("/api/wiki/lint", dependencies=[Depends(state.verify_personal_key)])
+@router.post("/api/wiki/lint")
 async def wiki_lint(body: dict | None = None) -> dict:
     """Lint wiki: wikilinks rotti + raw pending + suggerimenti.
 
@@ -91,7 +91,7 @@ async def wiki_lint(body: dict | None = None) -> dict:
         return JSONResponse(status_code=500, content={"error": "Errore interno"})
 
 
-@router.post("/api/domain", dependencies=[Depends(state.verify_personal_key)])
+@router.post("/api/domain")
 async def switch_domain(body: dict) -> dict:
     """Cambia dominio attivo. Body: {domain: 'etsy'|'personal'}."""
     if not state.pepe:

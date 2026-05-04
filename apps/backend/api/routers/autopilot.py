@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("agentpexi.api")
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 
 def _map_autopilot_status(raw: str) -> str:
@@ -56,7 +56,7 @@ async def get_autopilot_status() -> dict:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/autopilot/start", dependencies=[Depends(state.verify_personal_key)])
+@router.post("/api/autopilot/start")
 async def autopilot_start() -> dict:
     """Avvia o riprende l'AutopilotLoop."""
     if not state.autopilot_loop:
@@ -72,7 +72,7 @@ async def autopilot_start() -> dict:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/autopilot/pause", dependencies=[Depends(state.verify_personal_key)])
+@router.post("/api/autopilot/pause")
 async def autopilot_pause() -> dict:
     """Mette in pausa l'AutopilotLoop (paused_manual)."""
     if not state.autopilot_loop:
@@ -85,7 +85,7 @@ async def autopilot_pause() -> dict:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/autopilot/stop", dependencies=[Depends(state.verify_personal_key)])
+@router.post("/api/autopilot/stop")
 async def autopilot_stop() -> dict:
     """Ferma l'AutopilotLoop e imposta status=stopped."""
     if not state.autopilot_loop:
@@ -100,7 +100,7 @@ async def autopilot_stop() -> dict:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/run/analytics", dependencies=[Depends(state.verify_personal_key)])
+@router.post("/api/run/analytics")
 @state.limiter.limit("5/minute")
 async def run_analytics_now(request: Request) -> dict:
     """Trigger manuale analytics (non aspetta le 08:00)."""

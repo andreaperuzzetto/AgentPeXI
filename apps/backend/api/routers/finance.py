@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from apps.backend.core.models import AgentTask
 
 logger = logging.getLogger("agentpexi.api")
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 
 @router.get("/api/finance/summary")
@@ -90,7 +90,7 @@ async def get_finance_report(days: Annotated[int, Query(ge=1, le=365)] = 30) -> 
     return {"report": results[0] if results else None, "days": days}
 
 
-@router.post("/api/finance/run", dependencies=[Depends(state.verify_personal_key)])
+@router.post("/api/finance/run")
 @state.limiter.limit("5/minute")
 async def run_finance_agent(request: Request, body: dict | None = None) -> dict:
     """Esegue il FinanceAgent manualmente (period_days dal body, default 30)."""
