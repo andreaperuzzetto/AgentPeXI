@@ -95,18 +95,6 @@ function fmtRelTime(iso: string): string {
   return `${Math.floor(diffDays / 365)}y ago`
 }
 
-/* Price */
-function fmtPrice(p: number | null | undefined): string {
-  if (p == null || p <= 0) return '—'
-  return `€${p.toFixed(2)}`
-}
-
-/* Score */
-function fmtScore(s: number | null | undefined): string {
-  if (s == null) return '—'
-  return s.toFixed(2)
-}
-
 /* Filter status options for the dropdown */
 const STATUS_OPTIONS = [
   { value: 'all',              label: 'All statuses' },
@@ -271,7 +259,7 @@ export function ProductionPipeline() {
       const data = await res.json() as { items: ProductionQueueItem[] }
       setItems(data.items ?? [])
       setError(null)
-    } catch (e) {
+    } catch {
       setError('Connessione fallita. Riprova.')
     } finally {
       setLoading(false)

@@ -53,7 +53,7 @@ declare module 'd3-force-3d' {
 
   export interface Force<
     NodeDatum extends SimulationNodeDatum,
-    LinkDatum extends SimulationLinkDatum<NodeDatum> | undefined,
+    _LinkDatum extends SimulationLinkDatum<NodeDatum> | undefined,
   > {
     (alpha: number): void
     initialize?(nodes: NodeDatum[], random: () => number): void

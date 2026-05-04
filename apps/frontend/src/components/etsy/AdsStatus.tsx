@@ -57,78 +57,6 @@ function fmtCtr(ctr: number | null): string {
   return `${(ctr * 100).toFixed(1)}%`
 }
 
-/* ── Skeleton row ─────────────────────────────────────────────────────────── */
-
-function SkeletonRow({ delay = 0, width = 120 }: { delay?: number; width?: number }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ delay, duration: 0.28 }}
-      style={{
-        display:      'flex',
-        alignItems:   'center',
-        gap:          10,
-        padding:      '8px 0',
-        borderBottom: '1px solid rgba(255,255,255,0.05)',
-      }}
-    >
-      <div style={{ height: 9, width: 68, borderRadius: 3, background: 'rgba(255,255,255,0.06)' }} />
-      <div style={{ height: 11, width, borderRadius: 3, background: 'rgba(255,255,255,0.09)' }} />
-    </motion.div>
-  )
-}
-
-/* ── Stat row ─────────────────────────────────────────────────────────────── */
-
-interface StatRowProps {
-  label:    string
-  value:    string
-  note?:    string
-  color?:   string
-  delay:    number
-  isLast?:  boolean
-}
-
-function StatRow({ label, value, note, color = 'rgba(255,255,255,0.72)', delay, isLast }: StatRowProps) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, x: -6 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ type: 'spring', stiffness: 300, damping: 28, delay }}
-      style={{
-        display:      'flex',
-        alignItems:   'baseline',
-        gap:          10,
-        padding:      '8px 0',
-        borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.05)',
-      }}
-    >
-      {/* Label */}
-      <span
-        className="hud-label"
-        style={{ fontSize: 9, minWidth: 72, flexShrink: 0 }}
-      >
-        {label}
-      </span>
-
-      {/* Value */}
-      <span className="mono-num" style={{ fontSize: 13, fontWeight: 500, color }}>
-        {value}
-      </span>
-
-      {/* Note */}
-      {note && (
-        <span className="mono-num" style={{
-          fontSize: 9, color: 'rgba(255,255,255,0.22)', letterSpacing: '0.02em',
-        }}>
-          {note}
-        </span>
-      )}
-    </motion.div>
-  )
-}
-
 /* ── Metric cell ─────────────────────────────────────────────────────────── */
 
 interface MetricCellProps {
@@ -202,16 +130,6 @@ export function AdsStatus() {
       : data.avg_ctr >= 0.01
         ? '#F5A623'
         : '#FF6B6B'
-
-  /* Active count color: green if any active, muted if zero */
-  const activeColor = data && data.activated_count > 0
-    ? 'rgba(255,255,255,0.72)'
-    : 'rgba(255,255,255,0.28)'
-
-  /* Paused count color: amber if any paused */
-  const pausedColor = data && data.paused_count > 0
-    ? '#F5A623'
-    : 'rgba(255,255,255,0.28)'
 
   return (
     <div style={{

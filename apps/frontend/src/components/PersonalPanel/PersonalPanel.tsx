@@ -382,7 +382,6 @@ export function PersonalPanel() {
     fetchAll().finally(() => setLoading(false))
     const id = setInterval(fetchAll, 30_000)
     return () => clearInterval(id)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (

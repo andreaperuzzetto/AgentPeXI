@@ -20,22 +20,8 @@ import type { NicheItem }                             from '../../types'
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
-function fmtProductType(pt: string | null): string {
-  if (!pt) return '—'
-  const MAP: Record<string, string> = {
-    digital_print: 'print', digital_art_png: 'art', svg_bundle: 'svg',
-    bundle: 'bundle', pod_print: 'pod', pod_mug: 'mug', pod_tshirt: 'tee',
-  }
-  return MAP[pt] ?? pt.replace(/_/g, ' ')
-}
-
 function fmtScore(n: number | null): string {
   return n != null ? n.toFixed(2) : '—'
-}
-
-function fmtCtr(n: number | null): string {
-  if (n == null || n <= 0) return '—'
-  return `${(n * 100).toFixed(1)}%`
 }
 
 /** Derive ↗ ↘ → from performance_score */
