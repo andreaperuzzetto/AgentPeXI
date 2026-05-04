@@ -10,6 +10,19 @@ logger = logging.getLogger("agentpexi.memory")
 
 class ChromaDbMixin:
     # ------------------------------------------------------------------
+    # Background task tracking — prevents GC of fire-and-forget tasks
+    # ------------------------------------------------------------------
+
+    def _fire_bg(self, coro: "asyncio.coroutines.Coroutine") -> asyncio.Task:
+        """Schedule a fire-and-forget coroutine, keeping a strong reference."""
+        if not hasattr(self, "_chroma_bg_tasks"):
+            self._chroma_bg_tasks: set[asyncio.Task] = set()
+        t = asyncio.create_task(coro)
+        self._chroma_bg_tasks.add(t)
+        t.add_done_callback(self._chroma_bg_tasks.discard)
+        return t
+
+    # ------------------------------------------------------------------
     # ChromaDB — insights semantici
     # ------------------------------------------------------------------
 
@@ -27,7 +40,7 @@ class ChromaDbMixin:
         )
         # Fire-and-forget: notifica il KnowledgeBridge per analisi cross-domain
         if self._bridge_callback and text:
-            asyncio.create_task(self._bridge_callback(text, "etsy"))
+            self._fire_bg(self._bridge_callback(text, "etsy"))
         return doc_id
 
     async def query_insights(self, query: str, n_results: int = 5) -> list[dict]:
@@ -68,7 +81,7 @@ class ChromaDbMixin:
             out.append({"document": doc, "metadata": meta, "id": doc_id})
         # Log asincronamente — non blocca il caller
         if accessed_ids:
-            asyncio.create_task(
+            self._fire_bg(
                 self.log_memory_query(accessed_ids, "pepe_memory", agent=agent, query_text=query)
             )
         return out
@@ -216,7 +229,7 @@ class ChromaDbMixin:
                 })
             # Log asincronamente
             if accessed_ids:
-                asyncio.create_task(
+                self._fire_bg(
                     self.log_memory_query(accessed_ids, "screen_memory", agent=agent, query_text=query)
                 )
             return out
@@ -296,7 +309,7 @@ class ChromaDbMixin:
         )
         # Fire-and-forget: notifica il KnowledgeBridge per analisi cross-domain
         if self._bridge_callback and text:
-            asyncio.create_task(self._bridge_callback(text, "personal"))
+            self._fire_bg(self._bridge_callback(text, "personal"))
         return doc_id
 
     async def query_personal_memory(
@@ -335,7 +348,7 @@ class ChromaDbMixin:
                     accessed_ids.append(doc_id)
                 out.append({"document": doc, "metadata": meta, "id": doc_id})
             if accessed_ids:
-                asyncio.create_task(
+                self._fire_bg(
                     self.log_memory_query(
                         accessed_ids, "personal_memory", agent=agent, query_text=query
                     )
@@ -493,7 +506,7 @@ class ChromaDbMixin:
                     accessed_ids.append(doc_id)
                 out.append({"document": doc, "metadata": meta, "id": doc_id})
             if accessed_ids:
-                asyncio.create_task(
+                self._fire_bg(
                     self.log_memory_query(
                         accessed_ids, "shared_memory", agent=agent, query_text=query
                     )

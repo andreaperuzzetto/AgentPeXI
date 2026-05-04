@@ -101,6 +101,8 @@ class AutopilotLoop:
 
         self._running         = False
         self._first_iteration = True
+        self._loop_task: asyncio.Task | None = None
+        self._bg_tasks: set[asyncio.Task] = set()
 
         # item_id → asyncio.Event  (segnale dal CallbackQueryHandler Telegram)
         self._approval_events:  dict[int, asyncio.Event] = {}
@@ -235,7 +237,7 @@ class AutopilotLoop:
         await self._set_status("running")
         self._running         = True
         self._first_iteration = True
-        asyncio.create_task(self.run_loop(), name="autopilot_loop")
+        self._loop_task = asyncio.create_task(self.run_loop(), name="autopilot_loop")
         logger.info("AutopilotLoop avviato")
 
     async def stop(self) -> None:
@@ -249,7 +251,7 @@ class AutopilotLoop:
         await self._set_status("running")
         if not self._running:
             self._running = True
-            asyncio.create_task(self.run_loop(), name="autopilot_loop")
+            self._loop_task = asyncio.create_task(self.run_loop(), name="autopilot_loop")
         logger.info("AutopilotLoop ripreso")
 
     # ------------------------------------------------------------------
@@ -350,7 +352,9 @@ class AutopilotLoop:
                             self._approval_events.pop(iid, None)
                             self._approval_results.pop(iid, None)
 
-                    asyncio.create_task(_recover_queued(), name=f"recovery_queued_{item.id}")
+                    _t = asyncio.create_task(_recover_queued(), name=f"recovery_queued_{item.id}")
+                    self._bg_tasks.add(_t)
+                    _t.add_done_callback(self._bg_tasks.discard)
 
             ids = [str(i.id) for i in pending + in_design]
             logger.info(
@@ -619,7 +623,9 @@ class AutopilotLoop:
                     self._approval_events.pop(iid, None)
                     self._approval_results.pop(iid, None)
 
-            asyncio.create_task(_recover_item(), name=f"recovery_item_{item.id}")
+            _t = asyncio.create_task(_recover_item(), name=f"recovery_item_{item.id}")
+            self._bg_tasks.add(_t)
+            _t.add_done_callback(self._bg_tasks.discard)
 
     # ------------------------------------------------------------------
     # Comandi Telegram (chiamati da handlers/autopilot.py)

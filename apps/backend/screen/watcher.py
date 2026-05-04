@@ -86,6 +86,7 @@ class ScreenWatcher:
         self._paused: bool = False
         self._running: bool = False
         self._task: asyncio.Task | None = None
+        self._bg_tasks: set[asyncio.Task] = set()
 
         # Statistiche sessione
         self._captures_today: int = 0
@@ -135,12 +136,16 @@ class ScreenWatcher:
     def pause(self) -> None:
         self._paused = True
         logger.info("ScreenWatcher in pausa")
-        asyncio.create_task(self._emit_status("paused"))
+        _t = asyncio.create_task(self._emit_status("paused"))
+        self._bg_tasks.add(_t)
+        _t.add_done_callback(self._bg_tasks.discard)
 
     def resume(self) -> None:
         self._paused = False
         logger.info("ScreenWatcher ripreso")
-        asyncio.create_task(self._emit_status("active"))
+        _t = asyncio.create_task(self._emit_status("active"))
+        self._bg_tasks.add(_t)
+        _t.add_done_callback(self._bg_tasks.discard)
 
     def get_status(self) -> dict:
         return {

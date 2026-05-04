@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 import apps.backend.api.state as state
@@ -108,5 +107,5 @@ async def run_analytics_now(request: Request) -> dict:
         return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
     from apps.backend.core.models import AgentTask
     task = AgentTask(agent_name="analytics", input_data={}, source="api_manual")
-    asyncio.create_task(state.pepe.dispatch_task(task))
+    state.pepe._fire(state.pepe.dispatch_task(task), name="analytics_manual")
     return {"status": "started"}
