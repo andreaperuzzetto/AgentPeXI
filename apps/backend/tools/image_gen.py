@@ -150,7 +150,7 @@ class ImageGenerator:
 
         logger.info("Flux Pro: generazione immagine '%s'", output_path.name)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _run_sync() -> Any:
             client = replicate.Client(api_token=self._token)
@@ -267,7 +267,7 @@ class ImageGenerator:
             draw.text(((width - text_w) // 2, y), line, fill=color, font=font)
             y += bbox[3] - bbox[1] + width // 40
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,
             lambda: img.save(str(output_path), "PNG", dpi=(300, 300)),
@@ -418,7 +418,7 @@ class NanaBananaGenerator:
 
         logger.info("Nano Banana Pro: generazione immagine '%s'", output_path.name)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _run_sync() -> Any:
             import fal_client as _fal

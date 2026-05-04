@@ -165,7 +165,7 @@ class SVGGenerator:
         dwg.add(dwg.circle(center=(cx, cy), r=18, fill=palette["bg"]))
         dwg.add(dwg.circle(center=(cx, cy), r=8, fill=palette["accent"]))
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, dwg.save)
         return output_path
 
@@ -231,7 +231,7 @@ class SVGGenerator:
             stroke_width=6,
         ))
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, dwg.save)
         return output_path
 
@@ -338,7 +338,7 @@ class SVGGenerator:
                 letter_spacing="8",
             ))
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, dwg.save)
         return output_path
 
@@ -437,7 +437,7 @@ class SVGGenerator:
                 fill=palette["primary"],
             ))
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, dwg.save)
         return output_path
 

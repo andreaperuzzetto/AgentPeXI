@@ -58,7 +58,7 @@ def _sync_trends(keyword: str) -> dict[str, Any]:
 
 async def get_google_trends(keyword: str) -> dict[str, Any]:
     """Async wrapper — esegue pytrends in thread executor."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         return await loop.run_in_executor(None, _sync_trends, keyword)
     except Exception as e:

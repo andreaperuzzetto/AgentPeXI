@@ -124,7 +124,7 @@ class TextExtractor:
             logger.warning("TextExtract URL '%s' rifiutata: SSRF o schema non consentito", url[:80])
             return None
         try:
-            text = await asyncio.get_event_loop().run_in_executor(
+            text = await asyncio.get_running_loop().run_in_executor(
                 None,
                 self._trafilatura_sync,
                 url,
@@ -193,11 +193,11 @@ class TextExtractor:
 
         try:
             if ext == ".pdf":
-                return await asyncio.get_event_loop().run_in_executor(
+                return await asyncio.get_running_loop().run_in_executor(
                     None, self._extract_pdf, file_path
                 )
             else:
-                return await asyncio.get_event_loop().run_in_executor(
+                return await asyncio.get_running_loop().run_in_executor(
                     None, self._read_text_file, file_path
                 )
         except Exception as exc:

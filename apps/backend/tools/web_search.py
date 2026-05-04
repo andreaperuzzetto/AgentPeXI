@@ -56,7 +56,7 @@ class WebSearchTool:
     async def _search_ddgs(self, query: str, max_results: int) -> list[dict]:
         """Ricerca DuckDuckGo con rate limiting e retry."""
         # Rate limiting: aspetta se necessario
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         now = loop.time()
         elapsed = now - self._last_ddgs_call
         if elapsed < _DDGS_MIN_INTERVAL:
@@ -64,13 +64,13 @@ class WebSearchTool:
 
         for attempt in range(_DDGS_MAX_RETRIES):
             try:
-                results = await asyncio.get_event_loop().run_in_executor(
+                results = await loop.run_in_executor(
                     None,
                     self._ddgs_sync,
                     query,
                     max_results,
                 )
-                self._last_ddgs_call = asyncio.get_event_loop().time()
+                self._last_ddgs_call = loop.time()
                 return results
             except Exception as exc:
                 exc_name = type(exc).__name__
