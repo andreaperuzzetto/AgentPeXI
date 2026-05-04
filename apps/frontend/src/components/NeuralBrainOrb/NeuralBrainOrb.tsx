@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useCallback }    from 'react'
-import ForceGraph3D, { type ForceGraphMethods } from '3d-force-graph'
+import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph'
 import * as THREE                             from 'three'
 import { useStore }                           from '../../store'
 import { useMemoryGraph }                     from '../../hooks/useMemoryGraph'
@@ -54,7 +54,7 @@ interface GNode extends GraphNode {
   x?: number; y?: number; z?: number
 }
 
-interface GLink extends GraphEdge {
+interface GLink extends Omit<GraphEdge, 'source' | 'target'> {
   source: string | GNode
   target: string | GNode
 }
@@ -71,7 +71,7 @@ export function NeuralBrainOrb({ onNodeClick, onBackgroundClick, selectedNodeId 
   useMemoryGraph()
 
   const containerRef   = useRef<HTMLDivElement>(null)
-  const graphRef       = useRef<ForceGraphMethods | null>(null)
+  const graphRef       = useRef<ForceGraph3DInstance<GNode, GLink> | null>(null)
   const meshMapRef     = useRef<Map<string, THREE.Mesh>>(new Map())
   const hoveredIdRef   = useRef<string | null>(null)
   const edgesRef       = useRef<GraphEdge[]>([])
@@ -85,7 +85,9 @@ export function NeuralBrainOrb({ onNodeClick, onBackgroundClick, selectedNodeId 
     if (!containerRef.current) return
     const el = containerRef.current
 
-    const graph = ForceGraph3D({ rendererConfig: { alpha: true, antialias: true } })(el)
+    const _raw = new ForceGraph3D(el, { rendererConfig: { alpha: true, antialias: true } })
+    const graph = _raw as unknown as ForceGraph3DInstance<GNode, GLink>
+    graph
       .backgroundColor('rgba(0,0,0,0)')
       .nodeVal((n: GNode) => {
         const r = nodeRadius(n.connections ?? 0)

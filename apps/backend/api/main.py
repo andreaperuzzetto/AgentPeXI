@@ -1153,6 +1153,25 @@ async def get_screen_status() -> dict:
     }
 
 
+@personal_router.post("/api/screen/toggle")
+async def toggle_screen_watcher() -> dict:
+    """Attiva o mette in pausa ScreenWatcher.
+
+    - Se attivo (running e non in pausa) → pausa
+    - Se in pausa o fermo → riprende
+    Risposta: { active: bool, available: bool }
+    """
+    if screen_watcher is None:
+        return {"available": False, "active": False}
+    st = screen_watcher.get_status()
+    if st.get("active"):
+        screen_watcher.pause()
+        return {"available": True, "active": False}
+    else:
+        screen_watcher.resume()
+        return {"available": True, "active": True}
+
+
 # ------------------------------------------------------------------
 # Personal endpoints (protetti da personal_router)
 # ------------------------------------------------------------------

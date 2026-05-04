@@ -13,6 +13,7 @@ import { useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore } from '../store'
+import { useCompactLayout } from '../hooks/useCompactLayout'
 
 // ─── AutopilotSegmented ───────────────────────────────────────────────────────
 function AutopilotSegmented({
@@ -124,6 +125,9 @@ function MockToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => v
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 export function Header() {
+  const compact = useCompactLayout()
+  const leftOffset = compact ? 72 : 142
+
   const {
     autopilotStatus,
     llmStats,
@@ -173,7 +177,7 @@ export function Header() {
     <div style={{
       position:     'fixed',
       top:          12,
-      left:         142,
+      left:         leftOffset,
       right:        12,
       height:       52,
       zIndex:       20,

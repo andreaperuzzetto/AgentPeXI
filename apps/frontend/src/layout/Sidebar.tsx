@@ -4,6 +4,7 @@
  */
 import { motion } from 'framer-motion'
 import { useStore } from '../store'
+import { useCompactLayout } from '../hooks/useCompactLayout'
 
 // ─── Zone config ──────────────────────────────────────────────────────────────
 type Zone = 'neural' | 'etsy' | 'personal' | 'system' | 'analytics'
@@ -107,6 +108,9 @@ const ACTIVE_SPRING = { type: 'spring' as const, stiffness: 380, damping: 32 }
 export function Sidebar() {
   const activeZone    = useStore((s) => s.activeZone)
   const setActiveZone = useStore((s) => s.setActiveZone)
+  const compact       = useCompactLayout()
+
+  const W = compact ? 48 : 118
 
   return (
     <nav
@@ -115,8 +119,8 @@ export function Sidebar() {
         position:       'fixed',
         top:            12,
         left:           12,
-        width:          118,
-        height:         'calc(100vh - 24px)',
+        width:          W,
+        height:         'calc(100dvh - 24px)',
         borderRadius:   16,
         background:     'rgba(255,255,255,0.07)',
         backdropFilter: 'blur(32px)',
@@ -130,6 +134,7 @@ export function Sidebar() {
         paddingBottom:  16,
         gap:            2,
         overflow:       'hidden',
+        transition:     'width 0.2s ease',
       }}
     >
       {/* ── Logo ── */}
@@ -140,7 +145,7 @@ export function Sidebar() {
         alignItems:     'center',
         justifyContent: 'center',
         gap:            8,
-        padding:        '22px 0 18px',
+        padding:        compact ? '22px 0 18px' : '22px 0 18px',
         borderBottom:   '1px solid rgba(255,255,255,0.06)',
         flexShrink:     0,
       }}>
@@ -151,23 +156,24 @@ export function Sidebar() {
               <stop offset="100%" stopColor="#2260c0"/>
             </linearGradient>
           </defs>
-          {/* Clean geometric A */}
           <path d="M 6 32 L 18 6 L 30 32" stroke="url(#logo-a)" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
           <path d="M 10.8 21.5 L 25.2 21.5"  stroke="url(#logo-a)" strokeWidth="3.2" strokeLinecap="round" fill="none"/>
         </svg>
 
-        <span style={{
-          fontFamily:    'var(--fui)',
-          fontSize:      10,
-          fontWeight:    700,
-          letterSpacing: '0.18em',
-          textTransform: 'uppercase',
-          color:         'rgba(255,255,255,0.55)',
-          lineHeight:    1,
-          userSelect:    'none',
-        }}>
-          AgentPeXI
-        </span>
+        {!compact && (
+          <span style={{
+            fontFamily:    'var(--fui)',
+            fontSize:      10,
+            fontWeight:    700,
+            letterSpacing: '0.18em',
+            textTransform: 'uppercase',
+            color:         'rgba(255,255,255,0.55)',
+            lineHeight:    1,
+            userSelect:    'none',
+          }}>
+            AgentPeXI
+          </span>
+        )}
       </div>
 
       {/* ── Zone nav items ── */}
@@ -196,7 +202,7 @@ export function Sidebar() {
               transition={HOVER_SPRING}
               style={{
                 position:       'relative',
-                width:          94,
+                width:          compact ? 36 : 94,
                 paddingTop:     12,
                 paddingBottom:  10,
                 display:        'flex',
@@ -238,20 +244,22 @@ export function Sidebar() {
                 <IconComp color={zone.color} active={isActive} />
               </span>
 
-              {/* Label */}
-              <span style={{
-                fontFamily:    'var(--fui)',
-                fontSize:      11,
-                fontWeight:    isActive ? 600 : 500,
-                letterSpacing: '0.02em',
-                color:         isActive ? zone.color : 'rgba(255,255,255,0.42)',
-                lineHeight:    1,
-                transition:    'color 0.15s',
-                userSelect:    'none',
-                position:      'relative',
-              }}>
-                {zone.label}
-              </span>
+              {/* Label — hidden in compact mode */}
+              {!compact && (
+                <span style={{
+                  fontFamily:    'var(--fui)',
+                  fontSize:      11,
+                  fontWeight:    isActive ? 600 : 500,
+                  letterSpacing: '0.02em',
+                  color:         isActive ? zone.color : 'rgba(255,255,255,0.42)',
+                  lineHeight:    1,
+                  transition:    'color 0.15s',
+                  userSelect:    'none',
+                  position:      'relative',
+                }}>
+                  {zone.label}
+                </span>
+              )}
             </motion.button>
           )
         })}

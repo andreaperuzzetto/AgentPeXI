@@ -23,23 +23,21 @@ import { EtsyView } from '../views/EtsyView'
 import { PersonalView } from '../views/PersonalView'
 import { SystemView } from '../views/SystemView'
 import { AnalyticsView } from '../views/AnalyticsView'
-import { ContextOverlay } from '../components/ContextOverlay/ContextOverlay'
 import { VoiceNotificationStack } from '../components/VoiceNotification/VoiceNotificationStack'
 import { AnalyticsOverlay } from '../components/AnalyticsOverlay/AnalyticsOverlay'
 import { SystemOverlay } from '../components/SystemOverlay/SystemOverlay'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useStore } from '../store'
+import { useCompactLayout } from '../hooks/useCompactLayout'
 
 // ─── Transition spring ────────────────────────────────────────────────────────
 const VIEW_VARIANTS = {
-  initial:  { opacity: 0, y: 8 },
-  animate:  { opacity: 1, y: 0 },
-  exit:     { opacity: 0, y: -8 },
+  initial:  { opacity: 0, x: 20 },
+  animate:  { opacity: 1, x: 0  },
+  exit:     { opacity: 0, x: -20 },
 }
 const VIEW_TRANSITION = {
-  type: 'spring' as const,
-  stiffness: 100,
-  damping: 20,
+  ease:     'easeOut' as const,
   duration: 0.25,
 }
 
@@ -76,8 +74,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrState> {
 // ─── Shell ────────────────────────────────────────────────────────────────────
 export function Shell() {
   const activeZone   = useStore((s) => s.activeZone)
-  const briefOpen    = useStore((s) => s.briefOpen)
-  const setBriefOpen = useStore((s) => s.setBriefOpen)
+  const compact      = useCompactLayout()
+  const leftOffset   = compact ? 72 : 142
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
 
   const {
@@ -209,7 +207,7 @@ export function Shell() {
 
   return (
     <ErrorBoundary>
-      <div style={{ background: 'var(--bg-base)', minHeight: '100vh', overflow: 'hidden' }}>
+      <div style={{ background: 'var(--bg-base)', minHeight: '100dvh', overflow: 'hidden' }}>
 
         {/* ── Left sidebar — fixed 76px ── */}
         <Sidebar />
@@ -220,9 +218,9 @@ export function Shell() {
         {/* ── Main content area ── */}
         <main
           style={{
-            marginLeft: 142,
+            marginLeft: leftOffset,
             marginTop: 76,
-            height: 'calc(100vh - 76px)',
+            height: 'calc(100dvh - 76px)',
             overflow: 'hidden',
             position: 'relative',
           }}
@@ -243,13 +241,9 @@ export function Shell() {
         </main>
 
         {/* ── Top-level overlays ── */}
-        <ContextOverlay
-          open={briefOpen}
-          onClose={() => setBriefOpen(false)}
-        />
         <VoiceNotificationStack />
 
-        {/* Legacy overlays — rimangono fino a FE-4/FE-5 */}
+        {/* Legacy overlays */}
         <AnalyticsOverlay
           open={analyticsOpen}
           onClose={() => setAnalyticsOpen(false)}

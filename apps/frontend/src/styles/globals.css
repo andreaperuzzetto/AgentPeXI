@@ -121,6 +121,12 @@
 ══════════════════════════════════════════ */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+*, *::before, *::after {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.10) transparent;
+}
+
 html, body {
   height: 100%;
   width: 100%;
@@ -150,6 +156,12 @@ button {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.24); }
+
+:focus-visible {
+  outline:        2px solid rgba(255,255,255,0.30);
+  outline-offset: 2px;
+  border-radius:  4px;
+}
 
 /* ══════════════════════════════════════════
    DESIGN SYSTEM UTILITIES
@@ -809,6 +821,7 @@ button {
 @keyframes pulse-dot   { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.35;transform:scale(.7)} }
 @keyframes blink-cursor{ 0%,100%{opacity:1} 50%{opacity:0} }
 @keyframes orb-entry   { from{opacity:0;transform:scale(.68);filter:blur(16px)} to{opacity:1;transform:scale(1);filter:blur(0)} }
+@keyframes skel-pulse  { 0%,100%{opacity:.35} 50%{opacity:.65} }
 
 /* ── Utilities ── */
 .typing-cursor::after      { content:'▋'; animation:blink-cursor 1s step-end infinite; color:var(--acc); margin-left:2px; font-size:.9em; }
@@ -820,3 +833,8 @@ button {
 @media (prefers-reduced-motion: reduce) {
   *,*::before,*::after { animation-duration:.01ms !important; transition-duration:.01ms !important; }
 }
+
+
+/* ── AgentCard clickable hover ── */
+.ac-clickable-card { transition: border-color 0.15s ease, box-shadow 0.15s ease !important; }
+.ac-clickable-card:hover { border-color: rgba(255,255,255,0.18) !important; box-shadow: 0 0 0 1px rgba(255,255,255,0.06) !important; }
