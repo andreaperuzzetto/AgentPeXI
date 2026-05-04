@@ -69,6 +69,8 @@ async def get_etsy_niches(
     """
     if not state.memory:
         return {"niches": []}
+    if confidence is not None and confidence not in {"low", "medium", "high"}:
+        return JSONResponse(status_code=422, content={"error": "confidence must be low|medium|high"})
     try:
         db = await state.memory.get_db()
         conditions: list[str] = []

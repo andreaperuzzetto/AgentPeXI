@@ -105,6 +105,9 @@ async def get_scheduler_jobs() -> dict:
 @router.get("/api/production-queue", dependencies=[Depends(state.verify_personal_key)])
 async def get_production_queue(status: str | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
     """Lista items dalla production_queue, filtrabili per status."""
+    _VALID_STATUSES = {"all", "pending_approval", "approved", "skipped", "scheduled", "published", "failed", "discarded"}
+    if status is not None and status not in _VALID_STATUSES:
+        return JSONResponse(status_code=422, content={"error": f"status non valido: {status}"})
     if not state.memory:
         return {"items": []}
     filter_status = None if status == "all" else status
