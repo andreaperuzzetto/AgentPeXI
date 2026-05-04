@@ -55,11 +55,17 @@ class ImageGenerator:
     """
 
     def __init__(self, api_token: str | None = None) -> None:
-        self._token = api_token or os.getenv("REPLICATE_API_TOKEN")
+        if not api_token:
+            try:
+                from apps.backend.core.config import settings as _settings
+                api_token = _settings.REPLICATE_API_KEY or None
+            except Exception:
+                pass
+        self._token = api_token or os.getenv("REPLICATE_API_KEY") or os.getenv("REPLICATE_API_TOKEN")
         self._available = bool(self._token)
         if not self._available:
             logger.info(
-                "ImageGenerator: REPLICATE_API_TOKEN non trovato — "
+                "ImageGenerator: REPLICATE_API_KEY non trovata — "
                 "usando placeholder Pillow. Aggiungere il token al .env per abilitare Flux Pro."
             )
 

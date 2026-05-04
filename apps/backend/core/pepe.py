@@ -675,7 +675,8 @@ ESEMPI:
                     label=f"pepe.simple/{agent_name or 'unknown'}",
                 )
                 return resp.content[0].text if resp.content else ""
-            except Exception:
+            except Exception as exc:
+                logger.warning("_llm_simple_call [%s]: LLM fallito: %s", agent_name or "unknown", exc)
                 return ""
 
     async def _llm_decide(

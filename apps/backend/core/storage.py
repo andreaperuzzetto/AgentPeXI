@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from apps.backend.core.config import settings
@@ -56,10 +56,10 @@ class StorageManager:
 
     def archive_old_files(self, days: int = 30) -> int:
         """Archivia file in uploaded/ più vecchi di N giorni."""
-        cutoff = datetime.now() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         count = 0
         for f in self._uploaded.iterdir():
-            if f.is_file() and datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
+            if f.is_file() and datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc) < cutoff:
                 self.move_to_archived(f)
                 count += 1
         if count:

@@ -13,9 +13,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -506,8 +504,8 @@ async def lifespan(app: FastAPI):
             )
             rep_row   = await cursor_rep.fetchone()
             last_niche = rep_row["niche"] if rep_row else ""
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("niche_picker: lettura last_niche fallita (non bloccante): %s", exc)
 
         # B5/5.3 — Rileva niches con ladder_level='ctr_low' recenti (< 14 giorni)
         # → boost score +30% e flag regen_thumbnail=True per A/B thumbnail testing
@@ -869,6 +867,12 @@ personal_router = APIRouter(dependencies=[Depends(verify_personal_key)])
 # ------------------------------------------------------------------
 # REST endpoints
 # ------------------------------------------------------------------
+
+
+@app.get("/api/health")
+async def health_check() -> dict:
+    """Lightweight liveness probe — risponde anche prima del lifespan completo."""
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/status")
@@ -1301,8 +1305,8 @@ async def get_ollama_status() -> dict:
                     result["loaded"] = any(
                         settings.OLLAMA_MODEL in m for m in running
                     )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("get_ollama_status: Ollama non raggiungibile: %s", exc)
 
     return result
 
@@ -2317,8 +2321,8 @@ async def ws_voice(websocket: WebSocket) -> None:
                                             drained,
                                         )
                                         break
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    logger.debug("ws/voice: JSON parse ctrl msg fallito: %s", exc)
                         phase = "utterance"
                 except Exception as exc:
                     logger.warning("Errore wake word detection: %s", exc)
@@ -2458,8 +2462,6 @@ app.include_router(personal_router)
 # ------------------------------------------------------------------
 # Static files (frontend build) — montati per ultimi
 # ------------------------------------------------------------------
-
-import os
 
 _frontend_dist = os.path.join(
     os.path.dirname(__file__), "..", "..", "frontend", "dist"

@@ -16,6 +16,8 @@ import time as _time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from apps.backend.core.config import settings
+
 logger = logging.getLogger("agentpexi.finance_tracker")
 
 # ---------------------------------------------------------------------------
@@ -24,7 +26,9 @@ logger = logging.getLogger("agentpexi.finance_tracker")
 ETSY_LISTING_FEE_USD  = 0.20    # al publish + rinnovo ogni 4 mesi
 ETSY_TRANSACTION_PCT  = 0.065   # 6.5% del prezzo di vendita
 ETSY_PAYMENT_PCT      = 0.04    # ~4% processing
-EUR_USD_RATE          = 1.08    # usato per conversione USD → EUR nei calcoli
+# EUR_USD_RATE è derivato da settings.USD_EUR_RATE (1 / USD_per_EUR).
+# Aggiornare settings.USD_EUR_RATE nel .env per aggiornare entrambi i moduli.
+EUR_USD_RATE: float   = 1.0 / settings.USD_EUR_RATE  # es. 1/0.92 ≈ 1.087
 GOAL_EUR_DEFAULT      = 500.0   # target mensile (configurabile via /goal set)
 
 

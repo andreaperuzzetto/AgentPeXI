@@ -187,7 +187,8 @@ class ScreenWatcher:
     async def _check_and_capture(self) -> None:
         """Controlla se catturare: cambio app, diff pixel significativo."""
         # Recupera app attiva (thread sincrono → run_in_executor)
-        app_info = await asyncio.get_event_loop().run_in_executor(
+        _loop = asyncio.get_running_loop()
+        app_info = await _loop.run_in_executor(
             None, self._get_active_app
         )
         if app_info is None:
@@ -201,7 +202,7 @@ class ScreenWatcher:
             return
 
         # Screenshot (in executor per non bloccare asyncio)
-        screenshot_data = await asyncio.get_event_loop().run_in_executor(
+        screenshot_data = await _loop.run_in_executor(
             None, self._take_screenshot
         )
         if screenshot_data is None:
@@ -217,7 +218,7 @@ class ScreenWatcher:
 
         # Pixel diff check se stessa app
         if not app_changed and frame_changed:
-            diff = await asyncio.get_event_loop().run_in_executor(
+            diff = await _loop.run_in_executor(
                 None, self._pixel_diff, screenshot_data
             )
             if diff < _PIXEL_DIFF_THRESHOLD:
@@ -228,7 +229,7 @@ class ScreenWatcher:
         self._last_frame_hash = frame_hash
 
         # OCR
-        text = await asyncio.get_event_loop().run_in_executor(
+        text = await _loop.run_in_executor(
             None, self._ocr, screenshot_data
         )
         if not text or len(text.strip()) < 50:

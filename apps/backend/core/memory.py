@@ -582,10 +582,8 @@ class MemoryManager:
                 "UPDATE agent_logs SET status='failed' WHERE status='running'"
             )
             await self._db.commit()
-        except Exception:
-            pass
-
-    async def close(self) -> None:
+        except Exception as exc:
+            logger.warning("MemoryManager.init: cleanup agent_logs 'running' fallito: %s", exc)
         if self._db:
             await self._db.close()
             self._db = None

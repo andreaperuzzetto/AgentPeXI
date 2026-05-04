@@ -896,19 +896,19 @@ class Scheduler:
         jid = event.job_id
         if jid not in self._internal_jobs:
             with self._job_status_lock:
-                self._job_status[jid] = {"status": "running", "last_run": datetime.now().isoformat()}
+                self._job_status[jid] = {"status": "running", "last_run": datetime.now(timezone.utc).isoformat()}
 
     def _on_job_executed(self, event: Any) -> None:
         jid = event.job_id
         if jid not in self._internal_jobs:
             with self._job_status_lock:
-                self._job_status[jid] = {"status": "completed", "last_run": datetime.now().isoformat()}
+                self._job_status[jid] = {"status": "completed", "last_run": datetime.now(timezone.utc).isoformat()}
 
     def _on_job_error(self, event: Any) -> None:
         jid = event.job_id
         if jid not in self._internal_jobs:
             with self._job_status_lock:
-                self._job_status[jid] = {"status": "failed", "last_run": datetime.now().isoformat()}
+                self._job_status[jid] = {"status": "failed", "last_run": datetime.now(timezone.utc).isoformat()}
 
     # ------------------------------------------------------------------
     # API
