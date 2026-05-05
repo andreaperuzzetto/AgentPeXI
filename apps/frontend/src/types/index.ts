@@ -257,7 +257,7 @@ export interface NicheItem {
   google_trend_score:  number | null
   /* PA-7 nuovi campi */
   audience_target:     string | null
-  expansion_potential: number | null
+  expansion_potential: 'high' | 'medium' | 'low' | null
   section_name:        string | null
 }
 

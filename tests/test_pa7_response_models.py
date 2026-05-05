@@ -74,7 +74,7 @@ class TestNicheItemResponseFields:
             avg_price_eur=9.99,
             google_trend_score=65.0,
             audience_target="home decor lovers",
-            expansion_potential=3,
+            expansion_potential="high",
             section_name="Wall Art",
         )
         assert item.niche == "wall art"

@@ -362,8 +362,10 @@ def test_confidence_capped_when_audience_target_absent():
     )
 
 
-def test_niche_item_expansion_potential_non_negative():
-    """Contract: NicheItemResponse.expansion_potential must be None or >= 0."""
+def test_niche_item_expansion_potential_is_string_enum():
+    """Contract: expansion_potential must be Literal['high','medium','low'] | None.
+    The LLM research prompt emits string values, not integers.
+    """
     from pydantic import ValidationError
     from apps.backend.api.routers.etsy import NicheItemResponse
 
@@ -384,10 +386,12 @@ def test_niche_item_expansion_potential_non_negative():
     )
     # Valid: None (field is optional)
     assert NicheItemResponse(**_BASE, expansion_potential=None).expansion_potential is None
-    # Valid: zero
-    assert NicheItemResponse(**_BASE, expansion_potential=0).expansion_potential == 0
-    # Valid: positive int
-    assert NicheItemResponse(**_BASE, expansion_potential=42).expansion_potential == 42
-    # Invalid: negative must raise ValidationError
+    # Valid: all three literal string values
+    for val in ("high", "medium", "low"):
+        assert NicheItemResponse(**_BASE, expansion_potential=val).expansion_potential == val
+    # Invalid: integer must raise ValidationError (LLM never emits ints)
     with pytest.raises(ValidationError):
-        NicheItemResponse(**_BASE, expansion_potential=-1)
+        NicheItemResponse(**_BASE, expansion_potential=42)
+    # Invalid: unrecognised string must raise ValidationError
+    with pytest.raises(ValidationError):
+        NicheItemResponse(**_BASE, expansion_potential="very_high")
