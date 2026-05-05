@@ -488,3 +488,82 @@ async def test_wiki_lint_no_pepe(client):
 async def test_wiki_requires_auth(unauth_client):
     r = await unauth_client.get("/api/wiki/stats")
     assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# M7: /api/etsy/niches must return audience_target, expansion_potential,
+#     section_name when data is present in the DB
+# ---------------------------------------------------------------------------
+
+async def test_niches_endpoint_returns_audience_target_expansion_potential_section_name(app):
+    """M7: /api/etsy/niches must populate audience_target, expansion_potential, section_name.
+
+    Creates a real in-memory DB using the canonical _SCHEMA, seeds niche_intelligence
+    with audience_target and expansion_potential, seeds etsy_sections + niche_section_map
+    for section_name, then verifies the endpoint returns all three fields.
+    """
+    import aiosqlite
+    from unittest.mock import AsyncMock
+
+    from apps.backend.core._memory._base import _SCHEMA
+    import apps.backend.api.state as _state
+
+    async with aiosqlite.connect(":memory:") as db:
+        db.row_factory = aiosqlite.Row
+        await db.executescript(_SCHEMA)
+
+        # Seed a section
+        await db.execute(
+            "INSERT INTO etsy_sections (section_id, section_name, is_active) VALUES (?, ?, 1)",
+            ("sec-1", "Digital Planners"),
+        )
+        # Seed the niche_section_map
+        await db.execute(
+            "INSERT INTO niche_section_map (niche_key, section_id, mapped_by) VALUES (?, ?, ?)",
+            ("mindfulness_planner", "sec-1", "test"),
+        )
+        # Seed niche_intelligence with audience_target + expansion_potential
+        await db.execute(
+            """
+            INSERT INTO niche_intelligence
+                (niche, product_type, performance_score, confidence_level,
+                 audience_target, expansion_potential, last_updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, unixepoch())
+            """,
+            (
+                "mindfulness_planner", "printable_pdf",
+                0.80, "high",
+                "donne 25-40 interessate a mindfulness",
+                "high",
+            ),
+        )
+        await db.commit()
+
+        # Mock MemoryManager.get_db to return our seeded DB
+        mock_memory = AsyncMock()
+        mock_memory.get_db = AsyncMock(return_value=db)
+
+        prev_memory = _state.memory
+        _state.memory = mock_memory
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as ac:
+                r = await ac.get("/api/etsy/niches")
+        finally:
+            _state.memory = prev_memory
+
+    assert r.status_code == 200
+    niches = r.json()["niches"]
+    assert len(niches) == 1
+    item = niches[0]
+    assert item["audience_target"] == "donne 25-40 interessate a mindfulness", (
+        "audience_target non restituito dall'endpoint — colonna mancante o SELECT incompleto"
+    )
+    assert item["expansion_potential"] == "high", (
+        "expansion_potential non restituito dall'endpoint"
+    )
+    assert item["section_name"] == "Digital Planners", (
+        "section_name non restituito — JOIN con etsy_sections mancante"
+    )

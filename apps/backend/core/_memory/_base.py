@@ -333,6 +333,8 @@ CREATE TABLE IF NOT EXISTS niche_intelligence (
     confidence_level     TEXT    DEFAULT 'low',
     last_sale_at         REAL,
     last_updated_at      REAL    NOT NULL DEFAULT (unixepoch()),
+    audience_target      TEXT,                       -- buyer persona dal Research Agent [M7]
+    expansion_potential  TEXT,                       -- high|medium|low — espandibilità niche [M7]
     UNIQUE(niche, product_type)
 );
 CREATE INDEX IF NOT EXISTS idx_ni_score ON niche_intelligence(performance_score DESC);
@@ -509,6 +511,9 @@ class MemoryBase:
             # niche_intelligence — CTR aggregato e velocità vendita [B4]
             "ALTER TABLE niche_intelligence ADD COLUMN avg_ctr REAL DEFAULT 0.0",
             "ALTER TABLE niche_intelligence ADD COLUMN avg_days_to_sale REAL",
+            # niche_intelligence — research metadata columns [M7]
+            "ALTER TABLE niche_intelligence ADD COLUMN audience_target TEXT",
+            "ALTER TABLE niche_intelligence ADD COLUMN expansion_potential TEXT",
             # revenue_events — fee listing separata dal design cost [B4]
             "ALTER TABLE revenue_events ADD COLUMN listing_fee_eur REAL DEFAULT 0.18",
             # production_queue — timestamp base (mancanti nei DB creati prima del DDL aggiornato)

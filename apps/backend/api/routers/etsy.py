@@ -124,10 +124,13 @@ async def get_etsy_niches(
                 ni.total_listings,
                 ni.total_revenue_eur,
                 ni.last_updated_at,
+                ni.audience_target,
+                ni.expansion_potential,
                 ms.entry_score,
                 ms.tier,
                 ms.avg_price_eur,
-                ms.google_trend_score
+                ms.google_trend_score,
+                es.section_name
             FROM niche_intelligence ni
             LEFT JOIN (
                 SELECT ms1.niche,
@@ -143,6 +146,8 @@ async def get_etsy_niches(
                 ) latest ON ms1.niche = latest.niche
                          AND ms1.collected_at = latest.max_at
             ) ms ON ms.niche = ni.niche
+            LEFT JOIN niche_section_map nsm ON nsm.niche_key = ni.niche
+            LEFT JOIN etsy_sections es ON es.section_id = nsm.section_id
             {where}
             ORDER BY COALESCE(ms.entry_score, ni.performance_score) DESC
             """,
