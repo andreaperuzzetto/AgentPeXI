@@ -179,6 +179,19 @@ interface AgentPeXIStore {
   /* Active node IDs — pulsating nodes from WS memory_query (auto-clear 2.5s) */
   activeNodeIds: Set<string>
   addActiveNodeId: (id: string) => void
+
+  /* EtsyView shared state — PA-8 */
+  etsyView: {
+    activeSectionKey: string | null
+    nicheFilter: string
+    statusFilter: string
+    warmupState: 'idle' | 'running' | 'completed'
+    warmupCandidatesCount: number
+  }
+  setEtsyViewFilter:   (nicheFilter: string) => void
+  setEtsyStatusFilter: (statusFilter: string) => void
+  setEtsyActiveSection:(key: string | null) => void
+  setEtsyWarmupState:  (state: 'idle' | 'running' | 'completed', count?: number) => void
 }
 
 export const useStore = create<AgentPeXIStore>((set) => ({
@@ -328,4 +341,22 @@ export const useStore = create<AgentPeXIStore>((set) => ({
     }, 2500)
     _nodeTimers.set(id, timer)
   },
+
+  etsyView: {
+    activeSectionKey: null,
+    nicheFilter: '',
+    statusFilter: 'all',
+    warmupState: 'idle',
+    warmupCandidatesCount: 0,
+  },
+  setEtsyViewFilter:   (nicheFilter)  => set((s) => ({ etsyView: { ...s.etsyView, nicheFilter } })),
+  setEtsyStatusFilter: (statusFilter) => set((s) => ({ etsyView: { ...s.etsyView, statusFilter } })),
+  setEtsyActiveSection:(key)          => set((s) => ({ etsyView: { ...s.etsyView, activeSectionKey: key } })),
+  setEtsyWarmupState:  (state, count) => set((s) => ({
+    etsyView: {
+      ...s.etsyView,
+      warmupState: state,
+      warmupCandidatesCount: count ?? s.etsyView.warmupCandidatesCount,
+    },
+  })),
 }))
