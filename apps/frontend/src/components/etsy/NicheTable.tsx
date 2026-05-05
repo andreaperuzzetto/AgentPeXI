@@ -17,6 +17,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence }                    from 'framer-motion'
 import type { NicheItem }                             from '../../types'
+import { useStore }                                   from '../../store'
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -206,7 +207,8 @@ export function NicheTable() {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState<string | null>(null)
 
-  const [nicheFilter, setNicheFilter] = useState('')
+  const nicheFilter    = useStore((s) => s.etsyView.nicheFilter)
+  const setNicheFilter = useStore((s) => s.setEtsyViewFilter)
   const [sortKey,     setSortKey]     = useState<SortKey>('entry_score')
 
   const fetchNiches = useCallback(async (signal?: AbortSignal) => {
