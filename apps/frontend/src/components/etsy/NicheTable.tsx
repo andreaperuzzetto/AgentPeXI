@@ -207,8 +207,8 @@ export function NicheTable() {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState<string | null>(null)
 
-  const nicheFilter    = useStore((s) => s.etsyView.nicheFilter)
-  const setNicheFilter = useStore((s) => s.setEtsyViewFilter)
+  const nicheFilter    = useStore((s) => s.etsyView.nicheTableFilter)
+  const setNicheFilter = useStore((s) => s.setNicheTableFilter)
   const [sortKey,     setSortKey]     = useState<SortKey>('entry_score')
 
   const fetchNiches = useCallback(async (signal?: AbortSignal) => {

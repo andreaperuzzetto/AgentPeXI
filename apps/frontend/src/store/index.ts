@@ -183,12 +183,16 @@ interface AgentPeXIStore {
   /* EtsyView shared state — PA-8 */
   etsyView: {
     activeSectionKey: string | null
-    nicheFilter: string
+    /** Filter input in NicheTable — independent from pipeline filter (M9) */
+    nicheTableFilter: string
+    /** Filter input in ProductionPipeline — independent from table filter (M9) */
+    pipelineNicheFilter: string
     statusFilter: string
     warmupState: 'idle' | 'running' | 'completed'
     warmupCandidatesCount: number
   }
-  setEtsyViewFilter:   (nicheFilter: string) => void
+  setNicheTableFilter:  (filter: string) => void
+  setPipelineNicheFilter: (filter: string) => void
   setEtsyStatusFilter: (statusFilter: string) => void
   setEtsyActiveSection:(key: string | null) => void
   setEtsyWarmupState:  (state: 'idle' | 'running' | 'completed', count?: number) => void
@@ -344,12 +348,14 @@ export const useStore = create<AgentPeXIStore>((set) => ({
 
   etsyView: {
     activeSectionKey: null,
-    nicheFilter: '',
+    nicheTableFilter: '',
+    pipelineNicheFilter: '',
     statusFilter: 'all',
     warmupState: 'idle',
     warmupCandidatesCount: 0,
   },
-  setEtsyViewFilter:   (nicheFilter)  => set((s) => ({ etsyView: { ...s.etsyView, nicheFilter } })),
+  setNicheTableFilter:    (filter) => set((s) => ({ etsyView: { ...s.etsyView, nicheTableFilter: filter } })),
+  setPipelineNicheFilter: (filter) => set((s) => ({ etsyView: { ...s.etsyView, pipelineNicheFilter: filter } })),
   setEtsyStatusFilter: (statusFilter) => set((s) => ({ etsyView: { ...s.etsyView, statusFilter } })),
   setEtsyActiveSection:(key)          => set((s) => ({ etsyView: { ...s.etsyView, activeSectionKey: key } })),
   setEtsyWarmupState:  (state, count) => set((s) => ({

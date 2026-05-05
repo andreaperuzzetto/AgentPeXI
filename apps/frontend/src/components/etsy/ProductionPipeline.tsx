@@ -251,8 +251,8 @@ export function ProductionPipeline() {
   /* Filters */
   const statusFilter    = useStore((s) => s.etsyView.statusFilter)
   const setStatusFilter = useStore((s) => s.setEtsyStatusFilter)
-  const nicheFilter     = useStore((s) => s.etsyView.nicheFilter)
-  const setNicheFilter  = useStore((s) => s.setEtsyViewFilter)
+  const nicheFilter     = useStore((s) => s.etsyView.pipelineNicheFilter)
+  const setNicheFilter  = useStore((s) => s.setPipelineNicheFilter)
 
   /* Fetch */
   const fetchItems = useCallback(async (signal?: AbortSignal) => {
