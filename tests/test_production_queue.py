@@ -467,6 +467,18 @@ async def test_consecutive_timeouts_counts(queue):
     assert await queue.consecutive_timeouts() == 2
 
 
+def test_consecutive_skip_window_is_named_constant():
+    """M2/L2: LIMIT 20 in consecutive_user_skips/consecutive_timeouts deve essere
+    una costante nominata a livello di modulo, non un magic number hardcoded.
+
+    Garantisce che il ceiling sia documentato e modificabile in un solo posto.
+    """
+    from apps.backend.core.production_queue import _CONSECUTIVE_SKIP_WINDOW
+
+    assert isinstance(_CONSECUTIVE_SKIP_WINDOW, int), "deve essere un intero"
+    assert _CONSECUTIVE_SKIP_WINDOW > 0, "deve essere positivo"
+
+
 # ---------------------------------------------------------------------------
 # discard_stale_approvals
 # ---------------------------------------------------------------------------

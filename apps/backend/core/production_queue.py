@@ -30,6 +30,11 @@ _SKIP_REASON_COL: dict[str, str] = {
     "budget":  "skip_count_user",   # budget skips count against the user quota
 }
 
+# Number of most-recent queue items scanned to detect consecutive skip streaks.
+# Increasing this value improves accuracy for long streaks at the cost of a
+# slightly larger DB read.
+_CONSECUTIVE_SKIP_WINDOW: int = 20
+
 # ---------------------------------------------------------------------------
 # Dataclass
 # ---------------------------------------------------------------------------
@@ -577,9 +582,9 @@ class ProductionQueueService:
     async def consecutive_user_skips(self) -> int:
         """Numero di skip 'user' consecutivi (dalla fine, interrotti da approvazione)."""
         rows = await self._fetchall(
-            """
+            f"""
             SELECT status, skip_reason FROM production_queue
-            ORDER BY id DESC LIMIT 20
+            ORDER BY id DESC LIMIT {_CONSECUTIVE_SKIP_WINDOW}
             """
         )
         count = 0
@@ -594,9 +599,9 @@ class ProductionQueueService:
     async def consecutive_timeouts(self) -> int:
         """Numero di skip 'timeout' consecutivi."""
         rows = await self._fetchall(
-            """
+            f"""
             SELECT status, skip_reason FROM production_queue
-            ORDER BY id DESC LIMIT 20
+            ORDER BY id DESC LIMIT {_CONSECUTIVE_SKIP_WINDOW}
             """
         )
         count = 0
