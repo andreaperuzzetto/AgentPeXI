@@ -150,3 +150,36 @@ async def test_map_niche_mapped_by_auto(svc, db):
     row = await cursor.fetchone()
     assert row["mapped_by"] == "auto"
     assert abs(row["auto_confidence"] - 0.92) < 0.001
+
+
+@pytest.mark.asyncio
+async def test_sync_sections_batch_inserts_all(svc, db):
+    """sync_sections() deve inserire tutti gli N elementi del batch in un'unica operazione.
+
+    Verifica che il contratto funzioni correttamente con un batch arbitrariamente grande,
+    non solo con i 2 elementi dei test base.
+    """
+    batch = [
+        {"shop_section_id": f"sec{i}", "title": f"Section {i}", "active_listing_count": i * 5}
+        for i in range(1, 11)  # 10 sezioni
+    ]
+    await svc.sync_sections(batch)
+    cursor = await db.execute("SELECT COUNT(*) AS n FROM etsy_sections")
+    row = await cursor.fetchone()
+    assert row["n"] == 10
+    # Verifica che titoli e conteggi siano corretti
+    cursor2 = await db.execute(
+        "SELECT section_name, listing_count FROM etsy_sections WHERE section_id = 'sec5'"
+    )
+    row2 = await cursor2.fetchone()
+    assert row2["section_name"] == "Section 5"
+    assert row2["listing_count"] == 25
+
+
+@pytest.mark.asyncio
+async def test_sync_sections_empty_list_is_noop(svc, db):
+    """sync_sections([]) non deve inserire nulla né sollevare eccezioni."""
+    await svc.sync_sections([])
+    cursor = await db.execute("SELECT COUNT(*) AS n FROM etsy_sections")
+    row = await cursor.fetchone()
+    assert row["n"] == 0

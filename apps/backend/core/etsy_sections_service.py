@@ -27,21 +27,30 @@ class EtsySectionsService:
             shop_section_id (str | int)  — ID Etsy
             title (str)                  — nome sezione
             active_listing_count (int)   — optional, default 0
+
+        Usa executemany per un singolo round-trip invece di N execute() separati.
         """
-        for s in sections:
-            section_id = str(s["shop_section_id"])
-            section_name = s["title"]
-            listing_count = int(s.get("active_listing_count", 0))
-            await self._db.execute(
-                """
-                INSERT INTO etsy_sections (section_id, section_name, created_at, listing_count)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(section_id) DO UPDATE SET
-                    section_name  = excluded.section_name,
-                    listing_count = excluded.listing_count
-                """,
-                (section_id, section_name, _now_iso(), listing_count),
+        if not sections:
+            return
+        params = [
+            (
+                str(s["shop_section_id"]),
+                s["title"],
+                _now_iso(),
+                int(s.get("active_listing_count", 0)),
             )
+            for s in sections
+        ]
+        await self._db.executemany(
+            """
+            INSERT INTO etsy_sections (section_id, section_name, created_at, listing_count)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(section_id) DO UPDATE SET
+                section_name  = excluded.section_name,
+                listing_count = excluded.listing_count
+            """,
+            params,
+        )
         await self._db.commit()
 
     async def map_niche(
