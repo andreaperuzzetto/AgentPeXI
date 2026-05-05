@@ -122,4 +122,10 @@ class _ResearchScoringMixin:
             score += 0.01
             missing.append("timing stagionale non specificato")
 
+        # audience_target mandatory (schema v2)
+        # Absent → cap score at 0.4; without audience targeting A.0 filtering is unreliable.
+        if not sample.get("audience_target", "").strip():
+            missing.append("audience_target assente — cap confidence a 0.4")
+            score = min(score, 0.40)
+
         return round(min(score, 1.0), 2), missing

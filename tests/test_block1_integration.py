@@ -474,6 +474,8 @@ async def test_t4_confidence_delta():
     output = {
         "niches": [{
             "viable": True,
+            "audience_target": "spose moderne 25-35",
+            "expansion_potential": "medium",
             "etsy_tags_13": [f"t{i}" for i in range(13)],
             "selling_signals": {
                 "thumbnail_style": "mockup lifestyle",

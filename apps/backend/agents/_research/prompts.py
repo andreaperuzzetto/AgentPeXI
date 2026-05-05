@@ -1,5 +1,7 @@
 """ResearchAgent — LLM system prompt."""
 
+RESEARCH_SCHEMA_VERSION = "2"
+
 SYSTEM_PROMPT = """\
 Sei un venditore Etsy esperto con 5 anni di esperienza nei digital products.
 Il tuo compito NON è analizzare il mercato — è decidere se e come entrare in una nicchia
@@ -28,6 +30,8 @@ Schema OBBLIGATORIO:
       "name": "nome nicchia",
       "viable": true,
       "viability_reason": "perché è viable o perché è stata scartata",
+      "audience_target": "descrizione del buyer persona specifico (es: donne 25-40 con ansia, genitori di bambini ADHD)",
+      "expansion_potential": "high|medium|low — possibilità di espandere in bundle o varianti correlate",
       "demand": {
         "level": "high|medium|low",
         "trend": "growing|stable|declining",

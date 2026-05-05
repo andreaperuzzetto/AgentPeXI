@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from apps.backend.agents._research.prompts import SYSTEM_PROMPT
+from apps.backend.agents._research.prompts import RESEARCH_SCHEMA_VERSION, SYSTEM_PROMPT
 from apps.backend.core.config import MODEL_SONNET
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.tools import tavily as tavily_tool
@@ -17,6 +17,24 @@ logger = logging.getLogger("agentpexi.research")
 
 
 class _ResearchAnalysisMixin:
+
+    @staticmethod
+    def _is_cache_valid(meta: dict) -> bool:
+        """Return True only if cache entry is fresh (< 7 days) AND matches current schema version."""
+        created_at_str = meta.get("created_at", "")
+        if not created_at_str:
+            return False
+        try:
+            from datetime import timedelta
+            created_at = datetime.fromisoformat(created_at_str)
+            # Normalise to naive UTC to handle both aware and naive ISO strings
+            if created_at.tzinfo is not None:
+                created_at = created_at.replace(tzinfo=None)
+            age_ok = datetime.now(timezone.utc).replace(tzinfo=None) - created_at < timedelta(days=7)
+        except (ValueError, TypeError):
+            return False
+        schema_ok = meta.get("schema_version") == RESEARCH_SCHEMA_VERSION
+        return age_ok and schema_ok
 
     async def _single_research(self, task: AgentTask, query: str) -> AgentResult:
         """Ricerca generica basata su query libera — allineata a _single_niche_research."""
@@ -207,16 +225,9 @@ class _ResearchAnalysisMixin:
         cached_data = None
         if cached:
             meta = cached[0].get("metadata", {})
-            created_at_str = meta.get("created_at", "")
-            if created_at_str:
-                try:
-                    from datetime import timedelta
-                    created_at = datetime.fromisoformat(created_at_str)
-                    if datetime.now(timezone.utc).replace(tzinfo=None) - created_at < timedelta(days=7):
-                        use_cache = True
-                        cached_data = cached[0]
-                except (ValueError, TypeError):
-                    pass
+            if self._is_cache_valid(meta):
+                use_cache = True
+                cached_data = cached[0]
 
         # Step 0b — Failure analysis passate
         failure_context = await self.memory.query_chromadb_recent(
@@ -435,6 +446,7 @@ class _ResearchAnalysisMixin:
                     "agent": self.name,
                     "task_id": self._task_id,
                     "created_at": datetime.now(timezone.utc).isoformat(),
+                    "schema_version": RESEARCH_SCHEMA_VERSION,
                     "confidence": confidence,
                     "peak_months": str(first_viable.get("demand", {}).get("peak_months", [])),
                     "etsy_tags_13": json.dumps(first_viable.get("etsy_tags_13", [])[:13]),

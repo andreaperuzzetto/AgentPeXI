@@ -7,7 +7,7 @@ from apps.backend.agents._research.scoring_mixin import _ResearchScoringMixin
 
 
 def _make_output(n_tags=13, has_selling=True, has_pricing=True, has_timing=True, viable=True):
-    """Build a minimal output dict with one niche."""
+    """Build a minimal output dict with one niche (schema v2: includes audience_target)."""
     selling = (
         {
             "thumbnail_style": "clean",
@@ -33,6 +33,8 @@ def _make_output(n_tags=13, has_selling=True, has_pricing=True, has_timing=True,
             {
                 "name": "Test Niche",
                 "viable": viable,
+                "audience_target": "women 25-40 interested in planning",
+                "expansion_potential": "high",
                 "etsy_tags_13": [f"tag{i}" for i in range(n_tags)],
                 "selling_signals": selling,
                 "pricing": pricing,
