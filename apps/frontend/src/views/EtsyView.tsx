@@ -1,9 +1,10 @@
 /**
  * EtsyView — vista completa pipeline Etsy
  *
- * Layout: two-column (mockup Stitch aligned)
- *   LEFT  (1fr):  ProductionPipeline · BudgetGauges · NicheTable
- *   RIGHT (300px): BundleStatus · AdsStatus · ShopOptimizerCard (sticky)
+ * Layout: three-column
+ *   LEFT    (280px): SectionsPanel (PA A.1 — placeholder)
+ *   CENTER  (1fr):   ProductionPipeline · BudgetGauges · NicheTable
+ *   RIGHT   (300px): BundleStatus · AdsStatus · ShopOptimizerCard (sticky)
  *
  * Mobile (< 800px): single-column collapse.
  */
@@ -28,7 +29,7 @@ export function EtsyView() {
       <style>{`
         .etsy-grid {
           display: grid;
-          grid-template-columns: 1fr 300px;
+          grid-template-columns: 280px 1fr 300px;
           gap: 16px;
           align-items: start;
           width: 100%;
