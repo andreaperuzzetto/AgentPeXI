@@ -50,9 +50,9 @@ async def get_autopilot_status() -> dict:
             "items_today":   items_today,
             "last_run_at":   float(last_run_raw) if last_run_raw else None,
         }
-    except Exception as exc:
+    except Exception:
         logger.exception("get_autopilot_status error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.post("/api/autopilot/start")
@@ -66,9 +66,9 @@ async def autopilot_start() -> dict:
             return {"status": "running", "message": "Loop già in esecuzione"}
         await state.autopilot_loop.resume()
         return {"status": "running"}
-    except Exception as exc:
+    except Exception:
         logger.exception("autopilot_start error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.post("/api/autopilot/pause")
@@ -79,9 +79,9 @@ async def autopilot_pause() -> dict:
     try:
         await state.autopilot_loop.stop()   # stop() → paused_manual
         return {"status": "paused"}
-    except Exception as exc:
+    except Exception:
         logger.exception("autopilot_pause error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.post("/api/autopilot/stop")
@@ -94,9 +94,9 @@ async def autopilot_stop() -> dict:
         await state.autopilot_loop._set_status("idle")
         await state.autopilot_loop._state_set("loop.current_niche", "")
         return {"status": "stopped"}
-    except Exception as exc:
+    except Exception:
         logger.exception("autopilot_stop error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.post("/api/run/analytics")

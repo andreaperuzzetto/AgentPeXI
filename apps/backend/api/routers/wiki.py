@@ -1,9 +1,11 @@
 import logging
 import re
+from typing import Literal
 
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 logger = logging.getLogger("agentpexi.api")
 router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
@@ -70,15 +72,23 @@ async def get_wiki_niche(niche: str) -> dict:
         return JSONResponse(status_code=500, content={"error": "Errore interno"})
 
 
+class _WikiDomainBody(BaseModel):
+    domain: Literal["etsy", "personal"] = "etsy"
+
+
+class _SwitchDomainBody(BaseModel):
+    domain: Literal["etsy", "personal"]
+
+
 @router.post("/api/wiki/lint")
-async def wiki_lint(body: dict | None = None) -> dict:
+async def wiki_lint(body: _WikiDomainBody | None = None) -> dict:
     """Lint wiki: wikilinks rotti + raw pending + suggerimenti.
 
     Body: {domain: 'etsy'|'personal'} (default: etsy).
     """
     if not state.pepe or not getattr(state.pepe, "wiki", None):
         return JSONResponse(status_code=503, content={"error": "WikiManager non inizializzato"})
-    domain = (body or {}).get("domain", "etsy")
+    domain = (body.domain if body else "etsy")
     llm_etsy, llm_personal = _get_wiki_llms()
     llm = llm_personal if domain == "personal" else llm_etsy
     if not llm:
@@ -92,17 +102,14 @@ async def wiki_lint(body: dict | None = None) -> dict:
 
 
 @router.post("/api/domain")
-async def switch_domain(body: dict) -> dict:
+async def switch_domain(body: _SwitchDomainBody) -> dict:
     """Cambia dominio attivo. Body: {domain: 'etsy'|'personal'}."""
     if not state.pepe:
         return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
     from apps.backend.core.domains import DOMAIN_ETSY
-    domain_name = (body or {}).get("domain", "")
-    if domain_name == "personal":
+    if body.domain == "personal":
         state.pepe.set_active_domain(None)
-    elif domain_name == "etsy":
-        state.pepe.set_active_domain(DOMAIN_ETSY)
     else:
-        return JSONResponse(status_code=400, content={"error": f"Dominio sconosciuto: {domain_name}"})
-    await state.ws_manager.broadcast({"type": "domain_switched", "domain": domain_name})
-    return {"domain": domain_name}
+        state.pepe.set_active_domain(DOMAIN_ETSY)
+    await state.ws_manager.broadcast({"type": "domain_switched", "domain": body.domain})
+    return {"domain": body.domain}

@@ -27,6 +27,7 @@ storage/
 
 # OS
 .DS_Store
+._*
 Thumbs.db
 
 # Frontend build

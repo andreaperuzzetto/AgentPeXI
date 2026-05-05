@@ -97,9 +97,9 @@ async def get_scheduler_jobs() -> dict:
         return {"jobs": []}
     try:
         return {"jobs": state.scheduler.get_jobs()}
-    except Exception as exc:
+    except Exception:
         logger.exception("get_scheduler_jobs error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.get("/api/production-queue", dependencies=[Depends(state.verify_personal_key)])

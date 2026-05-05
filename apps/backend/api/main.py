@@ -335,6 +335,8 @@ async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
 
     # Durata della finestra di ascolto post-risposta (Step 6)
     _POST_REPLY_S: float = 20.0
+    # Max blob size: 4 MB per blob WebM (3s @128kbps ≈ 48KB; 4MB is a generous ceiling)
+    _MAX_BLOB_BYTES: int = 4 * 1024 * 1024
 
     try:
         while True:
@@ -353,6 +355,15 @@ async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
                 await websocket.send_json({"type": "done"})
                 phase = "wakeword"
                 _post_reply_timeout = None
+                continue
+
+            # ── Reject oversized blobs to prevent memory exhaustion ──────────
+            if len(data) > _MAX_BLOB_BYTES:
+                logger.warning(
+                    "Voice: blob troppo grande (%d bytes > %d) — scartato",
+                    len(data), _MAX_BLOB_BYTES,
+                )
+                await websocket.send_json({"type": "error", "message": "Blob audio troppo grande"})
                 continue
 
             # ── Fase 1: ogni messaggio è un blob WebM completo da 3s ──────────
@@ -503,7 +514,6 @@ async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
                     await websocket.send_json({
                         "type": "error",
                         "message": "Errore elaborazione",
-                        "detail": str(stt_exc),
                         "agent": "stt/pepe",
                         "ts": datetime.now(timezone.utc).isoformat(),
                     })
@@ -540,6 +550,7 @@ async def ws_chat(ws: WebSocket, key: str = Query("")) -> None:
     except WebSocketDisconnect:
         state.ws_manager.disconnect(ws)
     except Exception:
+        logger.exception("Errore imprevisto in /ws/chat")
         state.ws_manager.disconnect(ws)
 
 

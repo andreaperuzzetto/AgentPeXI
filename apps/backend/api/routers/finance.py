@@ -6,6 +6,7 @@ from typing import Annotated
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from apps.backend.core.models import AgentTask
 
@@ -15,8 +16,8 @@ router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 @router.get("/api/finance/summary")
 async def get_finance_summary(
-    year: int | None = None,
-    month: int | None = None,
+    year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
+    month: Annotated[int | None, Query(ge=1, le=12)] = None,
 ) -> dict:
     """
     P&L mensile aggregato + breakdown per niche (FE-Blocco 0.2).
@@ -90,12 +91,16 @@ async def get_finance_report(days: Annotated[int, Query(ge=1, le=365)] = 30) -> 
     return {"report": results[0] if results else None, "days": days}
 
 
+class _FinanceRunBody(BaseModel):
+    period_days: int = Field(default=30, ge=1, le=365)
+
+
 @router.post("/api/finance/run")
-async def run_finance_agent(request: Request, body: dict | None = None) -> dict:
+async def run_finance_agent(body: _FinanceRunBody | None = None) -> dict:
     """Esegue il FinanceAgent manualmente (period_days dal body, default 30)."""
     if not state.pepe:
         return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    period_days = max(1, min(int((body or {}).get("period_days", 30)), 365))
+    period_days = (body.period_days if body else 30)
     task_id = str(uuid.uuid4())
     task = AgentTask(
         task_id=task_id,

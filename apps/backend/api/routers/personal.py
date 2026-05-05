@@ -1,9 +1,12 @@
 import logging
-from typing import Annotated
+from typing import Annotated, Literal
+
+import aiohttp
 
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, field_validator
 
 from apps.backend.core.config import settings
 
@@ -61,8 +64,6 @@ async def get_mcp_status() -> dict:
     Notion: ping leggero all'API se token configurato.
     Gmail/Calendar: verifica presenza token OAuth (agenti non ancora implementati).
     """
-    import aiohttp
-
     result: dict[str, str] = {}
 
     # Notion
@@ -142,8 +143,26 @@ async def get_ollama_status() -> dict:
     return result
 
 
+class _CollectModeBody(BaseModel):
+    mode: Literal["positive", "negative", "off"] = "off"
+
+
+class _PersonalAskBody(BaseModel):
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def text_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("text non può essere vuoto")
+        if len(v) > 4000:
+            raise ValueError("text troppo lungo (max 4000 caratteri)")
+        return v
+
+
 @router.post("/api/personal/voice/collect")
-async def set_collect_mode(body: dict) -> dict:
+async def set_collect_mode(body: _CollectModeBody) -> dict:
     """Attiva/disattiva modalità raccolta campioni wake word.
 
     Body: {"mode": "positive" | "negative" | "off"}
@@ -155,10 +174,7 @@ async def set_collect_mode(body: dict) -> dict:
       python scripts/train_wake_word.py
     """
     from apps.backend.voice import collector
-    mode = (body or {}).get("mode", "off")
-    if mode not in ("positive", "negative", "off"):
-        return JSONResponse(status_code=400, content={"error": "mode deve essere positive | negative | off"})
-    collector.set_mode(mode)
+    collector.set_mode(body.mode)
     return collector.get_status()
 
 
@@ -170,17 +186,14 @@ async def get_collect_status() -> dict:
 
 
 @router.post("/api/personal/ask")
-async def personal_ask(request: Request, body: dict) -> dict:
+async def personal_ask(body: _PersonalAskBody) -> dict:
     """Endpoint voce: riceve testo trascritto, risponde via Pepe in dominio Personal.
     Usato dal PepeOrb nel frontend — nessuna pipeline, risposta diretta.
     """
     if not state.pepe:
         return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
-    text = (body or {}).get("text", "").strip()
-    if not text:
-        return JSONResponse(status_code=400, content={"error": "Campo 'text' mancante o vuoto"})
     response = await state.pepe.handle_user_message(
-        text,
+        body.text,
         source="dashboard_voice",
         session_id="dashboard",
     )

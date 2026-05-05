@@ -1,7 +1,7 @@
 import json
 import logging
 import time as _time
-from typing import Annotated
+from typing import Annotated, Literal
 
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends, Query
@@ -39,7 +39,10 @@ async def etsy_shop_info() -> dict:
 
 
 @router.get("/api/etsy/listings")
-async def get_etsy_listings(status: str = "all", limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
+async def get_etsy_listings(
+    status: Annotated[Literal["all", "draft", "active", "inactive", "sold_out", "expired"], Query()] = "all",
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> dict:
     """Lista listing Etsy con filtro status (draft|active|all)."""
     if not state.memory:
         return {"listings": []}
@@ -123,9 +126,9 @@ async def get_etsy_niches(
         rows = await cursor.fetchall()
         niches = [dict(r) for r in rows]
         return {"niches": niches}
-    except Exception as exc:
+    except Exception:
         logger.exception("get_etsy_niches error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.get("/api/etsy/bundles")
@@ -145,9 +148,9 @@ async def get_etsy_bundles() -> dict:
         _bundles_cache["data"]      = results
         _bundles_cache["cached_at"] = now
         return {"bundles": results, "cached_at": now}
-    except Exception as exc:
+    except Exception:
         logger.exception("get_etsy_bundles error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.get("/api/etsy/ads-status")
@@ -204,9 +207,9 @@ async def get_etsy_ads_status() -> dict:
             "avg_ctr":            avg_ctr,
             "last_auto_manage_at": last_auto_manage_at,
         }
-    except Exception as exc:
+    except Exception:
         logger.exception("get_etsy_ads_status error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.get("/api/etsy/shop-optimizer")
@@ -248,9 +251,9 @@ async def get_etsy_shop_optimizer() -> dict:
             "last_applied_at": float(last_applied_at) if last_applied_at else None,
             "status":          status,
         }
-    except Exception as exc:
+    except Exception:
         logger.exception("get_etsy_shop_optimizer error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
 @router.post("/api/etsy/shop-optimizer/preview")
@@ -273,6 +276,6 @@ async def etsy_shop_optimizer_preview(body: dict | None = None) -> dict:
             "changed": result.get("changed", False),
             "status":  "ok",
         }
-    except Exception as exc:
+    except Exception:
         logger.exception("etsy_shop_optimizer_preview error")
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
