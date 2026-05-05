@@ -42,8 +42,8 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._connections: list[WebSocket] = []
 
-    async def connect(self, ws: WebSocket) -> None:
-        await ws.accept()
+    async def connect(self, ws: WebSocket, subprotocol: str = "") -> None:
+        await ws.accept(subprotocol=subprotocol or None)
         self._connections.append(ws)
         logger.info("WS client connesso (%d totali)", len(self._connections))
 

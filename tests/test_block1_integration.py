@@ -51,6 +51,7 @@ def _setup_stubs():
         STORAGE_PATH="/tmp",
         PERSONAL_API_KEY="",
         TELEGRAM_CHAT_ID="", TELEGRAM_BOT_TOKEN="",
+        CORS_ALLOWED_ORIGINS="",
         LLM_SONNET_INPUT_PRICE=3.0,
         LLM_SONNET_OUTPUT_PRICE=15.0,
         LLM_SONNET_CACHE_READ_PRICE=0.3,

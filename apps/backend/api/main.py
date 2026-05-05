@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import apps.backend.api.state as state
 from apps.backend.api.middleware import RequestIDFilter, RequestIDMiddleware
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
@@ -291,12 +291,23 @@ app.include_router(finance.router)
 
 
 # ------------------------------------------------------------------
-# WebSocket
+# WebSocket helpers
 # ------------------------------------------------------------------
 
 
+def _ws_auth_key_from_header(headers: dict[str, str]) -> str:
+    """Return the auth key sent via Sec-WebSocket-Protocol header.
+
+    L5: the key must NOT travel in the URL query string (leaks in logs).
+    Browser passes it as: new WebSocket(url, [key]) → sets the
+    Sec-WebSocket-Protocol request header.  Starlette normalises all
+    header names to lower-case, so we read 'sec-websocket-protocol'.
+    """
+    return headers.get("sec-websocket-protocol", "")
+
+
 @app.websocket("/ws/voice")
-async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
+async def ws_voice(websocket: WebSocket) -> None:
     """WebSocket dedicato al canale voce Orb — wake word "Jarvis" via Whisper.
 
     Protocollo a due fasi:
@@ -317,6 +328,7 @@ async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
     Canale separato da /ws/chat — non interferisce con gli eventi UI.
     """
     import hmac
+    key = _ws_auth_key_from_header(dict(websocket.headers))
     api_key = settings.PERSONAL_API_KEY
     if not api_key or not hmac.compare_digest(key, api_key):
         await websocket.close(code=4003)
@@ -327,7 +339,7 @@ async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
     from apps.backend.voice import wake_oww
     from apps.backend.voice import collector as voice_collector
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=key or None)
     logger.info("WebSocket /ws/voice connesso")
 
     phase = "wakeword"              # "wakeword" | "utterance"
@@ -532,16 +544,17 @@ async def ws_voice(websocket: WebSocket, key: str = Query("")) -> None:
 
 
 @app.websocket("/ws/chat")
-async def ws_chat(ws: WebSocket, key: str = Query("")) -> None:
+async def ws_chat(ws: WebSocket) -> None:
     """WebSocket unidirezionale: broadcast eventi sistema → client (dashboard).
     Il frontend non invia messaggi — usa solo Telegram per interagire con Pepe.
     """
     import hmac
+    key = _ws_auth_key_from_header(dict(ws.headers))
     api_key = settings.PERSONAL_API_KEY
     if not api_key or not hmac.compare_digest(key, api_key):
         await ws.close(code=4003)
         return
-    await state.ws_manager.connect(ws)
+    await state.ws_manager.connect(ws, subprotocol=key)
     try:
         while True:
             data = await ws.receive_json()

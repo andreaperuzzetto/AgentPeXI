@@ -3,7 +3,7 @@ import { useStore } from '../store'
 import type { WSIncoming } from '../types'
 
 const _key = import.meta.env.VITE_PERSONAL_KEY ?? ''
-const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/chat?key=${encodeURIComponent(_key)}`
+const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/chat`
 
 const RECONNECT_BASE = 1000
 const RECONNECT_MAX = 16000
@@ -230,7 +230,7 @@ export function useWebSocket() {
       if (unmounted) return
       if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) return
 
-      const ws = new WebSocket(WS_URL)
+      const ws = new WebSocket(WS_URL, _key ? [_key] : [])
       wsRef.current = ws
 
       ws.addEventListener('open', () => {
