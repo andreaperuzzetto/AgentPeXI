@@ -12,6 +12,7 @@ from apps.backend.agents._design.colors import _colors_to_scheme
 from apps.backend.agents._design.presets import STYLE_PRESETS, _TEMPLATE_TO_GEN, _REGISTERED_FONTS
 from apps.backend.agents._design.scoring import _calculate_design_confidence, _validate_pdf
 from apps.backend.agents._design.utils import _count_pdf_pages, _get_cover_title, _niche_slug
+from apps.backend.core.production_queue import ProductionQueueService as _PQService
 
 logger = logging.getLogger("agentpexi.design")
 
@@ -89,10 +90,11 @@ class _DesignGeneratorsMixin:
             },
         )
 
-        # --- 9. Update production_queue → in_progress ---
+        # --- 9. Update production_queue → design started ---
         pq_task_id: str | None = normalized_input.get("production_queue_task_id")
         if pq_task_id:
-            await self.memory.update_production_queue_status(pq_task_id, "in_progress")
+            _pq = _PQService(await self.memory.get_db())
+            await _pq.set_design_started(pq_task_id)
 
         # --- 10. Prepara output directory ---
         output_dir = self.storage.base_path / "pending" / task.task_id
@@ -232,7 +234,8 @@ class _DesignGeneratorsMixin:
 
         if not generated_variants:
             if pq_task_id:
-                await self.memory.update_production_queue_status(pq_task_id, "failed")
+                _pq = _PQService(await self.memory.get_db())
+                await _pq.set_failed_by_task_id(pq_task_id, "All variants failed to generate")
             return AgentResult(
                 task_id=task.task_id,
                 agent_name=self.name,
@@ -252,12 +255,11 @@ class _DesignGeneratorsMixin:
             research_available=research_context is not None,
         )
 
-        # --- 13. Update production_queue → completed ---
+        # --- 13. Update production_queue — store generated files ---
         if pq_task_id:
             file_paths = [v["pdf_path"] for v in generated_variants]
-            await self.memory.update_production_queue_status(
-                pq_task_id, "completed", file_paths=file_paths,
-            )
+            _pq = _PQService(await self.memory.get_db())
+            await _pq.set_files_generated(pq_task_id, file_paths)
 
         # --- 14. Log step finale ---
         total_size = sum(
@@ -316,7 +318,8 @@ class _DesignGeneratorsMixin:
         pq_task_id: str | None = normalized_input.get("production_queue_task_id")
 
         if pq_task_id:
-            await self.memory.update_production_queue_status(pq_task_id, "in_progress")
+            _pq = _PQService(await self.memory.get_db())
+            await _pq.set_design_started(pq_task_id)
 
         output_dir = self.storage.base_path / "pending" / task.task_id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -358,7 +361,8 @@ class _DesignGeneratorsMixin:
 
         if not generated:
             if pq_task_id:
-                await self.memory.update_production_queue_status(pq_task_id, "failed")
+                _pq = _PQService(await self.memory.get_db())
+                await _pq.set_failed_by_task_id(pq_task_id, "All digital art variants failed")
             return AgentResult(
                 task_id=task.task_id, agent_name=self.name,
                 status=TaskStatus.FAILED,
@@ -374,9 +378,8 @@ class _DesignGeneratorsMixin:
 
         if pq_task_id:
             file_paths = [v["file_path"] for v in generated]
-            await self.memory.update_production_queue_status(
-                pq_task_id, "completed", file_paths=file_paths,
-            )
+            _pq = _PQService(await self.memory.get_db())
+            await _pq.set_files_generated(pq_task_id, file_paths)
 
         await self._log_step(
             "file_operation",
@@ -411,7 +414,8 @@ class _DesignGeneratorsMixin:
         pq_task_id: str | None = normalized_input.get("production_queue_task_id")
 
         if pq_task_id:
-            await self.memory.update_production_queue_status(pq_task_id, "in_progress")
+            _pq = _PQService(await self.memory.get_db())
+            await _pq.set_design_started(pq_task_id)
 
         output_dir = self.storage.base_path / "pending" / task.task_id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -435,7 +439,8 @@ class _DesignGeneratorsMixin:
         except Exception as e:
             logger.error("SVG bundle generation failed: %s", e)
             if pq_task_id:
-                await self.memory.update_production_queue_status(pq_task_id, "failed")
+                _pq = _PQService(await self.memory.get_db())
+                await _pq.set_failed_by_task_id(pq_task_id, f"SVG generation failed: {e}")
             return AgentResult(
                 task_id=task.task_id, agent_name=self.name,
                 status=TaskStatus.FAILED,
@@ -447,9 +452,8 @@ class _DesignGeneratorsMixin:
         file_paths_str = [str(p) for p in paths]
 
         if pq_task_id:
-            await self.memory.update_production_queue_status(
-                pq_task_id, "completed", file_paths=file_paths_str,
-            )
+            _pq = _PQService(await self.memory.get_db())
+            await _pq.set_files_generated(pq_task_id, file_paths_str)
 
         await self._log_step(
             "file_operation",
