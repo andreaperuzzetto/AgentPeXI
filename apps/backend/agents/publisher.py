@@ -17,6 +17,7 @@ from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_SONNET
 from apps.backend.core.memory import MemoryManager
 from apps.backend.core.models import AgentCard, AgentResult, AgentTask
+from apps.backend.core.production_queue import ProductionQueueService as _PQService
 from apps.backend.core.storage import StorageManager
 
 logger = logging.getLogger("agentpexi.publisher")
@@ -143,10 +144,13 @@ class PublisherAgent(_PublishMixin, _ResolveMixin, _ThumbnailMixin, _SeoMixin, A
                     "error": str(exc),
                 })
 
-        # --- Passo 5 — Aggiorna production_queue ---
+        # --- Passo 5 — Aggiorna production_queue → published ---
         listing_ids = [r["listing_id"] for r in publish_results if r.get("listing_id")]
         if pq_task_id and listing_ids:
-            await self.memory.update_production_queue_status(pq_task_id, "completed")
+            _pq = _PQService(await self.memory.get_db())
+            _item = await _pq.get_item_by_task_id(pq_task_id)
+            if _item is not None:
+                await _pq.set_published(_item.id, str(listing_ids[0]))
 
         # --- Passo 6 — Confidence + Status ---
         confidence, missing_data = self._calculate_publish_confidence(publish_results, data)
