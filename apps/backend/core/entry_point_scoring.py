@@ -66,6 +66,10 @@ class ScoredCandidate:
     # Segnali raw (opzionale — utile per debug e prompt enrichment)
     signals: Any | None = None   # MarketSignals | None
 
+    # Original candidate dict — embedded by rank_candidates() so callers
+    # never need a zip() to recover source/section/product_type metadata.
+    metadata: dict = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "niche":                    self.niche,
@@ -76,6 +80,7 @@ class ScoredCandidate:
             "final_score":              self.final_score,
             "eligible":                 self.eligible,
             "exclusion_reason":         self.exclusion_reason,
+            "metadata":                 self.metadata,
         }
 
 
@@ -140,8 +145,10 @@ class EntryPointScoring:
                     base_score   = 0.4,
                     final_score  = 0.4,
                     eligible     = True,
+                    metadata     = candidates[i],
                 ))
             else:
+                item.metadata = candidates[i]
                 results.append(item)
 
         # Separa eligible e ineligibili

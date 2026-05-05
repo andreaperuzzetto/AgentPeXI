@@ -198,3 +198,74 @@ async def test_performance_multiplier_db_exception_returns_1(scorer):
     scorer._memory.get_db = AsyncMock(side_effect=RuntimeError("DB error"))
     result = await scorer._performance_multiplier("planner", None)
     assert result == 1.0
+
+
+# ---------------------------------------------------------------------------
+# PA-3 — ScoredCandidate.metadata + rank_candidates embeds original candidate
+# ---------------------------------------------------------------------------
+
+def test_scored_candidate_metadata_defaults_to_empty():
+    """ScoredCandidate must have a metadata field that defaults to {}."""
+    sc = ScoredCandidate(niche="planner", product_type="printable_pdf")
+    assert hasattr(sc, "metadata")
+    assert sc.metadata == {}
+
+
+def test_scored_candidate_to_dict_includes_metadata():
+    sc = ScoredCandidate(
+        niche="planner",
+        product_type="printable_pdf",
+        metadata={"source": "discovery", "section": "planners"},
+    )
+    d = sc.to_dict()
+    assert d["metadata"] == {"source": "discovery", "section": "planners"}
+
+
+async def test_rank_candidates_embeds_original_metadata(scorer):
+    """rank_candidates must embed the original candidate dict into sc.metadata."""
+    original = {"niche": "wedding planner", "product_type": "printable_pdf", "source": "tavily"}
+    scored_result = ScoredCandidate(
+        niche="wedding planner",
+        product_type="printable_pdf",
+        base_score=0.7,
+        final_score=0.7,
+        eligible=True,
+    )
+    scorer.score_single = AsyncMock(return_value=scored_result)
+    result = await scorer.rank_candidates([original])
+    assert len(result) == 1
+    assert result[0].metadata == original
+
+
+async def test_rank_candidates_no_desync_when_candidate_dropped(scorer):
+    """
+    If candidate A is ineligible (dropped) and candidate B is eligible,
+    B.metadata must be B's original dict — NOT A's dict.
+    This is the core PA-3 bug: zip() caused B to pick up A's metadata.
+    """
+    candidate_a = {"niche": "niche_a", "product_type": "printable_pdf", "source": "src_a"}
+    candidate_b = {"niche": "niche_b", "product_type": "printable_pdf", "source": "src_b"}
+
+    ineligible_a = ScoredCandidate(niche="niche_a", product_type="printable_pdf", eligible=False, exclusion_reason="cooldown", final_score=0.0)
+    eligible_b   = ScoredCandidate(niche="niche_b", product_type="printable_pdf", eligible=True, final_score=0.8)
+
+    async def _mock_score(niche, product_type=None):
+        if niche == "niche_a":
+            return ineligible_a
+        return eligible_b
+
+    scorer.score_single = _mock_score
+    result = await scorer.rank_candidates([candidate_a, candidate_b])
+    assert len(result) == 1
+    # niche_b must carry niche_b's original dict, not niche_a's
+    assert result[0].niche == "niche_b"
+    assert result[0].metadata["source"] == "src_b"
+
+
+async def test_rank_candidates_fallback_embeds_metadata(scorer):
+    """If score_single raises, the fallback ScoredCandidate must still carry metadata."""
+    original = {"niche": "test_niche", "product_type": "pdf", "source": "origin"}
+    scorer.score_single = AsyncMock(side_effect=RuntimeError("boom"))
+    result = await scorer.rank_candidates([original])
+    assert len(result) == 1
+    assert result[0].metadata == original

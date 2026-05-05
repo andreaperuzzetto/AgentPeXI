@@ -308,15 +308,12 @@ class _ResearchDiscoveryMixin:
                 candidates = [
                     {
                         "niche":          sc.niche,
-                        "product_type":   sc.product_type or c.get("product_type", "printable_pdf"),
-                        "source":         c.get("source", "entry_point_scored"),
+                        "product_type":   sc.product_type or sc.metadata.get("product_type", "printable_pdf"),
+                        "source":         sc.metadata.get("source", "entry_point_scored"),
                         "entry_score":    sc.final_score,
                         "market_context": self._build_market_context(sc),
                     }
-                    for sc, c in zip(
-                        scored,
-                        {c["niche"]: c for c in candidates}.values(),
-                    )
+                    for sc in scored
                 ]
                 await self._log_step(
                     "thinking",
