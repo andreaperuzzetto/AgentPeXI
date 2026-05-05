@@ -8,6 +8,7 @@ from typing import Any, Callable, ClassVar
 from apps.backend.agents._research.prompts import SYSTEM_PROMPT
 from apps.backend.agents._research.context_mixin import _ResearchContextMixin
 from apps.backend.agents._research.discovery_mixin import _ResearchDiscoveryMixin
+from apps.backend.agents._research.warmup_mixin import WarmupOrchestratorMixin
 from apps.backend.agents._research.analysis_mixin import _ResearchAnalysisMixin
 from apps.backend.agents._research.validation_mixin import _ResearchValidationMixin
 from apps.backend.agents._research.scoring_mixin import _ResearchScoringMixin
@@ -27,6 +28,7 @@ class ResearchAgent(
     _ResearchValidationMixin,
     _ResearchAnalysisMixin,
     _ResearchDiscoveryMixin,
+    WarmupOrchestratorMixin,
     _ResearchContextMixin,
     AgentBase,
 ):
