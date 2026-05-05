@@ -160,26 +160,21 @@ class WarmupOrchestratorMixin:
         candidates: list[dict[str, Any]] = []
         source_tag = f"warmup_{section_key}"
 
-        # The audience query itself is always a candidate if Tavily didn't hard-fail
+        is_trending = (
+            not isinstance(trends_result, Exception)
+            and isinstance(trends_result, dict)
+            and trends_result.get("percent_change", 0) > 10
+        )
+
+        # The audience query itself is always a candidate if Tavily didn't hard-fail.
+        # When Google Trends shows growth, encode the trending signal in the source tag
+        # (single entry per niche — avoids dedup in section_sweep silently dropping
+        # the _trending tag if two entries share the same niche:product_type key).
         if not isinstance(tavily_result, Exception):
             candidates.append({
                 "niche":        query,
                 "product_type": product_type,
-                "source":       source_tag,
-                "section":      section_key,
-            })
-
-        # Trending boost: if Google Trends shows growth, add with trending tag
-        # (dedup happens in section_sweep — same niche key won't be counted twice)
-        if (
-            not isinstance(trends_result, Exception)
-            and isinstance(trends_result, dict)
-            and trends_result.get("percent_change", 0) > 10
-        ):
-            candidates.append({
-                "niche":        query,
-                "product_type": product_type,
-                "source":       f"{source_tag}_trending",
+                "source":       f"{source_tag}_trending" if is_trending else source_tag,
                 "section":      section_key,
             })
 

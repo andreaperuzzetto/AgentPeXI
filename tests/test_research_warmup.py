@@ -221,6 +221,35 @@ async def test_research_audience_query_trending_adds_extra_candidate(agent):
 
 
 @pytest.mark.asyncio
+async def test_research_audience_query_trending_no_duplicate_niche(agent):
+    """M3: quando Tavily succede e trending > 10%, deve essere restituito
+    UN SOLO entry per la niche con source _trending.
+
+    Due entry con la stessa niche_key causano la perdita del trending tag
+    nel dedup di section_sweep (che conserva solo il primo, non-trending).
+    """
+    with (
+        patch("apps.backend.agents._research.warmup_mixin.tavily_tool") as mock_tavily,
+        patch("apps.backend.agents._research.warmup_mixin.get_google_trends") as mock_trends,
+    ):
+        mock_tavily.search = AsyncMock(return_value={"results": []})
+        mock_trends.return_value = {"percent_change": 50}  # > 10 → trending
+
+        results = await agent._research_audience_query(
+            "boho wedding invitation", "party_celebrations"
+        )
+        niches = [r["niche"] for r in results]
+        assert niches.count("boho wedding invitation") == 1, (
+            f"Got {niches.count('boho wedding invitation')} entries for same niche "
+            "— section_sweep dedup would drop the trending tag"
+        )
+        sources = [r["source"] for r in results]
+        assert any("trending" in s for s in sources), (
+            "The surviving entry must carry the _trending source tag"
+        )
+
+
+@pytest.mark.asyncio
 async def test_research_audience_query_tavily_failure_returns_empty(agent):
     with (
         patch("apps.backend.agents._research.warmup_mixin.tavily_tool") as mock_tavily,
