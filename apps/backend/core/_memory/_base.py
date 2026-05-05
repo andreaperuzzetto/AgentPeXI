@@ -354,6 +354,23 @@ CREATE TABLE IF NOT EXISTS revenue_events (
 );
 CREATE INDEX IF NOT EXISTS idx_re_sold_at ON revenue_events(sold_at DESC);
 CREATE INDEX IF NOT EXISTS idx_re_listing ON revenue_events(etsy_listing_id);
+
+-- Identità di brand del negozio (PA-5 ShopIdentityService)
+CREATE TABLE IF NOT EXISTS shop_identity (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    aesthetic_name    TEXT    NOT NULL,
+    palette_primary   TEXT    NOT NULL,
+    palette_secondary TEXT    NOT NULL,
+    palette_accent    TEXT    NOT NULL,
+    mockup_style      TEXT    NOT NULL,
+    tone              TEXT    NOT NULL,
+    logo_path         TEXT,
+    banner_path       TEXT,
+    approved_at       DATETIME,
+    approved_by       TEXT    DEFAULT 'andrea',
+    is_active         BOOLEAN DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_si_active ON shop_identity(is_active) WHERE is_active = 1;
 """
 
 
