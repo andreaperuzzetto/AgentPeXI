@@ -83,6 +83,7 @@ class DesignAgent(
         memory: MemoryManager,
         storage: StorageManager,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
+        telegram_broadcaster: Callable[[str], Coroutine] | None = None,
         get_mock_mode: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(
@@ -93,6 +94,7 @@ class DesignAgent(
             ws_broadcaster=ws_broadcaster,
         )
         self.storage = storage
+        self._telegram_broadcast = telegram_broadcaster
         self._pdf_gen = PDFGenerator()
         self._image_gen = create_image_generator()
         self._svg_gen = SVGGenerator()

@@ -13,6 +13,7 @@ from apps.backend.agents._design.presets import STYLE_PRESETS, _TEMPLATE_TO_GEN,
 from apps.backend.agents._design.scoring import _calculate_design_confidence, _validate_pdf
 from apps.backend.agents._design.utils import _count_pdf_pages, _get_cover_title, _niche_slug
 from apps.backend.core.production_queue import ProductionQueueService as _PQService
+from apps.backend.core.shop_identity_service import ShopIdentityService as _SIService
 
 logger = logging.getLogger("agentpexi.design")
 
@@ -25,6 +26,24 @@ class _DesignGeneratorsMixin:
 
     async def run(self, task: AgentTask) -> AgentResult:
         data = task.input_data or {}
+
+        # --- 0. Verifica ShopIdentity attiva (PA-5) ---
+        _si_svc = _SIService(await self.memory.get_db())
+        _active_identity = await _si_svc.get_active()
+        if _active_identity is None:
+            msg = (
+                "⚠️ DesignAgent sospeso: nessuna ShopIdentity attiva. "
+                "Configura un'identità di brand prima di avviare il pipeline."
+            )
+            await self._notify_telegram(msg)
+            return AgentResult(
+                task_id=task.task_id,
+                agent_name=self.name,
+                status=TaskStatus.FAILED,
+                output_data={"error": "no_active_shop_identity"},
+                confidence=0.0,
+                missing_data=["shop_identity"],
+            )
 
         # --- 1. Verifica storage ---
         if not self.storage.is_available():
@@ -472,3 +491,14 @@ class _DesignGeneratorsMixin:
             },
             confidence=1.0,
         )
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    async def _notify_telegram(self, message: str) -> None:
+        if self._telegram_broadcast:
+            try:
+                await self._telegram_broadcast(message)
+            except Exception:
+                pass
