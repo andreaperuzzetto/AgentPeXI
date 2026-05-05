@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import type { AgentState, ToolEvent, SystemState, AgentStep, ContextUpdateEvent } from '../types'
 import type { GraphNode, GraphEdge } from '../components/NeuralBrainOrb/NodeDrawer'
 
@@ -198,7 +199,7 @@ interface AgentPeXIStore {
   setEtsyWarmupState:  (state: 'idle' | 'running' | 'completed', count?: number) => void
 }
 
-export const useStore = create<AgentPeXIStore>((set) => ({
+export const useStore = create<AgentPeXIStore>()(persist((set) => ({
   wsConnected: false,
   setWsConnected: (v) => set({ wsConnected: v }),
 
@@ -365,4 +366,19 @@ export const useStore = create<AgentPeXIStore>((set) => ({
       warmupCandidatesCount: count ?? s.etsyView.warmupCandidatesCount,
     },
   })),
+}), {
+  name: 'agentpexi-etsy-view',
+  storage: createJSONStorage(() => localStorage),
+  /* Only persist etsyView (filters, active section) — skip transient WS/agent state.
+     warmupState is intentionally reset to 'idle' on rehydration to avoid stale spinners. */
+  partialize: (state) => ({
+    etsyView: {
+      activeSectionKey:   state.etsyView.activeSectionKey,
+      nicheTableFilter:   state.etsyView.nicheTableFilter,
+      pipelineNicheFilter: state.etsyView.pipelineNicheFilter,
+      statusFilter:       state.etsyView.statusFilter,
+      warmupState:        'idle' as const,
+      warmupCandidatesCount: 0,
+    },
+  }),
 }))
