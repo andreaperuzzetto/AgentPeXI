@@ -154,3 +154,22 @@ async def test_only_one_active_at_a_time(svc):
     active = await svc.get_active()
     assert active is not None
     assert active.id == id3
+
+
+@pytest.mark.asyncio
+async def test_set_active_raises_if_identity_not_found(svc):
+    """set_active(nonexistent_id) must raise ValueError and leave current active state unchanged.
+
+    With the non-atomic two-step implementation the deactivate-all would
+    commit before the activate-one no-ops, silently destroying the active state.
+    """
+    id1 = await svc.create(**_SAMPLE)
+    await svc.set_active(id1)  # id1 is now active
+
+    with pytest.raises(ValueError, match="not found"):
+        await svc.set_active(9999)
+
+    # id1 must still be active — the deactivate-all was never committed
+    active = await svc.get_active()
+    assert active is not None, "Expected id1 to still be active after failed set_active"
+    assert active.id == id1

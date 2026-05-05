@@ -60,11 +60,22 @@ class ShopIdentityService:
         return _row_to_record(row) if row else None
 
     async def set_active(self, identity_id: int) -> None:
-        """Imposta `identity_id` come unica identity attiva (disattiva le altre)."""
-        await self._db.execute("UPDATE shop_identity SET is_active = 0")
+        """Imposta `identity_id` come unica identity attiva (disattiva le altre).
+
+        Usa un singolo UPDATE atomico per evitare stati intermedi in cui nessuna
+        identity è attiva. Raises ValueError se identity_id non esiste.
+        """
+        row = await (
+            await self._db.execute(
+                "SELECT 1 FROM shop_identity WHERE id = ?", (identity_id,)
+            )
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"ShopIdentity {identity_id} not found")
+        # Single atomic statement: sets is_active=1 for the target, 0 for all others.
+        # SQLite boolean expression (id = ?) evaluates to 1 or 0.
         await self._db.execute(
-            "UPDATE shop_identity SET is_active = 1 WHERE id = ?",
-            (identity_id,),
+            "UPDATE shop_identity SET is_active = (id = ?)", (identity_id,)
         )
         await self._db.commit()
 
