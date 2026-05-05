@@ -20,7 +20,14 @@ class QueueMixin:
         niche: str,
         brief: dict,
     ) -> int:
-        """Inserisce un nuovo item nella coda. Ritorna l'id row."""
+        """[DEPRECATED] Usa ProductionQueueService.create_item() invece."""
+        import warnings
+        warnings.warn(
+            "QueueMixin.add_to_production_queue is deprecated. "
+            "Use ProductionQueueService.create_item() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         cursor = await self._db.execute(
             """INSERT INTO production_queue (task_id, product_type, niche, brief)
                VALUES (?, ?, ?, ?)""",
@@ -48,7 +55,15 @@ class QueueMixin:
         status: str,
         file_paths: list[str] | None = None,
     ) -> None:
-        """Aggiorna status e opzionalmente file_paths. Setta updated_at = now."""
+        """[DEPRECATED] Usa ProductionQueueService state machine methods instead."""
+        import warnings
+        warnings.warn(
+            "QueueMixin.update_production_queue_status is deprecated. "
+            "Use ProductionQueueService.set_design_started / set_files_generated / "
+            "set_failed_by_task_id / set_published instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if file_paths is not None:
             await self._db.execute(
                 """UPDATE production_queue SET status = ?, file_paths = ?,
@@ -89,11 +104,11 @@ class QueueMixin:
         return result
 
     async def is_duplicate_product(self, niche: str, product_type: str) -> bool:
-        """True se esiste già un item completed o in_progress con stessa niche+product_type."""
+        """True se esiste già un item con stessa niche+product_type ancora attivo."""
         cursor = await self._db.execute(
             """SELECT 1 FROM production_queue
                WHERE niche = ? AND product_type = ?
-               AND status IN ('completed', 'in_progress') LIMIT 1""",
+               AND status IN ('published', 'pending_design', 'pending_approval', 'approved', 'scheduled') LIMIT 1""",
             (niche, product_type),
         )
         if await cursor.fetchone():
@@ -106,21 +121,30 @@ class QueueMixin:
         return (await cursor.fetchone()) is not None
 
     async def get_production_queue_stats(self) -> dict:
-        """Statistiche aggregate production_queue."""
+        """[DEPRECATED] Usa ProductionQueueService.get_recent() per statistiche aggregate."""
+        import warnings
+        warnings.warn(
+            "QueueMixin.get_production_queue_stats is deprecated. "
+            "Use ProductionQueueService methods for queue statistics.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         from datetime import date as _date
 
         today = _date.today().isoformat()
         stats: dict[str, int] = {}
-        for status in ("planned", "in_progress", "completed", "skipped"):
+        for status in ("pending_design", "pending_approval", "approved", "scheduled", "published", "failed", "skipped"):
             cursor = await self._db.execute(
                 "SELECT COUNT(*) as cnt FROM production_queue WHERE status = ?",
                 (status,),
             )
             row = await cursor.fetchone()
             stats[status] = row["cnt"] if row else 0
+        # Backward-compat alias: 'planned' → 'pending_design'
+        stats["planned"] = stats["pending_design"]
         cursor = await self._db.execute(
             "SELECT COUNT(*) as cnt FROM production_queue "
-            "WHERE status = 'completed' AND date(created_at) = ?",
+            "WHERE status = 'published' AND date(created_at) = ?",
             (today,),
         )
         row = await cursor.fetchone()
