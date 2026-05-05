@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS production_queue (
     product_type TEXT NOT NULL DEFAULT 'printable_pdf',
     niche TEXT NOT NULL DEFAULT '',
     brief TEXT NOT NULL DEFAULT '{}',
-    status TEXT NOT NULL DEFAULT 'planned',
+    status TEXT NOT NULL DEFAULT 'pending_design',
     keywords TEXT,
     entry_score REAL DEFAULT 0.0,
     design_prompt TEXT,
@@ -442,3 +442,80 @@ async def test_count_published_today_counts(queue):
     await queue.set_published(item_id, "listing_abc")
     count = await queue.count_published_today()
     assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# PA-1: new task-id-based helper methods
+# ---------------------------------------------------------------------------
+
+async def test_get_item_by_task_id_returns_item(queue, db):
+    item_id = await queue.create_item("planner", "printable_pdf", ["journal"])
+    row = await db.execute("SELECT task_id FROM production_queue WHERE id=?", (item_id,))
+    r = await row.fetchone()
+    task_id = r["task_id"]
+
+    item = await queue.get_item_by_task_id(task_id)
+    assert item is not None
+    assert item.id == item_id
+
+
+async def test_get_item_by_task_id_unknown_returns_none(queue):
+    result = await queue.get_item_by_task_id("nonexistent-task-id")
+    assert result is None
+
+
+async def test_set_design_started_updates_timestamp(queue, db):
+    item_id = await queue.create_item("planner", "printable_pdf", [])
+    row = await db.execute("SELECT task_id, updated_at FROM production_queue WHERE id=?", (item_id,))
+    r = await row.fetchone()
+    task_id = r["task_id"]
+    original_updated_at = r["updated_at"]
+
+    import asyncio
+    await asyncio.sleep(0.02)  # ensure time advances
+    await queue.set_design_started(task_id)
+
+    row2 = await db.execute("SELECT status, updated_at FROM production_queue WHERE id=?", (item_id,))
+    r2 = await row2.fetchone()
+    assert r2["status"] == "pending_design"  # status must NOT change
+    assert r2["updated_at"] >= original_updated_at
+
+
+async def test_set_design_started_unknown_task_id_is_noop(queue):
+    # must not raise
+    await queue.set_design_started("nonexistent-uuid")
+
+
+async def test_set_files_generated_stores_paths(queue, db):
+    item_id = await queue.create_item("planner", "printable_pdf", [])
+    row = await db.execute("SELECT task_id FROM production_queue WHERE id=?", (item_id,))
+    r = await row.fetchone()
+    task_id = r["task_id"]
+
+    await queue.set_files_generated(task_id, ["/tmp/file1.pdf", "/tmp/file2.pdf"])
+
+    row2 = await db.execute("SELECT status, file_paths FROM production_queue WHERE id=?", (item_id,))
+    r2 = await row2.fetchone()
+    assert r2["status"] == "pending_design"  # status must NOT change
+    import json
+    paths = json.loads(r2["file_paths"])
+    assert paths == ["/tmp/file1.pdf", "/tmp/file2.pdf"]
+
+
+async def test_set_failed_by_task_id_changes_status(queue, db):
+    item_id = await queue.create_item("planner", "printable_pdf", [])
+    row = await db.execute("SELECT task_id FROM production_queue WHERE id=?", (item_id,))
+    r = await row.fetchone()
+    task_id = r["task_id"]
+
+    await queue.set_failed_by_task_id(task_id, "generation error XYZ")
+
+    row2 = await db.execute("SELECT status, skip_reason FROM production_queue WHERE id=?", (item_id,))
+    r2 = await row2.fetchone()
+    assert r2["status"] == "failed"
+    assert "generation error XYZ" in r2["skip_reason"]
+
+
+async def test_set_failed_by_task_id_unknown_is_noop(queue):
+    # must not raise
+    await queue.set_failed_by_task_id("nonexistent-uuid", "error")

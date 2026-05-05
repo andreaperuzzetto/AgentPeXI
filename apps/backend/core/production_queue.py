@@ -377,6 +377,56 @@ class ProductionQueueService:
         )
         return ProductionQueueItem.from_row(row) if row else None
 
+    async def get_item_by_task_id(self, task_id: str) -> "ProductionQueueItem | None":
+        """Lookup an item by its string task_id (UUID). Returns None if not found."""
+        row = await self._fetchone(
+            "SELECT * FROM production_queue WHERE task_id = ?", (task_id,)
+        )
+        return ProductionQueueItem.from_row(row) if row else None
+
+    async def set_design_started(self, task_id: str) -> None:
+        """Mark design as started for an item identified by task_id.
+
+        Keeps status at 'pending_design' — only updates updated_at to signal
+        that the design pipeline has begun. Used by generators_mixin instead
+        of the deprecated QueueMixin.update_production_queue_status(..., 'in_progress').
+        """
+        await self._db.execute(
+            "UPDATE production_queue SET updated_at = ? WHERE task_id = ?",
+            (self._now(), task_id),
+        )
+        await self._db.commit()
+
+    async def set_files_generated(self, task_id: str, file_paths: list[str]) -> None:
+        """Store generated file paths without changing status (stays pending_design).
+
+        Called by generators_mixin after PDF/PNG/SVG files are produced.
+        The full pending_approval transition happens later via set_design_ready()
+        called by _autopilot_builder with complete design metadata.
+        """
+        await self._db.execute(
+            """UPDATE production_queue SET file_paths = ?, updated_at = ?
+               WHERE task_id = ?""",
+            (_dumps_list(file_paths), self._now(), task_id),
+        )
+        await self._db.commit()
+
+    async def set_failed_by_task_id(self, task_id: str, error: str) -> None:
+        """Mark an item as failed, identified by its string task_id.
+
+        Used by generators_mixin error paths instead of the deprecated
+        QueueMixin.update_production_queue_status(..., 'failed').
+        """
+        await self._db.execute(
+            """UPDATE production_queue SET
+                   status      = 'failed',
+                   skip_reason = ?,
+                   updated_at  = ?
+               WHERE task_id = ?""",
+            (error[:500], self._now(), task_id),
+        )
+        await self._db.commit()
+
     async def get_pending_approval(self) -> list[ProductionQueueItem]:
         rows = await self._fetchall(
             "SELECT * FROM production_queue WHERE status='pending_approval' ORDER BY id ASC"
