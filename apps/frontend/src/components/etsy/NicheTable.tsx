@@ -40,6 +40,20 @@ function tierBadge(tier: number | null): { label: string; bg: string; fg: string
   return null
 }
 
+/** Badge for expansion_potential: ≥20 green, 10-19 yellow, <10 or null grey */
+function potentialBadge(val: number | null): { label: string; bg: string; fg: string } | null {
+  if (val == null) return null
+  if (val >= 20) return { label: `${val}`, bg: 'rgba(27,255,94,0.12)',  fg: '#1BFF5E' }
+  if (val >= 10) return { label: `${val}`, bg: 'rgba(245,166,35,0.12)', fg: '#F5A623' }
+  return           { label: `${val}`, bg: 'rgba(139,141,152,0.12)', fg: '#8B8D98' }
+}
+
+/** Truncate audience_target to maxLen chars with ellipsis */
+function truncateAudience(s: string | null, maxLen = 40): string {
+  if (!s) return '—'
+  return s.length <= maxLen ? s : s.slice(0, maxLen - 1) + '…'
+}
+
 /** Status badge: ACTIVE or ANALYZING derived from score + confidence */
 function statusBadge(item: NicheItem): { label: string; bg: string; fg: string } {
   const active = item.performance_score >= 0.50 &&
@@ -99,8 +113,8 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 ]
 
 /* ── Grid template ────────────────────────────────────────────────────────── */
-// niche(1fr) · tier(52px) · score(84px) · trend(22px) · status(72px)
-const GRID = '1fr 52px 84px 22px 72px'
+// niche(1fr) · audience(180px) · potential(60px) · tier(52px) · score(84px) · trend(22px) · status(72px)
+const GRID = '1fr 180px 60px 52px 84px 22px 72px'
 
 /* ── Skeleton row ─────────────────────────────────────────────────────────── */
 function SkeletonRow({ delay = 0 }: { delay?: number }) {
@@ -119,6 +133,8 @@ function SkeletonRow({ delay = 0 }: { delay?: number }) {
       }}
     >
       <div style={{ height: 9, borderRadius: 3, background: 'rgba(255,255,255,0.06)', maxWidth: 140 }} />
+      <div style={{ height: 9, borderRadius: 3, background: 'rgba(255,255,255,0.04)', maxWidth: 160 }} />
+      <div style={{ height: 16, borderRadius: 3, background: 'rgba(255,255,255,0.05)' }} />
       <div style={{ height: 16, borderRadius: 3, background: 'rgba(255,255,255,0.06)' }} />
       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
         <div style={{ height: 4, flex: 1, borderRadius: 2, background: 'rgba(255,255,255,0.05)' }} />
@@ -162,6 +178,33 @@ function NicheRow({ item, index, isLast }: NicheRowProps) {
         letterSpacing: '0.01em',
       }}>
         {item.niche}
+      </span>
+
+      {/* Audience */}
+      <span className="mono-num" style={{
+        fontSize: 11, color: '#B8BCC8',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        letterSpacing: '0.01em',
+      }} title={item.audience_target ?? undefined}>
+        {truncateAudience(item.audience_target)}
+      </span>
+
+      {/* Potential */}
+      <span style={{ textAlign: 'center' as const }}>
+        {(() => {
+          const b = potentialBadge(item.expansion_potential)
+          if (!b) return <span style={{ color: '#8B8D98', fontSize: 11 }}>—</span>
+          return (
+            <span style={{
+              background: b.bg, color: b.fg,
+              fontSize: 10, fontWeight: 700,
+              padding: '2px 6px', borderRadius: 4,
+              fontFamily: 'monospace',
+            }}>
+              {b.label}
+            </span>
+          )
+        })()}
       </span>
 
       {/* Tier badge: GOLD / SILVER / — */}
@@ -336,11 +379,13 @@ export function NicheTable() {
         marginBottom: 2,
       }}>
         {[
-          { key: 'niche',       label: 'NAME'   },
-          { key: 'tier',        label: 'TIER'   },
-          { key: 'entry_score', label: 'SCORE'  },
-          { key: 'trend',       label: '↕'      },
-          { key: 'status',      label: 'STATUS' },
+          { key: 'niche',       label: 'NAME'      },
+          { key: 'audience',    label: 'AUDIENCE'  },
+          { key: 'potential',   label: 'POTENTIAL' },
+          { key: 'tier',        label: 'TIER'      },
+          { key: 'entry_score', label: 'SCORE'     },
+          { key: 'trend',       label: '↕'         },
+          { key: 'status',      label: 'STATUS'    },
         ].map(h => (
           <span
             key={h.key}

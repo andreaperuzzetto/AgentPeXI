@@ -257,8 +257,9 @@ export interface NicheItem {
   google_trend_score:  number | null
   /* PA-7 nuovi campi */
   audience_target:     string | null
-  expansion_potential: 'high' | 'medium' | 'low' | null
+  expansion_potential: number | null
   section_name:        string | null
+  product_tier:        'tripwire' | 'core' | 'core_premium' | 'bundle' | null
 }
 
 /* ── Bundle status (from /api/etsy/bundles) ── */
@@ -296,6 +297,7 @@ export type ProductionQueueStatus =
   | 'planned'
   | 'in_progress'
   | 'completed'
+  | 'pending_warmup'
   | string   // forward compat
 
 export interface ProductionQueueItem {
@@ -315,4 +317,5 @@ export interface ProductionQueueItem {
   ads_activated: number | null
   created_at: string
   updated_at: string
+  product_tier: 'tripwire' | 'core' | 'core_premium' | 'bundle' | null
 }

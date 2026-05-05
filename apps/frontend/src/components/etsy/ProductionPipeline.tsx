@@ -62,6 +62,14 @@ function statusMeta(s: string): StatusMeta {
   return STATUS_META[s] ?? { label: s.toUpperCase().slice(0, 8), bg: 'rgba(139,141,152,0.10)', fg: '#8B8D98' }
 }
 
+/** Badge metadata for product_tier */
+const TIER_META: Record<string, { label: string; bg: string; fg: string }> = {
+  tripwire:     { label: 'TRIPWIRE',  bg: 'rgba(59,130,246,0.14)',  fg: '#60A5FA' },
+  core:         { label: 'CORE',      bg: 'rgba(27,255,94,0.12)',   fg: '#1BFF5E' },
+  core_premium: { label: 'PREMIUM',   bg: 'rgba(245,166,35,0.14)',  fg: '#F5A623' },
+  bundle:       { label: 'BUNDLE',    bg: 'rgba(167,139,250,0.14)', fg: '#A78BFA' },
+}
+
 /* Product type: short label */
 function fmtProductType(pt: string): string {
   const MAP: Record<string, string> = {
@@ -200,7 +208,9 @@ function TableRow({ item, index, isLast }: RowProps) {
 
       {/* Status badge */}
       <span className="mono-num" style={{
-        display:       'inline-block',
+        display:       'inline-flex',
+        alignItems:    'center',
+        gap:           4,
         fontSize:      9,
         fontWeight:    600,
         letterSpacing: '0.07em',
@@ -214,6 +224,20 @@ function TableRow({ item, index, isLast }: RowProps) {
         textOverflow:  'ellipsis',
       }}>
         {meta.label}
+        {item.product_tier && TIER_META[item.product_tier] ? (
+          <span style={{
+            background:    TIER_META[item.product_tier].bg,
+            color:         TIER_META[item.product_tier].fg,
+            fontSize:      9,
+            fontWeight:    700,
+            padding:       '1px 5px',
+            borderRadius:  3,
+            textTransform: 'uppercase' as const,
+            marginLeft:    4,
+          }}>
+            {TIER_META[item.product_tier].label}
+          </span>
+        ) : null}
       </span>
 
       {/* Type / Company */}
