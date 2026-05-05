@@ -6,6 +6,31 @@ from typing import Annotated, Literal
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+
+class NicheItemResponse(BaseModel):
+    niche: str
+    product_type: str | None
+    performance_score: float
+    confidence_level: str
+    avg_ctr: float | None
+    total_orders: int | None
+    total_listings: int | None
+    total_revenue_eur: float | None
+    last_updated_at: float | None
+    entry_score: float | None
+    tier: int | None
+    avg_price_eur: float | None
+    google_trend_score: float | None
+    # nuovi campi PA-7 (opzionali — la query non li popola ancora)
+    audience_target: str | None = None
+    expansion_potential: int | None = None
+    section_name: str | None = None
+
+
+class NichesResponse(BaseModel):
+    niches: list[NicheItemResponse]
 
 logger = logging.getLogger("agentpexi.api")
 router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
@@ -55,7 +80,7 @@ async def get_etsy_listings(
 async def get_etsy_niches(
     min_score: float | None = None,
     confidence: str | None = None,
-) -> dict:
+) -> NichesResponse:
     """
     Legge niche_intelligence JOIN market_signals (più recente per niche).
 
@@ -71,7 +96,7 @@ async def get_etsy_niches(
       entry_score, tier, avg_price_eur, google_trend_score  ← da market_signals
     """
     if not state.memory:
-        return {"niches": []}
+        return NichesResponse(niches=[])
     if confidence is not None and confidence not in {"low", "medium", "high"}:
         return JSONResponse(status_code=422, content={"error": "confidence must be low|medium|high"})
     try:
@@ -124,8 +149,8 @@ async def get_etsy_niches(
             params,
         )
         rows = await cursor.fetchall()
-        niches = [dict(r) for r in rows]
-        return {"niches": niches}
+        niches = [NicheItemResponse(**dict(r)) for r in rows]
+        return NichesResponse(niches=niches)
     except Exception:
         logger.exception("get_etsy_niches error")
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
