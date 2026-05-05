@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS production_queue (
     product_type TEXT NOT NULL,
     niche TEXT NOT NULL,
     brief TEXT NOT NULL DEFAULT '{}',
-    status TEXT NOT NULL DEFAULT 'planned',
+    status TEXT NOT NULL DEFAULT 'pending_design',
     file_paths TEXT,
     etsy_listing_id TEXT,
     ab_price_variant TEXT,
@@ -468,6 +468,8 @@ class MemoryBase:
             # llm_calls — created_at mancante nei DB precedenti (indici idx_llm_calls_*)
             # NB: SQLite non accetta CURRENT_TIMESTAMP in ALTER TABLE ADD COLUMN → NULL per i record storici
             "ALTER TABLE llm_calls ADD COLUMN created_at TEXT DEFAULT NULL",
+            # --- PA-1: normalize status DEFAULT ---
+            "UPDATE production_queue SET status='pending_design' WHERE status='planned'",
         ]
         for migration_sql in _migrations:
             try:
