@@ -519,6 +519,8 @@ class MemoryBase:
             # production_queue — timestamp base (mancanti nei DB creati prima del DDL aggiornato)
             "ALTER TABLE production_queue ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP",
             "ALTER TABLE production_queue ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP",
+            # production_queue — error_message per items 'failed' (L1: skip_reason è riservato a codici skip)
+            "ALTER TABLE production_queue ADD COLUMN error_message TEXT",
             # llm_calls — created_at mancante nei DB precedenti (indici idx_llm_calls_*)
             # NB: SQLite non accetta CURRENT_TIMESTAMP in ALTER TABLE ADD COLUMN → NULL per i record storici
             "ALTER TABLE llm_calls ADD COLUMN created_at TEXT DEFAULT NULL",

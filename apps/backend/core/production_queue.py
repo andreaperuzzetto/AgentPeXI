@@ -72,6 +72,7 @@ class ProductionQueueItem:
     skip_reason: str | None      # 'user' | 'timeout' | 'budget' | 'policy'
     skip_count_user: int
     skip_count_timeout: int
+    error_message: str | None    # error detail for 'failed' items
 
     # pubblicazione
     scheduled_publish_at: float | None
@@ -114,6 +115,7 @@ class ProductionQueueItem:
             skip_reason=d.get("skip_reason"),
             skip_count_user=d.get("skip_count_user") or 0,
             skip_count_timeout=d.get("skip_count_timeout") or 0,
+            error_message=d.get("error_message"),
             scheduled_publish_at=d.get("scheduled_publish_at"),
             published_at=d.get("published_at"),
             etsy_listing_id=d.get("etsy_listing_id"),
@@ -384,9 +386,9 @@ class ProductionQueueService:
         await self._db.execute(
             """
             UPDATE production_queue SET
-                status     = 'failed',
-                skip_reason = ?,
-                updated_at  = ?
+                status        = 'failed',
+                error_message = ?,
+                updated_at    = ?
             WHERE id = ?
             """,
             (error[:500], self._now(), item_id),
@@ -481,9 +483,9 @@ class ProductionQueueService:
         """
         await self._db.execute(
             """UPDATE production_queue SET
-                   status      = 'failed',
-                   skip_reason = ?,
-                   updated_at  = ?
+                   status        = 'failed',
+                   error_message = ?,
+                   updated_at    = ?
                WHERE task_id = ?""",
             (error[:500], self._now(), task_id),
         )

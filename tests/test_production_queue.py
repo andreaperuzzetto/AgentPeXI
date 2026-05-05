@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS production_queue (
     skip_reason TEXT,
     skip_count_user INTEGER DEFAULT 0,
     skip_count_timeout INTEGER DEFAULT 0,
+    error_message TEXT,
     scheduled_publish_at REAL,
     published_at REAL,
     etsy_listing_id TEXT,
@@ -298,6 +299,29 @@ async def test_set_failed(queue, db):
     row = await db.execute("SELECT status FROM production_queue WHERE id=?", (item_id,))
     r = await row.fetchone()
     assert r["status"] == "failed"
+
+
+async def test_set_failed_stores_error_in_error_message_not_skip_reason(queue, db):
+    """L1: set_failed must write the error string to error_message, not skip_reason.
+
+    skip_reason is semantically reserved for skip codes ('user', 'timeout', etc.)
+    and must not be polluted with error stack traces.
+    """
+    item_id = await queue.create_item("planner", "printable_pdf", [])
+    await queue.set_failed(item_id, "connection timeout error")
+
+    row = await db.execute(
+        "SELECT status, skip_reason, error_message FROM production_queue WHERE id=?",
+        (item_id,),
+    )
+    r = await row.fetchone()
+    assert r["status"] == "failed"
+    assert "connection timeout error" in r["error_message"], (
+        "set_failed must store error in error_message column, not skip_reason"
+    )
+    assert r["skip_reason"] is None, (
+        "set_failed must not write to skip_reason — reserved for skip codes"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -586,10 +610,18 @@ async def test_set_failed_by_task_id_changes_status(queue, db):
 
     await queue.set_failed_by_task_id(task_id, "generation error XYZ")
 
-    row2 = await db.execute("SELECT status, skip_reason FROM production_queue WHERE id=?", (item_id,))
+    row2 = await db.execute(
+        "SELECT status, skip_reason, error_message FROM production_queue WHERE id=?",
+        (item_id,),
+    )
     r2 = await row2.fetchone()
     assert r2["status"] == "failed"
-    assert "generation error XYZ" in r2["skip_reason"]
+    assert "generation error XYZ" in r2["error_message"], (
+        "set_failed_by_task_id must store error in error_message, not skip_reason"
+    )
+    assert r2["skip_reason"] is None, (
+        "set_failed_by_task_id must not write to skip_reason"
+    )
 
 
 async def test_set_failed_by_task_id_unknown_is_noop(queue):
