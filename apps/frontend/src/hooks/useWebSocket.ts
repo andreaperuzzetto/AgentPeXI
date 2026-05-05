@@ -124,6 +124,26 @@ function handleMessage(raw: MessageEvent) {
       })
       break
 
+    case 'warmup_progress':
+      // TODO: implement handler — aggiorna store.etsyView.warmupState in A.4
+      console.warn('[WS] warmup_progress not yet handled', data)
+      break
+
+    case 'warmup_completed':
+      // TODO: implement handler — aggiorna warmupState + warmupCandidatesCount in A.4
+      console.warn('[WS] warmup_completed not yet handled', data)
+      break
+
+    case 'section_mapped':
+      // TODO: implement handler — aggiorna SectionsPanel in A.1
+      console.warn('[WS] section_mapped not yet handled', data)
+      break
+
+    case 'approval_flow':
+      // TODO: implement handler — aggiorna ProductionPipeline item status in A.2
+      console.warn('[WS] approval_flow not yet handled', data)
+      break
+
     default:
       break
   }
