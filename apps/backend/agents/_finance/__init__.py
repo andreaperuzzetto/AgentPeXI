@@ -1,0 +1,1 @@
+"""FinanceAgent — sub-module package."""
