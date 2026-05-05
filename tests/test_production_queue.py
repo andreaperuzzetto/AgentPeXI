@@ -52,8 +52,8 @@ CREATE TABLE IF NOT EXISTS production_queue (
     loop_run_id TEXT,
     ab_price_variant TEXT,
     file_paths TEXT,
-    created_at REAL DEFAULT (unixepoch()),
-    updated_at REAL DEFAULT (unixepoch())
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -595,3 +595,41 @@ async def test_set_failed_by_task_id_changes_status(queue, db):
 async def test_set_failed_by_task_id_unknown_is_noop(queue):
     # must not raise
     await queue.set_failed_by_task_id("nonexistent-uuid", "error")
+
+
+# ---------------------------------------------------------------------------
+# M8: create_item must store created_at/updated_at as ISO strings, not floats
+# ---------------------------------------------------------------------------
+
+async def test_create_item_stores_iso_timestamps(queue, db):
+    """M8: created_at and updated_at must be ISO-8601 strings, not Unix floats.
+
+    Frontend new Date("1748...") → Invalid Date. ISO strings parse correctly
+    in all JS environments.
+    """
+    from datetime import datetime
+
+    item_id = await queue.create_item("planner", "printable_pdf", [])
+    row = await db.execute(
+        "SELECT created_at, updated_at FROM production_queue WHERE id=?", (item_id,)
+    )
+    r = await row.fetchone()
+    created_at = r["created_at"]
+    updated_at = r["updated_at"]
+
+    # Must be a string, not a float
+    assert isinstance(created_at, str), (
+        f"created_at is {type(created_at).__name__}={created_at!r} — must be ISO string"
+    )
+    assert isinstance(updated_at, str), (
+        f"updated_at is {type(updated_at).__name__}={updated_at!r} — must be ISO string"
+    )
+
+    # Must be parseable as a datetime (validates frontend new Date() compatibility)
+    try:
+        datetime.fromisoformat(created_at)
+        datetime.fromisoformat(updated_at)
+    except ValueError as exc:
+        raise AssertionError(
+            f"Timestamp not parseable as ISO date: {exc}"
+        ) from exc

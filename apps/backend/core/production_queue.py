@@ -14,6 +14,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiosqlite
@@ -191,8 +192,9 @@ class ProductionQueueService:
         cursor = await self._db.execute(sql, params)
         return await cursor.fetchall()
 
-    def _now(self) -> float:
-        return time.time()
+    def _now(self) -> str:
+        """Current UTC time as ISO-8601 string (compatible with JS new Date())."""
+        return datetime.now(timezone.utc).isoformat()
 
     # ------------------------------------------------------------------
     # Write — creazione e transizioni
@@ -415,7 +417,7 @@ class ProductionQueueService:
         Chiamato solo all'avvio (non durante il ciclo) per evitare race condition.
         Restituisce quanti item sono stati scartati.
         """
-        cutoff = self._now() - max_age_seconds
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)).isoformat()
         cursor = await self._db.execute(
             """
             UPDATE production_queue
@@ -538,7 +540,7 @@ class ProductionQueueService:
             conditions.append("status = ?")
             params.append(status)
         if days:
-            cutoff = self._now() - days * 86400
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
             conditions.append("created_at >= ?")
             params.append(cutoff)
 
