@@ -49,6 +49,14 @@ def _setup_stubs():
         ETSY_API_KEY="", USD_EUR_RATE=0.92,
         ANTHROPIC_API_KEY="", VOYAGE_API_KEY="",
         STORAGE_PATH="/tmp",
+        LLM_SONNET_INPUT_PRICE=3.0,
+        LLM_SONNET_OUTPUT_PRICE=15.0,
+        LLM_SONNET_CACHE_READ_PRICE=0.3,
+        LLM_SONNET_CACHE_WRITE_PRICE=3.75,
+        LLM_HAIKU_INPUT_PRICE=0.8,
+        LLM_HAIKU_OUTPUT_PRICE=4.0,
+        LLM_HAIKU_CACHE_READ_PRICE=0.08,
+        LLM_HAIKU_CACHE_WRITE_PRICE=1.0,
     )
     fake_cfg.MODEL_HAIKU = "claude-haiku"
     fake_cfg.MODEL_SONNET = "claude-sonnet"
