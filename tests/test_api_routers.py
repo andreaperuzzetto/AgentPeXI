@@ -567,3 +567,86 @@ async def test_niches_endpoint_returns_audience_target_expansion_potential_secti
     assert item["section_name"] == "Digital Planners", (
         "section_name non restituito — JOIN con etsy_sections mancante"
     )
+
+
+# ---------------------------------------------------------------------------
+# M13: /api/production-queue contract test with real DB (not memory=None)
+# ---------------------------------------------------------------------------
+
+
+async def test_production_queue_real_db_validates_response_contract(app):
+    """M13: /api/production-queue with a seeded in-memory DB exercises the full
+    SQL→dict→ProductionQueueItemResponse→JSON chain.
+
+    Uses QueueMixin directly with a real aiosqlite DB so the test catches any
+    mismatch between DB column names and Pydantic field names/types.
+    """
+    import aiosqlite
+    import apps.backend.api.state as _state
+    from apps.backend.core._memory._base import _SCHEMA
+    from apps.backend.core._memory._queue import QueueMixin
+    from apps.backend.api.routers.system import ProductionQueueResponse
+
+    class _FakeMemory(QueueMixin):
+        """Minimal memory stub that delegates to the real QueueMixin SQL."""
+        def __init__(self, db: aiosqlite.Connection) -> None:
+            self._db = db
+
+    async with aiosqlite.connect(":memory:") as db:
+        db.row_factory = aiosqlite.Row
+        await db.executescript(_SCHEMA)
+
+        # Apply the ALTER TABLE migrations that add columns expected by
+        # ProductionQueueItemResponse (mirrors _apply_migrations in production).
+        for col_sql in [
+            "ALTER TABLE production_queue ADD COLUMN entry_score REAL DEFAULT 0.0",
+            "ALTER TABLE production_queue ADD COLUMN listing_price REAL",
+            "ALTER TABLE production_queue ADD COLUMN listing_title TEXT",
+            "ALTER TABLE production_queue ADD COLUMN ads_activated INTEGER DEFAULT 0",
+        ]:
+            try:
+                await db.execute(col_sql)
+            except Exception:
+                pass  # column already exists
+
+        await db.execute(
+            "INSERT INTO production_queue (task_id, niche, product_type, brief, status,"
+            " created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            ("task-m13-test", "planner_printable", "printable_pdf",
+             '{"title": "Digital Planner"}', "pending_design",
+             "2026-05-05T10:00:00+00:00", "2026-05-05T10:00:00+00:00"),
+        )
+        await db.commit()
+
+        fake_memory = _FakeMemory(db)
+        prev = _state.memory
+        _state.memory = fake_memory  # type: ignore[assignment]
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as ac:
+                r = await ac.get("/api/production-queue")
+        finally:
+            _state.memory = prev
+
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+    data = r.json()
+    assert "items" in data
+    assert len(data["items"]) == 1, "Expected 1 seeded item in response"
+
+    # Full Pydantic parse verifies DB→model coercion chain
+    parsed = ProductionQueueResponse(**data)
+    item = parsed.items[0]
+
+    assert item.niche == "planner_printable"
+    assert item.product_type == "printable_pdf"
+    assert item.status in _VALID_STATUSES, f"status {item.status!r} not in contract set"
+    # Timestamps must be ISO strings — not Unix epoch floats (M8 guard)
+    assert isinstance(item.created_at, str) and "T" in item.created_at, (
+        f"created_at must be ISO string, got: {item.created_at!r}"
+    )
+    assert isinstance(item.updated_at, str) and "T" in item.updated_at, (
+        f"updated_at must be ISO string, got: {item.updated_at!r}"
+    )
