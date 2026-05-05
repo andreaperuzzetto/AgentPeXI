@@ -5,11 +5,33 @@ from typing import Annotated
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from apps.backend.core.config import settings
 
 logger = logging.getLogger("agentpexi.api")
 router = APIRouter()
+
+
+class ProductionQueueItemResponse(BaseModel):
+    id: int
+    task_id: str
+    niche: str
+    product_type: str
+    brief: dict | None
+    status: str
+    entry_score: float | None
+    listing_price: float | None
+    listing_title: str | None
+    file_paths: list[str] | None
+    etsy_listing_id: str | None
+    ads_activated: int | None
+    created_at: str
+    updated_at: str
+
+
+class ProductionQueueResponse(BaseModel):
+    items: list[ProductionQueueItemResponse]
 
 
 @router.get("/api/health")
@@ -103,7 +125,7 @@ async def get_scheduler_jobs() -> dict:
 
 
 @router.get("/api/production-queue", dependencies=[Depends(state.verify_personal_key)])
-async def get_production_queue(status: str | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 50) -> dict:
+async def get_production_queue(status: str | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 50) -> ProductionQueueResponse:
     """Lista items dalla production_queue, filtrabili per status."""
     _VALID_STATUSES = {
         "all",
@@ -119,10 +141,11 @@ async def get_production_queue(status: str | None = None, limit: Annotated[int, 
     if status is not None and status not in _VALID_STATUSES:
         return JSONResponse(status_code=422, content={"error": f"status non valido: {status}"})
     if not state.memory:
-        return {"items": []}
+        return ProductionQueueResponse(items=[])
     filter_status = None if status == "all" else status
-    items = await state.memory.get_production_queue(status=filter_status, limit=limit)
-    return {"items": items}
+    raw = await state.memory.get_production_queue(status=filter_status, limit=limit)
+    items = [ProductionQueueItemResponse(**d) for d in raw]
+    return ProductionQueueResponse(items=items)
 
 
 @router.get("/api/tasks/{task_id}/timeline", dependencies=[Depends(state.verify_personal_key)])
