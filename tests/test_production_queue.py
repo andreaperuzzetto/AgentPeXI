@@ -250,6 +250,22 @@ async def test_set_published_before_approved_raises(queue, db):
 # set_skipped / set_failed
 # ---------------------------------------------------------------------------
 
+def test_set_skipped_column_whitelist_exists():
+    """M1: set_skipped deve usare un dict whitelist per i nomi di colonna,
+    non un f-string, per prevenire SQL injection.
+
+    _SKIP_REASON_COL deve esistere a livello di modulo e mappare solo
+    verso colonne note (skip_count_user, skip_count_timeout).
+    """
+    from apps.backend.core.production_queue import _SKIP_REASON_COL
+
+    valid_cols = {"skip_count_user", "skip_count_timeout"}
+    for reason, col in _SKIP_REASON_COL.items():
+        assert col in valid_cols, (
+            f"reason='{reason}' mappa a colonna sconosciuta '{col}'"
+        )
+
+
 async def test_set_skipped_user(queue, db):
     item_id = await queue.create_item("planner", "printable_pdf", [])
     await queue.set_skipped(item_id, "user")

@@ -19,6 +19,18 @@ from typing import Any
 import aiosqlite
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Whitelist for set_skipped: maps skip reason → counter column name.
+# Using a module-level dict prevents f-string SQL interpolation of column names.
+_SKIP_REASON_COL: dict[str, str] = {
+    "user":    "skip_count_user",
+    "timeout": "skip_count_timeout",
+    "budget":  "skip_count_user",   # budget skips count against the user quota
+}
+
+# ---------------------------------------------------------------------------
 # Dataclass
 # ---------------------------------------------------------------------------
 
@@ -285,24 +297,27 @@ class ProductionQueueService:
 
     async def set_skipped(self, item_id: int, reason: str) -> None:
         """→ skipped; aggiorna il contatore appropriato."""
-        if reason == "user":
-            count_col = "skip_count_user"
-        elif reason == "timeout":
-            count_col = "skip_count_timeout"
-        else:
-            count_col = "skip_count_user"   # fallback
-
-        await self._db.execute(
-            f"""
+        count_col = _SKIP_REASON_COL.get(reason, "skip_count_user")
+        # Two hardcoded SQL strings — column names never come from user input.
+        if count_col == "skip_count_timeout":
+            sql = """
             UPDATE production_queue SET
-                status     = 'skipped',
+                status      = 'skipped',
                 skip_reason = ?,
-                {count_col} = COALESCE({count_col}, 0) + 1,
+                skip_count_timeout = COALESCE(skip_count_timeout, 0) + 1,
                 updated_at  = ?
             WHERE id = ?
-            """,
-            (reason, self._now(), item_id),
-        )
+            """
+        else:
+            sql = """
+            UPDATE production_queue SET
+                status      = 'skipped',
+                skip_reason = ?,
+                skip_count_user = COALESCE(skip_count_user, 0) + 1,
+                updated_at  = ?
+            WHERE id = ?
+            """
+        await self._db.execute(sql, (reason, self._now(), item_id))
         await self._db.commit()
 
     async def assign_slot(self, item_id: int, publish_at: float) -> None:
