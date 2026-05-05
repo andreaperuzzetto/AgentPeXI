@@ -12,6 +12,8 @@
 
 import type { CSSProperties } from 'react'
 import { GlassCard } from '../ui/GlassCard'
+import { AGENT_MODELS } from './agentModels'
+export { AGENT_MODELS } from './agentModels'
 
 export type AgentLayer = 'business' | 'personal' | 'service'
 
@@ -26,23 +28,6 @@ export interface AgentCardProps {
   isService?:        boolean   // badge [ SVC ] al posto del modello
   onClick?:          () => void
   style?:            CSSProperties
-}
-
-// ─── Static model map ──────────────────────────────────────────────────────────
-export const AGENT_MODELS: Record<string, string> = {
-  // Business
-  research:          'claude-sonnet',
-  design:            'claude-sonnet',
-  publisher:         'claude-sonnet',
-  analytics:         'claude-sonnet',
-  finance:           'claude-sonnet',
-  market_data:       'claude-haiku',
-  // Personal
-  recall:            'claude-haiku',
-  remind:            'claude-haiku',
-  summarize:         'claude-haiku',
-  research_personal: 'claude-sonnet',
-  watcher:           'ollama',
 }
 
 // ─── Status badge styles ───────────────────────────────────────────────────────

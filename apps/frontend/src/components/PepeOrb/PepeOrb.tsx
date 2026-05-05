@@ -148,7 +148,7 @@ export function PepeOrb() {
         break
       }
     }
-  }, [])
+  }, [pushNotification])
 
   /** Registrazione utterance completa → inviata come blob dopo timeout */
   const startUtteranceRecording = useCallback(async (ws: WebSocket) => {
@@ -186,7 +186,7 @@ export function PepeOrb() {
       pushNotification({ type: 'error', message: 'Microfono non disponibile', detail: 'Controlla i permessi del browser.', agent: 'pepe', ts: new Date().toISOString() })
       returnToWakeword()
     }
-  }, [setOrbState, returnToWakeword])
+  }, [setOrbState, returnToWakeword, pushNotification])
 
   /* ── WebSocket voice — connessione al mount ── */
   useEffect(() => {

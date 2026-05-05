@@ -100,7 +100,7 @@ export function AdsStatus() {
   const [error,   setError]   = useState<string | null>(null)
 
   const budgetMonthlyUsd = useStore(s => s.budgetMonthlyUsd)
-  const dailySlice = budgetMonthlyUsd > 0 ? `$${(budgetMonthlyUsd / 30).toFixed(2)}` : '—'
+  const dailySlice = (budgetMonthlyUsd ?? 0) > 0 ? `$${((budgetMonthlyUsd ?? 0) / 30).toFixed(2)}` : '—'
 
   const fetchStatus = useCallback(async (signal?: AbortSignal) => {
     try {

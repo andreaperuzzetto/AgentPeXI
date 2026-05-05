@@ -2,6 +2,7 @@
  * Sidebar — floating glass card, inset 12px da tutti i bordi viewport.
  * Nessun full-bleed: border-radius su tutti e 4 gli angoli (stile app).
  */
+import type { ReactElement } from 'react'
 import { motion } from 'framer-motion'
 import { useStore } from '../store'
 import { useCompactLayout } from '../hooks/useCompactLayout'
@@ -93,7 +94,7 @@ function IconAnalytics({ color, active }: { color: string; active: boolean }) {
   )
 }
 
-const ICON_MAP: Record<Zone, (props: { color: string; active: boolean }) => JSX.Element> = {
+const ICON_MAP: Record<Zone, (props: { color: string; active: boolean }) => ReactElement> = {
   neural:    IconNeural,
   etsy:      IconEtsy,
   personal:  IconPersonal,

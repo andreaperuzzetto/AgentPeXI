@@ -15,7 +15,7 @@ import type { GraphNode, GraphEdge }          from './NodeDrawer'
 
 /* ── Collection palette ─────────────────────────────────────────────────── */
 
-export const COLL_COLOR: Record<string, string> = {
+const COLL_COLOR: Record<string, string> = {
   pepe_memory:     '#F5A623',
   personal_memory: '#1BFF5E',
   screen_memory:   '#B57BFF',

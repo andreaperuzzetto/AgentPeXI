@@ -107,15 +107,15 @@ function SectionLabel({ children }: { children: string }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+const DOW = ['D','L','M','M','G','V','S']
+function dayLabel(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00')
+  return `${DOW[d.getDay()]} ${d.getDate()}`
+}
+
 export function TokenCostChart() {
   const perDay   = useStore((s) => s.llmStats.perDay)
   const perAgent = useStore((s) => s.llmStats.perAgent)
-
-  const DOW = ['D','L','M','M','G','V','S']
-  const dayLabel = (dateStr: string) => {
-    const d = new Date(dateStr + 'T12:00:00')
-    return `${DOW[d.getDay()]} ${d.getDate()}`
-  }
 
   // 7gg per AreaChart
   const areaData = useMemo(() => {

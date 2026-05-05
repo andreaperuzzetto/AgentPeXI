@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', '._*']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -20,6 +20,9 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
+      // react-hooks/set-state-in-effect is a React Compiler experimental rule;
+      // patterns like resetting state before async operations are intentional.
+      'react-hooks/set-state-in-effect': 'warn',
       '@typescript-eslint/no-unused-vars': ['error', {
         varsIgnorePattern: '^_',
         argsIgnorePattern: '^_',

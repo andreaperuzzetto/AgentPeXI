@@ -41,7 +41,6 @@ logs/
 *.log
 
 # Skills / agent config
-.github/
 .claude/
 
 # Notes private

@@ -286,7 +286,7 @@ export function ProductionPipeline() {
       published:        (counts.published ?? 0) + (counts.completed ?? 0),
     }
 
-    return PIPELINE_STAGES.map(s => ({ ...s, count: norm[s.key] ?? 0 }))
+    return PIPELINE_STAGES.map(s => ({ ...s, count: (norm as Record<string, number>)[s.key] ?? 0 }))
   }, [items])
 
   /* ── Filtered table items (max 20) ── */

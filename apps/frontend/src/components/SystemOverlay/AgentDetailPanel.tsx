@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef } from 'react'
+import { useMemo, useEffect, useRef, useState } from 'react'
 import { useStore } from '../../store'
 
 const EMPTY_STEPS: never[] = []
@@ -25,17 +25,20 @@ export function AgentDetailPanel() {
   const steps = useStore((s) => s.agentSteps[selectedAgent ?? ''] ?? EMPTY_STEPS)
   const reversedSteps = useMemo(() => [...steps].reverse(), [steps])
 
-  // Fetch steps for this agent from backend if store is empty
+  // Fetch steps for this agent from backend if store is empty.
+  // fetchedRef guards against duplicate requests; fetchedAgents state drives the UI.
   const fetchedRef = useRef<Set<string>>(new Set())
+  const [fetchedAgents, setFetchedAgents] = useState<ReadonlySet<string>>(new Set())
   useEffect(() => {
     if (!selectedAgent) return
-    if (steps.length > 0) return                           // già popolato — non ri-fetcha
-    if (fetchedRef.current.has(selectedAgent)) return     // già tentato in questa sessione
+    if (steps.length > 0) return                          // already populated
+    if (fetchedRef.current.has(selectedAgent)) return    // already attempted this session
     fetchedRef.current.add(selectedAgent)
 
     fetch(`/api/agents/steps/recent?limit=100&agent_name=${encodeURIComponent(selectedAgent)}`)
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
+        setFetchedAgents((prev) => new Set([...prev, selectedAgent]))
         if (!Array.isArray(data?.steps)) return
         data.steps.forEach((s: {
           id: number; task_id: string; agent_name: string;
@@ -54,7 +57,9 @@ export function AgentDetailPanel() {
           })
         })
       })
-      .catch(() => {})
+      .catch(() => {
+        setFetchedAgents((prev) => new Set([...prev, selectedAgent]))
+      })
   }, [selectedAgent, steps.length, addAgentStep])
 
   const isVisible = !!selectedAgent
@@ -143,7 +148,7 @@ export function AgentDetailPanel() {
               <div style={{ marginTop: 20 }}>
                 <div className="ad-metrics-lbl">Breakdown</div>
                 <p className="ad-empty" style={{ marginTop: 10, fontSize: 12 }}>
-                  {fetchedRef.current.has(selectedAgent ?? '')
+                  {fetchedAgents.has(selectedAgent ?? '')
                     ? 'Nessun dato — agente non ancora attivo.'
                     : 'Caricamento…'}
                 </p>

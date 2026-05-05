@@ -150,6 +150,7 @@ function OptimizationScore({ data }: OptimizationScoreProps) {
     if (data.last_title)        s += 60
     if (data.last_niches.length) s += Math.min(data.last_niches.length, 8) * 12
     if (data.last_applied_at) {
+      // eslint-disable-next-line react-hooks/purity
       const ageDays = (Date.now() / 1000 - data.last_applied_at) / 86_400
       if (ageDays < 7)  s += 44
       else if (ageDays < 30) s += 22
