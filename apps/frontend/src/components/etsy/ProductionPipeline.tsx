@@ -27,6 +27,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence }                    from 'framer-motion'
 import { PipelineBar }                                from '../ui/PipelineBar'
 import type { ProductionQueueItem }                   from '../../types'
+import { useStore }                                   from '../../store'
 
 /* ── Constants ─────────────────────────────────────────────────────────────── */
 
@@ -248,8 +249,10 @@ export function ProductionPipeline() {
   const [error,   setError]   = useState<string | null>(null)
 
   /* Filters */
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [nicheFilter,  setNicheFilter]  = useState('')
+  const statusFilter    = useStore((s) => s.etsyView.statusFilter)
+  const setStatusFilter = useStore((s) => s.setEtsyStatusFilter)
+  const nicheFilter     = useStore((s) => s.etsyView.nicheFilter)
+  const setNicheFilter  = useStore((s) => s.setEtsyViewFilter)
 
   /* Fetch */
   const fetchItems = useCallback(async (signal?: AbortSignal) => {
