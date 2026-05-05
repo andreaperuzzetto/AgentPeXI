@@ -218,15 +218,19 @@ export interface NicheItem {
   performance_score:   number
   confidence_level:    'low' | 'medium' | 'high' | string
   avg_ctr:             number | null
-  total_orders:        number
-  total_listings:      number
-  total_revenue_eur:   number
+  total_orders:        number | null
+  total_listings:      number | null
+  total_revenue_eur:   number | null
   last_updated_at:     number | null    // unix timestamp
   /* market_signals — may be null if no signal collected yet */
   entry_score:         number | null
   tier:                number | null    // 1 or 2
   avg_price_eur:       number | null
   google_trend_score:  number | null
+  /* PA-7 nuovi campi */
+  audience_target:     string | null
+  expansion_potential: number | null
+  section_name:        string | null
 }
 
 /* ── Bundle status (from /api/etsy/bundles) ── */
@@ -252,6 +256,20 @@ export interface BundleItem {
 
 /* ── Production queue (from /api/production-queue) ── */
 
+export type ProductionQueueStatus =
+  | 'pending_design'
+  | 'pending_approval'
+  | 'approved'
+  | 'skipped'
+  | 'scheduled'
+  | 'published'
+  | 'failed'
+  | 'discarded'
+  | 'planned'
+  | 'in_progress'
+  | 'completed'
+  | string   // forward compat
+
 export interface ProductionQueueItem {
   id: number
   task_id: string
@@ -259,8 +277,7 @@ export interface ProductionQueueItem {
   product_type: string
   /** JSON-deserialized by backend */
   brief: Record<string, unknown> | null
-  status: string    // pending_design | pending_approval | approved | scheduled |
-                    // published | skipped | failed | discarded | planned | in_progress | completed
+  status: ProductionQueueStatus
   entry_score: number | null
   listing_price: number | null
   listing_title: string | null
