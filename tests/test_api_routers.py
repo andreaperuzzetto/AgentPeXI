@@ -135,6 +135,23 @@ async def test_production_queue_endpoint(client):
     assert r.status_code == 200
 
 
+async def test_production_queue_status_enum(client):
+    """Contract: production queue response has items list; any item's status must be in valid set."""
+    _VALID_STATUSES = {
+        "pending_design", "pending_approval", "approved",
+        "scheduled", "published", "failed",
+    }
+    r = await client.get("/api/production-queue")
+    assert r.status_code == 200
+    data = r.json()
+    assert "items" in data
+    assert isinstance(data["items"], list)
+    for item in data["items"]:
+        assert item["status"] in _VALID_STATUSES, (
+            f"Unexpected status '{item['status']}' — not in contract set"
+        )
+
+
 async def test_costs_endpoint(client):
     r = await client.get("/api/costs")
     assert r.status_code == 200
@@ -219,6 +236,47 @@ async def test_etsy_niches_no_memory(client):
     r = await client.get("/api/etsy/niches")
     assert r.status_code == 200
     assert "niches" in r.json()
+
+
+async def test_etsy_niches_response_model(client):
+    """Contract: /api/etsy/niches response parses as NichesResponse; items have required typed fields."""
+    from apps.backend.api.routers.etsy import NicheItemResponse, NichesResponse
+
+    r = await client.get("/api/etsy/niches")
+    assert r.status_code == 200
+
+    # Endpoint response must be parseable as NichesResponse (Pydantic validates)
+    parsed = NichesResponse(**r.json())
+    assert isinstance(parsed.niches, list)
+
+    # Verify each item conforms to the contract
+    for item in parsed.niches:
+        assert isinstance(item.niche, str) and item.niche
+        assert isinstance(item.performance_score, float)
+        assert item.confidence_level in ("high", "medium", "low")
+
+    # Verify model round-trips correctly with a sample item
+    sample = NicheItemResponse(
+        niche="planner",
+        product_type="printable_pdf",
+        performance_score=0.75,
+        confidence_level="high",
+        avg_ctr=0.04,
+        total_orders=None,
+        total_listings=None,
+        total_revenue_eur=None,
+        last_updated_at=None,
+        entry_score=0.6,
+        tier=2,
+        avg_price_eur=9.99,
+        google_trend_score=72.0,
+    )
+    serialized = sample.model_dump()
+    assert serialized["niche"] == "planner"
+    assert serialized["performance_score"] == 0.75
+    assert serialized["confidence_level"] == "high"
+    assert serialized["audience_target"] is None
+    assert serialized["expansion_potential"] is None
 
 
 async def test_etsy_bundles_no_memory(client):
