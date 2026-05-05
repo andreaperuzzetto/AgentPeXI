@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class NicheItemResponse(BaseModel):
@@ -25,7 +25,20 @@ class NicheItemResponse(BaseModel):
     google_trend_score: float | None
     # nuovi campi PA-7 (opzionali — la query non li popola ancora)
     audience_target: str | None = None
-    expansion_potential: Literal["high", "medium", "low"] | None = None
+    expansion_potential: int | None = None
+
+    @field_validator("expansion_potential", mode="before")
+    @classmethod
+    def _coerce_expansion_potential(cls, v: object) -> int | None:
+        """Coerce DB TEXT→int; graceful fallback for legacy 'high'/'medium'/'low'."""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None  # 'high'/'medium'/'low' → None during transition
     section_name: str | None = None
 
 
