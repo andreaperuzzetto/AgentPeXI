@@ -189,6 +189,15 @@ def _load(name, path):
 
 _ROOT = __file__.replace("/tests/test_block1_integration.py", "")
 
+# Pre-carica il package _research con i moduli reali (le dipendenze esterne
+# sono già stubbed in sys.modules, quindi l'import non crasha).
+_research_pkg = types.ModuleType("apps.backend.agents._research")
+_research_pkg.__path__ = [f"{_ROOT}/apps/backend/agents/_research"]
+_research_pkg.__package__ = "apps.backend.agents._research"
+sys.modules.setdefault("apps.backend.agents._research", _research_pkg)
+for _sm in ["prompts", "context_mixin", "scoring_mixin", "validation_mixin", "analysis_mixin", "discovery_mixin"]:
+    _load(f"apps.backend.agents._research.{_sm}", f"{_ROOT}/apps/backend/agents/_research/{_sm}.py")
+
 MarketDataMod  = _load("apps.backend.agents.market_data",
                         f"{_ROOT}/apps/backend/agents/market_data.py")
 EntryPointMod  = _load("apps.backend.core.entry_point_scoring",
