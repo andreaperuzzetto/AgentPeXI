@@ -190,19 +190,21 @@ async def get_analytics_ladder() -> dict:
     try:
         db = await state.memory.get_db()
 
-        # Conta per ladder_level sull'ultimo snapshot per listing (max snapshot_at)
+        # Conta per ladder_level sull'ultimo snapshot per listing
+        # JOIN su derived table invece di correlated subquery (O(n) vs O(n²))
         cursor = await db.execute(
             """
             SELECT
-                ladder_level,
-                COUNT(DISTINCT etsy_listing_id) AS cnt
-            FROM listing_performance
-            WHERE snapshot_at = (
-                SELECT MAX(lp2.snapshot_at)
-                FROM listing_performance lp2
-                WHERE lp2.etsy_listing_id = listing_performance.etsy_listing_id
-            )
-            GROUP BY ladder_level
+                lp.ladder_level,
+                COUNT(DISTINCT lp.etsy_listing_id) AS cnt
+            FROM listing_performance lp
+            INNER JOIN (
+                SELECT etsy_listing_id, MAX(snapshot_at) AS max_snap
+                FROM listing_performance
+                GROUP BY etsy_listing_id
+            ) latest ON lp.etsy_listing_id = latest.etsy_listing_id
+                     AND lp.snapshot_at = latest.max_snap
+            GROUP BY lp.ladder_level
             """
         )
         rows = await cursor.fetchall()
