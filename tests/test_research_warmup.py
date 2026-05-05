@@ -261,3 +261,31 @@ async def test_research_audience_query_tavily_failure_returns_empty(agent):
         results = await agent._research_audience_query("some query", "planners_organizers")
         # Tavily failed → query itself NOT added as candidate
         assert results == [] or all(r["source"] != "warmup_planners_organizers" for r in results)
+
+
+@pytest.mark.asyncio
+async def test_research_audience_query_uses_current_year(agent):
+    """M4: la query Tavily deve usare l'anno corrente dinamicamente,
+    non il literal '2026' hardcoded (si rompe ogni anno di calendario).
+    """
+    from unittest.mock import MagicMock
+
+    mock_dt = MagicMock()
+    mock_dt.now.return_value.year = 2030  # simula anno futuro
+
+    with (
+        patch("apps.backend.agents._research.warmup_mixin.datetime", mock_dt, create=True),
+        patch("apps.backend.agents._research.warmup_mixin.tavily_tool") as mock_tavily,
+        patch("apps.backend.agents._research.warmup_mixin.get_google_trends") as mock_trends,
+    ):
+        mock_tavily.search = AsyncMock(return_value={"results": []})
+        mock_trends.return_value = {"percent_change": 0}
+
+        await agent._research_audience_query("wedding invitation", "party_celebrations")
+
+        call_kwargs = mock_tavily.search.call_args.kwargs
+        query_used = call_kwargs.get("query", "")
+        assert "2030" in query_used, (
+            f"Expected year 2030 in Tavily query but got: {query_used!r} "
+            "— anno è hardcoded, non dinamico"
+        )

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from apps.backend.tools import tavily as tavily_tool
@@ -135,7 +136,7 @@ class WarmupOrchestratorMixin:
         {"niche": str, "product_type": str, "source": str, "section": str}
         """
         product_type = _infer_product_type(query)
-        etsy_query = f"etsy {query} best selling printable 2026"
+        etsy_query = f"etsy {query} best selling printable {datetime.now().year}"
 
         tavily_result, trends_result = await asyncio.gather(
             self._call_tool(

@@ -130,9 +130,9 @@ class _ResearchDiscoveryMixin:
             self._call_tool(
                 tool_name="tavily",
                 action="search",
-                input_params={"query": "etsy best selling digital products 2026 trending printable"},
+                input_params={"query": f"etsy best selling digital products {datetime.now().year} trending printable"},
                 fn=tavily_tool.search,
-                query="etsy best selling digital products 2026 trending printable",
+                query=f"etsy best selling digital products {datetime.now().year} trending printable",
                 max_results=8,
                 search_depth="advanced",
             ),
