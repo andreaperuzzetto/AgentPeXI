@@ -221,7 +221,10 @@ class _ResearchDiscoveryMixin:
                 item["niche"].lower()
                 for item in recent_queue
                 if item.get("created_at", "") >= seven_days_ago
-                and item.get("status") in ("completed", "in_progress", "planned")
+                and item.get("status") in (
+                    "published", "pending_design", "pending_approval",
+                    "approved", "scheduled", "failed",
+                )
             }
         except Exception:
             blocked = set()
