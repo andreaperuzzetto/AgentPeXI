@@ -173,3 +173,41 @@ async def test_set_active_raises_if_identity_not_found(svc):
     active = await svc.get_active()
     assert active is not None, "Expected id1 to still be active after failed set_active"
     assert active.id == id1
+
+
+# --------------------------------------------------------------------------
+# M6: update() — patch parziale senza ricreare l'identity
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_update_changes_palette_and_tone(svc):
+    """update() aggiorna solo i campi forniti senza toccare gli altri."""
+    new_id = await svc.create(**_SAMPLE)
+    updated = await svc.update(
+        new_id,
+        palette_primary="#FF0000",
+        tone="bold_playful",
+    )
+    assert updated is not None
+    assert updated.id == new_id
+    assert updated.palette_primary == "#FF0000"
+    assert updated.tone == "bold_playful"
+    # campi non toccati restano invariati
+    assert updated.palette_secondary == _SAMPLE["palette_secondary"]
+    assert updated.palette_accent == _SAMPLE["palette_accent"]
+    assert updated.mockup_style == _SAMPLE["mockup_style"]
+
+
+@pytest.mark.asyncio
+async def test_update_raises_if_identity_not_found(svc):
+    """update() solleva ValueError se l'id non esiste."""
+    with pytest.raises(ValueError, match="not found"):
+        await svc.update(9999, tone="bold_playful")
+
+
+@pytest.mark.asyncio
+async def test_update_raises_if_no_fields_provided(svc):
+    """update() solleva ValueError se non viene passato nessun campo."""
+    new_id = await svc.create(**_SAMPLE)
+    with pytest.raises(ValueError, match="no fields"):
+        await svc.update(new_id)

@@ -113,3 +113,37 @@ class ShopIdentityService:
         )
         await self._db.commit()
         return cursor.lastrowid  # type: ignore[return-value]
+
+    _UPDATABLE_FIELDS = frozenset({
+        "aesthetic_name", "palette_primary", "palette_secondary", "palette_accent",
+        "mockup_style", "tone", "logo_path", "banner_path",
+    })
+
+    async def update(self, identity_id: int, **fields: object) -> ShopIdentityRecord:
+        """Aggiorna parzialmente un'identity esistente e ritorna il record aggiornato.
+
+        Raises ValueError se identity_id non esiste o se non viene passato nessun campo.
+        Solo i campi in _UPDATABLE_FIELDS sono modificabili.
+        """
+        if not fields:
+            raise ValueError("update() called with no fields to set")
+        unknown = set(fields) - self._UPDATABLE_FIELDS
+        if unknown:
+            raise ValueError(f"unknown fields: {unknown}")
+        row = await (
+            await self._db.execute(
+                "SELECT 1 FROM shop_identity WHERE id = ?", (identity_id,)
+            )
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"ShopIdentity {identity_id} not found")
+        set_clause = ", ".join(f"{col} = ?" for col in fields)
+        await self._db.execute(
+            f"UPDATE shop_identity SET {set_clause} WHERE id = ?",  # noqa: S608
+            (*fields.values(), identity_id),
+        )
+        await self._db.commit()
+        updated_row = await (
+            await self._db.execute("SELECT * FROM shop_identity WHERE id = ?", (identity_id,))
+        ).fetchone()
+        return _row_to_record(updated_row)  # type: ignore[arg-type]
