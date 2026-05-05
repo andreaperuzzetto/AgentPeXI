@@ -21,8 +21,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
+from apps.backend.telegram.callbacks import build_setup_keyboard
 from apps.backend.telegram.formatters import md_escape, reply_chunked
 
 if TYPE_CHECKING:
@@ -168,10 +169,9 @@ async def cmd_shopsetup(
             f"{md_escape(data['about'])}\n\n"
             f"─────────────────────────\n"
             f"_Ultimo titolo applicato:_ `{md_escape(last_title)}`\n"
-            f"{changed_note}\n\n"
-            f"Per applicare: `/shopsetup confirm`"
+            f"{changed_note}"
         )
-        await reply_chunked(update.message, msg)
+        await reply_chunked(update.message, msg, reply_markup=build_setup_keyboard())
         return
 
     # ---- Modalità CONFIRM / FORCE ----
@@ -230,6 +230,74 @@ async def cmd_shopsetup(
 
 
 # ---------------------------------------------------------------------------
+# Callback handlers — approve_setup / skip_setup
+# ---------------------------------------------------------------------------
+
+async def cb_approve_setup(
+    deps: "BotDependencies",
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Callback 'approve_setup' — applica il profilo shop dopo il preview inline."""
+    query = update.callback_query
+    await query.answer()
+
+    optimizer = deps.shop_optimizer
+    if optimizer is None:
+        await query.edit_message_text("⚠️ ShopProfileOptimizer non disponibile.")
+        return
+
+    await query.edit_message_text("🚀 Applico profilo shop ottimizzato…")
+
+    try:
+        result = await optimizer.apply_shop_profile()
+    except Exception as exc:
+        logger.error("shopsetup apply (callback) fallito: %s", exc)
+        await query.edit_message_text(f"❌ Errore durante l'applicazione: {exc}")
+        return
+
+    status = result.get("status", "unknown")
+
+    if status == "skipped":
+        await query.edit_message_text(
+            "ℹ️ Profilo non aggiornato — le niches non sono cambiate.\n"
+            "Usa `/shopsetup force` per aggiornare comunque.",
+            parse_mode="Markdown",
+        )
+        return
+
+    if status in ("no_api", "error"):
+        err = result.get("error", status)
+        await query.edit_message_text(
+            f"⚠️ Impossibile applicare: {md_escape(err)}\n"
+            f"*Titolo generato:* `{md_escape(result.get('title', '—'))}`",
+            parse_mode="Markdown",
+        )
+        return
+
+    mock_badge = " _(mock mode)_" if status == "mock" else ""
+    niches_str = ", ".join(result.get("niches", [])) or "—"
+    await query.edit_message_text(
+        f"✅ *Profilo shop aggiornato*{mock_badge}\n\n"
+        f"📝 *Titolo applicato:*\n`{md_escape(result['title'])}`\n\n"
+        f"💬 *Announcement applicato:*\n{md_escape(result['about'])}\n\n"
+        f"📊 Niches usate: `{md_escape(niches_str)}`",
+        parse_mode="Markdown",
+    )
+
+
+async def cb_skip_setup(
+    deps: "BotDependencies",
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Callback 'skip_setup' — annulla il preview senza applicare."""
+    query = update.callback_query
+    await query.answer("Setup annullato.")
+    await query.edit_message_reply_markup(reply_markup=None)
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -244,3 +312,5 @@ def register(
     add = app.add_handler
     add(CommandHandler("shop",      partial(cmd_shop,      deps), filters=chat_filter))
     add(CommandHandler("shopsetup", partial(cmd_shopsetup, deps), filters=chat_filter))
+    add(CallbackQueryHandler(partial(cb_approve_setup, deps), pattern=r"^approve_setup$"))
+    add(CallbackQueryHandler(partial(cb_skip_setup,    deps), pattern=r"^skip_setup$"))

@@ -40,26 +40,37 @@ def md_escape(text: str) -> str:
 # Chunked send — reply
 # ---------------------------------------------------------------------------
 
-async def reply_chunked(message: "telegram.Message", text: str) -> None:
+async def reply_chunked(
+    message: "telegram.Message",
+    text: str,
+    reply_markup: "telegram.InlineKeyboardMarkup | None" = None,
+) -> None:
     """Invia risposta spezzandola in chunk da max TG_LIMIT se necessario.
 
     Spezza su newline per non troncare a metà riga.
+    Se fornito, ``reply_markup`` viene allegato solo all'ultimo chunk.
     """
     if len(text) <= TG_LIMIT:
-        await message.reply_text(text)
+        kw = {"reply_markup": reply_markup} if reply_markup else {}
+        await message.reply_text(text, **kw)
         return
 
     lines = text.splitlines(keepends=True)
     chunk = ""
+    chunks: list[str] = []
     for line in lines:
         if len(chunk) + len(line) > TG_LIMIT:
             if chunk:
-                await message.reply_text(chunk.rstrip())
+                chunks.append(chunk.rstrip())
             chunk = line
         else:
             chunk += line
     if chunk.strip():
-        await message.reply_text(chunk.rstrip())
+        chunks.append(chunk.rstrip())
+
+    for i, part in enumerate(chunks):
+        kw = {"reply_markup": reply_markup} if (i == len(chunks) - 1 and reply_markup) else {}
+        await message.reply_text(part, **kw)
 
 
 # ---------------------------------------------------------------------------

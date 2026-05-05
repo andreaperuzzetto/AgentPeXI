@@ -14,7 +14,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+
+from apps.backend.telegram.callbacks import build_ads_keyboard
 
 if TYPE_CHECKING:
     from apps.backend.telegram.dependencies import BotDependencies
@@ -326,13 +328,49 @@ async def cmd_ads(
         await update.message.reply_text(
             f"📢 *Etsy Ads*: {icon}\n"
             f"💰 Budget giornaliero: €{budget:.2f}\n\n"
-            "Comandi:\n"
-            "`/ads on` — abilita\n"
-            "`/ads off` — disabilita\n"
-            "`/ads budget 2.00` — aggiorna budget\n\n"
             "⚠️ _Stub B5 — integrazione API reale in arrivo._",
             parse_mode="Markdown",
+            reply_markup=build_ads_keyboard(enabled),
         )
+
+
+# ---------------------------------------------------------------------------
+# Callback handler — ads_confirm
+# ---------------------------------------------------------------------------
+
+async def cb_ads_confirm(
+    deps: "BotDependencies",
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Callback 'ads_confirm:on' / 'ads_confirm:off' — toggle Etsy Ads inline."""
+    query = update.callback_query
+    await query.answer()
+
+    pp = deps.publication_policy
+    if pp is None:
+        await query.edit_message_text("⚠️ PublicationPolicy non disponibile.")
+        return
+
+    action = query.data.split(":")[1]  # "on" or "off"
+    new_value = "true" if action == "on" else "false"
+    await pp.set_config("policy.etsy_ads_on_publish", new_value)
+
+    try:
+        enabled = await pp.ads_enabled()
+        budget  = await pp.ads_daily_budget()
+    except Exception as exc:
+        await query.edit_message_text(f"⚠️ Errore aggiornamento ads: {exc}")
+        return
+
+    icon = "✅ ATTIVI" if enabled else "⚫ INATTIVI"
+    await query.edit_message_text(
+        f"📢 *Etsy Ads*: {icon}\n"
+        f"💰 Budget giornaliero: €{budget:.2f}\n\n"
+        "⚠️ _Stub B5 — integrazione API reale in arrivo._",
+        parse_mode="Markdown",
+        reply_markup=build_ads_keyboard(enabled),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -353,3 +391,4 @@ def register(
     add(CommandHandler("policy", partial(cmd_policy, deps), filters=chat_filter))
     add(CommandHandler("config", partial(cmd_config, deps), filters=chat_filter))
     add(CommandHandler("ads",    partial(cmd_ads,    deps), filters=chat_filter))
+    add(CallbackQueryHandler(partial(cb_ads_confirm, deps), pattern=r"^ads_confirm:(on|off)$"))
