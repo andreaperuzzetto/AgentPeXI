@@ -11,12 +11,13 @@ from apps.backend.tools._etsy_api._errors import EtsyAPIError, _is_retryable
 from apps.backend.tools._etsy_api._etsy_auth_mixin import _AuthMixin
 from apps.backend.tools._etsy_api._etsy_listings_mixin import _ListingsMixin
 from apps.backend.tools._etsy_api._etsy_mock_mixin import _MockMixin
+from apps.backend.tools._etsy_api._etsy_sections_mixin import _SectionsMixin
 from apps.backend.tools._etsy_api._etsy_shop_mixin import _ShopMixin
 
 __all__ = ["EtsyAPI", "EtsyAPIError", "_is_retryable"]
 
 
-class EtsyAPI(_ShopMixin, _ListingsMixin, _AuthMixin, _MockMixin, object):
+class EtsyAPI(_ShopMixin, _SectionsMixin, _ListingsMixin, _AuthMixin, _MockMixin, object):
     """Client async per Etsy v3 API."""
 
     def __init__(self, memory: MemoryManager, pepe: Any = None) -> None:
