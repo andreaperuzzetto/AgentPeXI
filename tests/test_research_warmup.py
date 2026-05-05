@@ -289,3 +289,32 @@ async def test_research_audience_query_uses_current_year(agent):
             f"Expected year 2030 in Tavily query but got: {query_used!r} "
             "— anno è hardcoded, non dinamico"
         )
+
+
+# ---------------------------------------------------------------------------
+# L3: Named constants for section keys and trend categories limit
+# ---------------------------------------------------------------------------
+
+def test_warmup_section_keys_constant_exists_and_matches_dict():
+    """L3: WarmupOrchestratorMixin must expose _WARMUP_SECTION_KEYS so callers have
+    a single-point-of-change when adding new sections — no magic len() or hardcoded list.
+    """
+    assert hasattr(WarmupOrchestratorMixin, "_WARMUP_SECTION_KEYS"), (
+        "_WARMUP_SECTION_KEYS constant is missing — add it to WarmupOrchestratorMixin"
+    )
+    assert set(WarmupOrchestratorMixin._WARMUP_SECTION_KEYS) == set(
+        WarmupOrchestratorMixin._DISCOVERY_CATEGORIES_BY_SECTION
+    ), "_WARMUP_SECTION_KEYS must contain exactly all keys from _DISCOVERY_CATEGORIES_BY_SECTION"
+
+
+def test_discovery_mixin_has_trend_categories_limit_constant():
+    """L3: _ResearchDiscoveryMixin must use a named constant _N_TREND_CATEGORIES
+    instead of the magic number [:4] so the Google Trends call limit is documented.
+    """
+    from apps.backend.agents._research.discovery_mixin import _ResearchDiscoveryMixin
+
+    assert hasattr(_ResearchDiscoveryMixin, "_N_TREND_CATEGORIES"), (
+        "_N_TREND_CATEGORIES constant is missing — add it to _ResearchDiscoveryMixin"
+    )
+    assert isinstance(_ResearchDiscoveryMixin._N_TREND_CATEGORIES, int)
+    assert _ResearchDiscoveryMixin._N_TREND_CATEGORIES > 0

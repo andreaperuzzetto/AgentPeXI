@@ -32,6 +32,7 @@ class WarmupOrchestratorMixin:
 
     _DISCOVERY_CATEGORIES_BY_SECTION: dict[str, list[str]] = {
         "party_celebrations": [
+
             "wedding invitation printable for boho brides",
             "baby shower printable for modern minimalist moms",
             "birthday party printable for teenage girls",
@@ -64,6 +65,9 @@ class WarmupOrchestratorMixin:
             "coloring pages for toddler girls",
         ],
     }
+    # Single-point-of-change: all valid section keys derived from the dict above.
+    # Code that iterates sections (e.g. full warmup sweep) should use this constant.
+    _WARMUP_SECTION_KEYS: tuple[str, ...] = tuple(_DISCOVERY_CATEGORIES_BY_SECTION)
 
     async def section_sweep(
         self,

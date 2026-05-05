@@ -28,6 +28,9 @@ class _ResearchDiscoveryMixin:
         "botanical print etsy",
         "journal printable etsy",
     ]
+    # Max Google Trends calls per discover cycle (balances freshness vs API latency).
+    # Increase to query more macro categories; decrease to speed up discovery.
+    _N_TREND_CATEGORIES: int = 4
 
     # Stagionalità: mese → nicchie emergenti (look-ahead 5 settimane)
     # Mappa stagionale: mese → lista di (niche, start_day, end_day)
@@ -108,7 +111,7 @@ class _ResearchDiscoveryMixin:
                     fn=get_google_trends,
                     keyword=cat,
                 )
-                for cat in self._DISCOVERY_CATEGORIES[:4]
+                for cat in self._DISCOVERY_CATEGORIES[:self._N_TREND_CATEGORIES]
             ]),
             # 2. Finance: niches_to_scale + niche_roi_snapshot
             self.memory.query_chromadb_recent(
