@@ -363,10 +363,9 @@ def test_confidence_capped_when_audience_target_absent():
 
 
 def test_niche_item_expansion_potential_is_string_enum():
-    """Contract: expansion_potential must be Literal['high','medium','low'] | None.
-    The LLM research prompt emits string values, not integers.
+    """Contract: expansion_potential is int | None (A.0 migration from Literal).
+    Accepts int, coerces string-int, degrades legacy 'high'/'medium'/'low' → None.
     """
-    from pydantic import ValidationError
     from apps.backend.api.routers.etsy import NicheItemResponse
 
     _BASE = dict(
@@ -386,12 +385,11 @@ def test_niche_item_expansion_potential_is_string_enum():
     )
     # Valid: None (field is optional)
     assert NicheItemResponse(**_BASE, expansion_potential=None).expansion_potential is None
-    # Valid: all three literal string values
-    for val in ("high", "medium", "low"):
-        assert NicheItemResponse(**_BASE, expansion_potential=val).expansion_potential == val
-    # Invalid: integer must raise ValidationError (LLM never emits ints)
-    with pytest.raises(ValidationError):
-        NicheItemResponse(**_BASE, expansion_potential=42)
-    # Invalid: unrecognised string must raise ValidationError
-    with pytest.raises(ValidationError):
-        NicheItemResponse(**_BASE, expansion_potential="very_high")
+    # Valid: integer accepted directly
+    assert NicheItemResponse(**_BASE, expansion_potential=42).expansion_potential == 42
+    # Valid: string-int coerced
+    assert NicheItemResponse(**_BASE, expansion_potential="25").expansion_potential == 25
+    # Graceful: legacy strings degrade to None during DB transition
+    for val in ("high", "medium", "low", "very_high"):
+        assert NicheItemResponse(**_BASE, expansion_potential=val).expansion_potential is None, \
+            f"Legacy string '{val}' should degrade to None"

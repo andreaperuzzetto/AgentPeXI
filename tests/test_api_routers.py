@@ -534,7 +534,7 @@ async def test_niches_endpoint_returns_audience_target_expansion_potential_secti
                 "mindfulness_planner", "printable_pdf",
                 0.80, "high",
                 "donne 25-40 interessate a mindfulness",
-                "high",
+                25,
             ),
         )
         await db.commit()
@@ -561,7 +561,7 @@ async def test_niches_endpoint_returns_audience_target_expansion_potential_secti
     assert item["audience_target"] == "donne 25-40 interessate a mindfulness", (
         "audience_target non restituito dall'endpoint — colonna mancante o SELECT incompleto"
     )
-    assert item["expansion_potential"] == "high", (
+    assert item["expansion_potential"] == 25, (
         "expansion_potential non restituito dall'endpoint"
     )
     assert item["section_name"] == "Digital Planners", (
