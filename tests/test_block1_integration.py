@@ -49,6 +49,8 @@ def _setup_stubs():
         ETSY_API_KEY="", USD_EUR_RATE=0.92,
         ANTHROPIC_API_KEY="", VOYAGE_API_KEY="",
         STORAGE_PATH="/tmp",
+        PERSONAL_API_KEY="",
+        TELEGRAM_CHAT_ID="", TELEGRAM_BOT_TOKEN="",
         LLM_SONNET_INPUT_PRICE=3.0,
         LLM_SONNET_OUTPUT_PRICE=15.0,
         LLM_SONNET_CACHE_READ_PRICE=0.3,
