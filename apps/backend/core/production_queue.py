@@ -302,7 +302,17 @@ class ProductionQueueService:
     async def set_published(
         self, item_id: int, etsy_listing_id: str
     ) -> None:
-        """scheduled → published."""
+        """scheduled → published. Raises ValueError if current status is not 'scheduled'."""
+        row = await self._db.execute(
+            "SELECT status FROM production_queue WHERE id=?", (item_id,)
+        )
+        r = await row.fetchone()
+        if r is None:
+            raise ValueError(f"Item {item_id} not found in production_queue")
+        if r["status"] != "scheduled":
+            raise ValueError(
+                f"Cannot publish item {item_id}: status is '{r['status']}', expected 'scheduled'"
+            )
         now = self._now()
         await self._db.execute(
             """

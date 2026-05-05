@@ -198,11 +198,22 @@ async def test_assign_slot_changes_status(queue, db):
 
 async def test_set_published_changes_status(queue, db):
     item_id = await queue.create_item("planner", "printable_pdf", [])
+    # Must go through the full state machine: approved → scheduled → published
+    await queue.set_approved(item_id, message_id=42, chat_id=99)
+    await queue.assign_slot(item_id, time.time() + 3600)
     await queue.set_published(item_id, "listing_123")
     row = await db.execute("SELECT status, etsy_listing_id FROM production_queue WHERE id=?", (item_id,))
     r = await row.fetchone()
     assert r["status"] == "published"
     assert r["etsy_listing_id"] == "listing_123"
+
+
+async def test_set_published_before_approved_raises(queue, db):
+    """Contract: set_published on a pending_design item must raise ValueError."""
+    item_id = await queue.create_item("planner", "printable_pdf", [])
+    # Item is in 'pending_design' — publishing without going through approved→scheduled is illegal
+    with pytest.raises(ValueError, match="status is 'pending_design'"):
+        await queue.set_published(item_id, "listing_illegal")
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +450,8 @@ async def test_count_published_today_zero(queue):
 
 async def test_count_published_today_counts(queue):
     item_id = await queue.create_item("planner", "printable_pdf", [])
+    await queue.set_approved(item_id, message_id=1, chat_id=1)
+    await queue.assign_slot(item_id, time.time() + 3600)
     await queue.set_published(item_id, "listing_abc")
     count = await queue.count_published_today()
     assert count == 1
