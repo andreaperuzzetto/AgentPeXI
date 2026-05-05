@@ -192,3 +192,52 @@ def test_calculate_confidence_cached_sources():
     }
     score, _ = _ResearchScoringMixin._calculate_confidence(sources, _make_output())
     assert score >= 0.85
+
+
+def _make_complete_niche() -> dict:
+    return {
+        "viable": True,
+        "audience_target": "parents of toddlers",
+        "etsy_tags_13": [f"tag{i}" for i in range(13)],
+        "selling_signals": {
+            "thumbnail_style": "clean",
+            "conversion_triggers": "bestseller badge",
+            "bundle_vs_single": "single",
+            "first_listing_recommendation": "weekly planner",
+        },
+        "pricing": {"conversion_sweet_spot_usd": 9.99, "launch_price_usd": 7.99},
+        "demand": {"peak_months": ["Jan"], "publish_timing_advice": "publish in Dec"},
+    }
+
+
+def _make_incomplete_niche() -> dict:
+    return {
+        "viable": True,
+        "audience_target": "",
+        "etsy_tags_13": [],
+        "selling_signals": {},
+        "pricing": {},
+        "demand": {},
+    }
+
+
+def test_calculate_confidence_evaluates_all_viable_niches_not_just_first():
+    """M5: _calculate_confidence deve valutare TUTTE le viable_niches per la
+    completezza dell'output, non solo viable_niches[0].
+
+    Con niche[0] completa e niche[1] incompleta, la confidence deve essere
+    inferiore a quella ottenuta quando entrambe le nicchie sono complete.
+    """
+    sources = _full_sources()
+
+    conf_both_complete, _ = _ResearchScoringMixin._calculate_confidence(
+        sources, {"niches": [_make_complete_niche(), _make_complete_niche()]}
+    )
+    conf_mixed, _ = _ResearchScoringMixin._calculate_confidence(
+        sources, {"niches": [_make_complete_niche(), _make_incomplete_niche()]}
+    )
+
+    assert conf_mixed < conf_both_complete, (
+        f"conf_mixed={conf_mixed} should be < conf_both_complete={conf_both_complete} "
+        "— _calculate_confidence only checks viable_niches[0], ignoring the rest"
+    )

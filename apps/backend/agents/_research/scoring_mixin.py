@@ -74,58 +74,73 @@ class _ResearchScoringMixin:
             missing.append("nessuna nicchia viable trovata")
             return round(min(score, 1.0), 2), missing
 
-        sample = viable_niches[0]
+        # Evaluate ALL viable niches; use the worst-case completeness contribution
+        # so that any incomplete niche lowers the overall confidence score.
+        best_completeness: float | None = None
+        worst_audience_capped = False
+        for sample in viable_niches:
+            completeness = 0.0
+            sample_missing: list[str] = []
 
-        # 13 tag presenti e validi (peso 0.15)
-        tags = sample.get("etsy_tags_13", [])
-        if len(tags) == 13:
-            score += 0.15
-        elif len(tags) >= 8:
-            score += 0.08
-            missing.append(f"solo {len(tags)}/13 tag Etsy generati")
-        else:
-            score += 0.02
-            missing.append(f"tag insufficienti: {len(tags)}/13 — listing non pubblicabile")
+            # 13 tag presenti e validi (peso 0.15)
+            tags = sample.get("etsy_tags_13", [])
+            if len(tags) == 13:
+                completeness += 0.15
+            elif len(tags) >= 8:
+                completeness += 0.08
+                sample_missing.append(f"solo {len(tags)}/13 tag Etsy generati")
+            else:
+                completeness += 0.02
+                sample_missing.append(f"tag insufficienti: {len(tags)}/13 — listing non pubblicabile")
 
-        # Selling signals presenti (peso 0.15)
-        selling = sample.get("selling_signals", {})
-        selling_complete = all([
-            selling.get("thumbnail_style"),
-            selling.get("conversion_triggers"),
-            selling.get("bundle_vs_single"),
-            selling.get("first_listing_recommendation"),
-        ])
-        if selling_complete:
-            score += 0.15
-        elif selling:
-            score += 0.07
-            missing.append("selling signals incompleti (thumbnail style o conversion triggers mancanti)")
-        else:
-            score += 0.01
-            missing.append("selling signals assenti — Design Agent lavora senza guida visiva")
+            # Selling signals presenti (peso 0.15)
+            selling = sample.get("selling_signals", {})
+            selling_complete = all([
+                selling.get("thumbnail_style"),
+                selling.get("conversion_triggers"),
+                selling.get("bundle_vs_single"),
+                selling.get("first_listing_recommendation"),
+            ])
+            if selling_complete:
+                completeness += 0.15
+            elif selling:
+                completeness += 0.07
+                sample_missing.append("selling signals incompleti (thumbnail style o conversion triggers mancanti)")
+            else:
+                completeness += 0.01
+                sample_missing.append("selling signals assenti — Design Agent lavora senza guida visiva")
 
-        # Pricing specifico per conversione (peso 0.10)
-        pricing = sample.get("pricing", {})
-        if pricing.get("conversion_sweet_spot_usd") and pricing.get("launch_price_usd"):
-            score += 0.10
-        elif pricing.get("conversion_sweet_spot_usd") or pricing.get("sweet_spot_usd"):
-            score += 0.05
-            missing.append("launch price strategy mancante")
-        else:
-            score += 0.01
-            missing.append("pricing strategico assente")
+            # Pricing specifico per conversione (peso 0.10)
+            pricing = sample.get("pricing", {})
+            if pricing.get("conversion_sweet_spot_usd") and pricing.get("launch_price_usd"):
+                completeness += 0.10
+            elif pricing.get("conversion_sweet_spot_usd") or pricing.get("sweet_spot_usd"):
+                completeness += 0.05
+                sample_missing.append("launch price strategy mancante")
+            else:
+                completeness += 0.01
+                sample_missing.append("pricing strategico assente")
 
-        # Seasonal timing (peso 0.05)
-        if sample.get("demand", {}).get("peak_months") and sample.get("demand", {}).get("publish_timing_advice"):
-            score += 0.05
-        else:
-            score += 0.01
-            missing.append("timing stagionale non specificato")
+            # Seasonal timing (peso 0.05)
+            if sample.get("demand", {}).get("peak_months") and sample.get("demand", {}).get("publish_timing_advice"):
+                completeness += 0.05
+            else:
+                completeness += 0.01
+                sample_missing.append("timing stagionale non specificato")
 
-        # audience_target mandatory (schema v2)
-        # Absent → cap score at 0.4; without audience targeting A.0 filtering is unreliable.
-        if not sample.get("audience_target", "").strip():
-            missing.append("audience_target assente — cap confidence a 0.4")
+            # audience_target mandatory (schema v2)
+            audience_capped = not sample.get("audience_target", "").strip()
+            if audience_capped:
+                sample_missing.append("audience_target assente — cap confidence a 0.4")
+
+            if best_completeness is None or completeness < best_completeness:
+                best_completeness = completeness
+                worst_audience_capped = audience_capped
+                missing.extend(m for m in sample_missing if m not in missing)
+
+        score += best_completeness or 0.0
+        # Apply audience_target cap AFTER adding completeness (cap is ceiling, not floor)
+        if worst_audience_capped:
             score = min(score, 0.40)
 
         return round(min(score, 1.0), 2), missing
