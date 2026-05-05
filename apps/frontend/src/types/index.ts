@@ -126,6 +126,30 @@ export interface KnowledgeBridgeEvent {
   ts: number
 }
 
+export interface WarmupProgressEvent {
+  type: 'warmup_progress'
+  section: string
+  analyzed: number
+  total: number
+}
+
+export interface WarmupCompletedEvent {
+  type: 'warmup_completed'
+  candidates_count: number
+}
+
+export interface SectionMappedEvent {
+  type: 'section_mapped'
+  niche_key: string
+  section_id: string
+}
+
+export interface ApprovalFlowEvent {
+  type: 'approval_flow'
+  item_id: number
+  action: 'sent' | 'approved' | 'rejected'
+}
+
 export type WSIncoming =
   | AgentStarted
   | AgentCompleted
@@ -140,6 +164,10 @@ export type WSIncoming =
   | DomainSwitched
   | MemoryQueryEvent
   | KnowledgeBridgeEvent
+  | WarmupProgressEvent
+  | WarmupCompletedEvent
+  | SectionMappedEvent
+  | ApprovalFlowEvent
 
 /* ── UI models ── */
 
