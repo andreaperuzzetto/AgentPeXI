@@ -526,6 +526,8 @@ class MemoryBase:
             "ALTER TABLE llm_calls ADD COLUMN created_at TEXT DEFAULT NULL",
             # --- PA-1: normalize status DEFAULT ---
             "UPDATE production_queue SET status='pending_design' WHERE status='planned'",
+            # --- A.0: product_tier preparatory column (full ladder logic in C.1) ---
+            "ALTER TABLE production_queue ADD COLUMN product_tier TEXT DEFAULT 'core'",
         ]
         for migration_sql in _migrations:
             try:
@@ -562,6 +564,7 @@ class MemoryBase:
             "CREATE INDEX IF NOT EXISTS idx_re_listing ON revenue_events(listing_id, created_at)",
             # poll_listing_performance: listing published_at (filtra per status + data)
             "CREATE INDEX IF NOT EXISTS idx_pq_published ON production_queue(status, published_at)",
+            "CREATE INDEX IF NOT EXISTS idx_pq_product_tier ON production_queue(product_tier)",
         ]
         for idx_sql in _new_indexes:
             try:
