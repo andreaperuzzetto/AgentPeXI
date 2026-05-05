@@ -135,12 +135,14 @@ async def test_production_queue_endpoint(client):
     assert r.status_code == 200
 
 
+_VALID_STATUSES = {
+    "pending_design", "pending_approval", "approved",
+    "scheduled", "published", "failed",
+    "skipped", "discarded",
+}
+
 async def test_production_queue_status_enum(client):
     """Contract: production queue response has items list; any item's status must be in valid set."""
-    _VALID_STATUSES = {
-        "pending_design", "pending_approval", "approved",
-        "scheduled", "published", "failed",
-    }
     r = await client.get("/api/production-queue")
     assert r.status_code == 200
     data = r.json()
@@ -150,6 +152,12 @@ async def test_production_queue_status_enum(client):
         assert item["status"] in _VALID_STATUSES, (
             f"Unexpected status '{item['status']}' — not in contract set"
         )
+
+
+def test_valid_statuses_includes_skipped_and_discarded():
+    """_VALID_STATUSES must include all terminal statuses: skipped and discarded."""
+    assert "skipped" in _VALID_STATUSES, "'skipped' missing from _VALID_STATUSES contract"
+    assert "discarded" in _VALID_STATUSES, "'discarded' missing from _VALID_STATUSES contract"
 
 
 async def test_costs_endpoint(client):
