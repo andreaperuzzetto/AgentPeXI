@@ -371,6 +371,37 @@ CREATE TABLE IF NOT EXISTS shop_identity (
     is_active         BOOLEAN DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_si_active ON shop_identity(is_active) WHERE is_active = 1;
+
+-- Sezioni Etsy effettive (sincronizzate dall'API Etsy) — PA-6
+CREATE TABLE IF NOT EXISTS etsy_sections (
+    section_id       TEXT    PRIMARY KEY,
+    section_name     TEXT    NOT NULL,
+    created_at       DATETIME,
+    listing_count    INTEGER DEFAULT 0,
+    last_listing_at  DATETIME,
+    is_active        BOOLEAN DEFAULT 1
+);
+
+-- Mappa niche → sezione Etsy (cuore del sistema sezioni) — PA-6
+CREATE TABLE IF NOT EXISTS niche_section_map (
+    niche_key        TEXT    PRIMARY KEY,
+    section_id       TEXT    REFERENCES etsy_sections(section_id),
+    mapped_by        TEXT,
+    mapped_at        DATETIME,
+    auto_confidence  FLOAT
+);
+
+-- Coda niche non mappate (richiede decisione umana) — PA-6
+CREATE TABLE IF NOT EXISTS uncategorized_niches (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    niche_key            TEXT    NOT NULL,
+    detected_at          DATETIME,
+    listing_id           TEXT,
+    status               TEXT    DEFAULT 'pending',
+    suggested_section_id TEXT,
+    suggested_confidence FLOAT
+);
+CREATE INDEX IF NOT EXISTS idx_un_status ON uncategorized_niches(status, detected_at DESC);
 """
 
 
