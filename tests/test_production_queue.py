@@ -181,6 +181,7 @@ async def test_set_design_ready_changes_status(queue, db):
 
 async def test_set_approved_changes_status(queue, db):
     item_id = await queue.create_item("planner", "printable_pdf", [])
+    await queue.set_design_ready(item_id, "p", "u", "/t", "T", "D", [], 9.99)
     await queue.set_approved(item_id, message_id=42, chat_id=99)
     row = await db.execute("SELECT status, approval_message_id FROM production_queue WHERE id=?", (item_id,))
     r = await row.fetchone()
@@ -190,15 +191,44 @@ async def test_set_approved_changes_status(queue, db):
 
 async def test_assign_slot_changes_status(queue, db):
     item_id = await queue.create_item("planner", "printable_pdf", [])
+    await queue.set_design_ready(item_id, "p", "u", "/t", "T", "D", [], 9.99)
+    await queue.set_approved(item_id)
     await queue.assign_slot(item_id, time.time() + 3600)
     row = await db.execute("SELECT status FROM production_queue WHERE id=?", (item_id,))
     r = await row.fetchone()
     assert r["status"] == "scheduled"
 
 
+async def test_set_design_ready_from_wrong_state_raises(queue, db):
+    """Contract: set_design_ready requires status == 'pending_design'."""
+    item_id = await queue.create_item("planner", "printable_pdf", [])
+    # Advance to pending_approval first
+    await queue.set_design_ready(item_id, "p", "u", "/t", "T", "D", [], 9.99)
+    # Calling again from pending_approval must raise
+    with pytest.raises(ValueError, match="status is 'pending_approval'"):
+        await queue.set_design_ready(item_id, "p2", "u2", "/t2", "T2", "D2", [], 9.99)
+
+
+async def test_set_approved_from_wrong_state_raises(queue, db):
+    """Contract: set_approved requires status == 'pending_approval'."""
+    item_id = await queue.create_item("planner", "printable_pdf", [])
+    # Item is in pending_design, not pending_approval
+    with pytest.raises(ValueError, match="status is 'pending_design'"):
+        await queue.set_approved(item_id)
+
+
+async def test_assign_slot_from_wrong_state_raises(queue, db):
+    """Contract: assign_slot requires status == 'approved'."""
+    item_id = await queue.create_item("planner", "printable_pdf", [])
+    # Item is in pending_design, not approved
+    with pytest.raises(ValueError, match="status is 'pending_design'"):
+        await queue.assign_slot(item_id, time.time() + 3600)
+
+
 async def test_set_published_changes_status(queue, db):
     item_id = await queue.create_item("planner", "printable_pdf", [])
-    # Must go through the full state machine: approved → scheduled → published
+    # Must go through the full state machine: pending_design → pending_approval → approved → scheduled → published
+    await queue.set_design_ready(item_id, "p", "u", "/t", "T", "D", [], 9.99)
     await queue.set_approved(item_id, message_id=42, chat_id=99)
     await queue.assign_slot(item_id, time.time() + 3600)
     await queue.set_published(item_id, "listing_123")
@@ -309,6 +339,7 @@ async def test_get_approved_items_empty(queue):
 
 async def test_get_approved_items_finds_approved(queue):
     item_id = await queue.create_item("planner", "printable_pdf", [])
+    await queue.set_design_ready(item_id, "p", "u", "/t", "T", "D", [], 9.99)
     await queue.set_approved(item_id)
     result = await queue.get_approved_items()
     assert len(result) == 1
@@ -322,6 +353,8 @@ async def test_get_due_scheduled_empty(queue):
 async def test_get_due_scheduled_finds_past_slot(queue):
     item_id = await queue.create_item("planner", "printable_pdf", [])
     past = time.time() - 3600
+    await queue.set_design_ready(item_id, "p", "u", "/t", "T", "D", [], 9.99)
+    await queue.set_approved(item_id)
     await queue.assign_slot(item_id, past)
     result = await queue.get_due_scheduled(now=time.time())
     assert any(r.id == item_id for r in result)
@@ -400,6 +433,7 @@ async def test_consecutive_user_skips_resets_on_approval(queue):
     item_id = await queue.create_item("planner", "printable_pdf", [])
     await queue.set_skipped(item_id, "user")
     item_id2 = await queue.create_item("planner", "printable_pdf", [])
+    await queue.set_design_ready(item_id2, "p", "u", "/t", "T", "D", [], 9.99)
     await queue.set_approved(item_id2)
     item_id3 = await queue.create_item("planner", "printable_pdf", [])
     await queue.set_skipped(item_id3, "user")
@@ -450,6 +484,7 @@ async def test_count_published_today_zero(queue):
 
 async def test_count_published_today_counts(queue):
     item_id = await queue.create_item("planner", "printable_pdf", [])
+    await queue.set_design_ready(item_id, "p", "u", "/t", "T", "D", [], 9.99)
     await queue.set_approved(item_id, message_id=1, chat_id=1)
     await queue.assign_slot(item_id, time.time() + 3600)
     await queue.set_published(item_id, "listing_abc")

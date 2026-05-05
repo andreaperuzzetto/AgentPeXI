@@ -219,7 +219,17 @@ class ProductionQueueService:
         llm_cost: float = 0.0,
         image_cost: float = 0.0,
     ) -> None:
-        """pending_design → pending_approval."""
+        """pending_design → pending_approval. Raises ValueError if not in pending_design."""
+        row = await self._db.execute(
+            "SELECT status FROM production_queue WHERE id=?", (item_id,)
+        )
+        r = await row.fetchone()
+        if r is None:
+            raise ValueError(f"Item {item_id} not found in production_queue")
+        if r["status"] != "pending_design":
+            raise ValueError(
+                f"Cannot set_design_ready on item {item_id}: status is '{r['status']}', expected 'pending_design'"
+            )
         now = self._now()
         await self._db.execute(
             """
@@ -249,7 +259,17 @@ class ProductionQueueService:
         message_id: int | None = None,
         chat_id: int | None = None,
     ) -> None:
-        """pending_approval → approved."""
+        """pending_approval → approved. Raises ValueError if not in pending_approval."""
+        row = await self._db.execute(
+            "SELECT status FROM production_queue WHERE id=?", (item_id,)
+        )
+        r = await row.fetchone()
+        if r is None:
+            raise ValueError(f"Item {item_id} not found in production_queue")
+        if r["status"] != "pending_approval":
+            raise ValueError(
+                f"Cannot set_approved on item {item_id}: status is '{r['status']}', expected 'pending_approval'"
+            )
         await self._db.execute(
             """
             UPDATE production_queue SET
@@ -286,7 +306,17 @@ class ProductionQueueService:
         await self._db.commit()
 
     async def assign_slot(self, item_id: int, publish_at: float) -> None:
-        """approved → scheduled."""
+        """approved → scheduled. Raises ValueError if not in approved."""
+        row = await self._db.execute(
+            "SELECT status FROM production_queue WHERE id=?", (item_id,)
+        )
+        r = await row.fetchone()
+        if r is None:
+            raise ValueError(f"Item {item_id} not found in production_queue")
+        if r["status"] != "approved":
+            raise ValueError(
+                f"Cannot assign_slot on item {item_id}: status is '{r['status']}', expected 'approved'"
+            )
         await self._db.execute(
             """
             UPDATE production_queue SET
