@@ -1,0 +1,1 @@
+"""EtsyAPI — sub-module package."""
