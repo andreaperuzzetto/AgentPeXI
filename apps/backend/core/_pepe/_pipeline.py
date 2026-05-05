@@ -6,6 +6,7 @@ import logging
 
 from apps.backend.core.config import settings
 from apps.backend.core.models import AgentTask, AgentResult, TaskStatus
+from apps.backend.core.production_queue import ProductionQueueService as _PQService
 
 logger = logging.getLogger("agentpexi.pepe")
 
@@ -120,8 +121,8 @@ class PipelineMixin:
             stats = await self.memory.get_production_queue_stats()
             if not stats:
                 return ""
-            pending = stats.get("planned", 0)
-            in_progress = stats.get("in_progress", 0)
+            pending = stats.get("pending_design", 0)
+            in_progress = stats.get("pending_approval", 0)
             completed_today = stats.get("completed_today", 0)
             return (
                 f"In coda: {pending} prodotti pianificati, "
@@ -220,8 +221,6 @@ class PipelineMixin:
             return None
 
         if normalized in yes_words:
-            from uuid import uuid4
-
             payload = pending["payload"]
             niche_variant = f"{payload.get('niche', '')} variante {payload.get('color_scheme', '')} alternativa"
             brief = {
@@ -232,11 +231,11 @@ class PipelineMixin:
                 "color_schemes": [],
                 "keywords": [],
             }
-            await self.memory.add_to_production_queue(
-                task_id=str(uuid4()),
-                product_type=payload.get("product_type", "printable_pdf"),
+            _pq = _PQService(await self.memory.get_db())
+            await _pq.create_item(
                 niche=niche_variant,
-                brief=brief,
+                product_type=payload.get("product_type", "printable_pdf"),
+                keywords=brief.get("keywords", []),
             )
             await self.memory.delete_pending_action("production_queue_proposal")
             return "✅ Aggiunto in coda! Sarà prodotto nel prossimo ciclo pipeline (domani alle 09:00)."
