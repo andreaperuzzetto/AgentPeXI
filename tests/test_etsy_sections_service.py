@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS uncategorized_niches (
     listing_id           TEXT,
     status               TEXT    DEFAULT 'pending',
     suggested_section_id TEXT,
-    suggested_confidence FLOAT
+    suggested_confidence FLOAT,
+    UNIQUE (niche_key, status)
 );
 """
 
@@ -183,3 +184,27 @@ async def test_sync_sections_empty_list_is_noop(svc, db):
     cursor = await db.execute("SELECT COUNT(*) AS n FROM etsy_sections")
     row = await cursor.fetchone()
     assert row["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_add_to_uncategorized_concurrent_no_duplicate(svc, db):
+    """Chiamate concorrenti su add_to_uncategorized con la stessa niche_key
+    non devono creare righe duplicate (race condition check-then-insert).
+
+    Richiede UNIQUE(niche_key, status) + INSERT OR IGNORE per essere atomico.
+    """
+    import asyncio
+
+    await asyncio.gather(
+        svc.add_to_uncategorized("kids_party"),
+        svc.add_to_uncategorized("kids_party"),
+    )
+    cursor = await db.execute(
+        "SELECT COUNT(*) AS n FROM uncategorized_niches"
+        " WHERE niche_key = 'kids_party' AND status = 'pending'"
+    )
+    row = await cursor.fetchone()
+    assert row["n"] == 1, (
+        f"Expected 1 pending row but got {row['n']} — "
+        "concurrent check-then-insert race condition not fixed"
+    )

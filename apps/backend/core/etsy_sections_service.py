@@ -94,17 +94,12 @@ class EtsySectionsService:
     ) -> None:
         """Inserisce niche non mappata in uncategorized_niches con status='pending'.
 
-        Non inserisce duplicati se già esiste una riga pending per la stessa niche.
+        Non inserisce duplicati: la UNIQUE(niche_key, status) + INSERT OR IGNORE
+        garantisce atomicità eliminando la race condition check-then-insert.
         """
-        existing = await self._db.execute(
-            "SELECT id FROM uncategorized_niches WHERE niche_key = ? AND status = 'pending'",
-            (niche_key,),
-        )
-        if await existing.fetchone():
-            return
         await self._db.execute(
             """
-            INSERT INTO uncategorized_niches
+            INSERT OR IGNORE INTO uncategorized_niches
                 (niche_key, detected_at, listing_id, suggested_section_id, suggested_confidence)
             VALUES (?, ?, ?, ?, ?)
             """,

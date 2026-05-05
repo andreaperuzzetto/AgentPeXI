@@ -399,7 +399,8 @@ CREATE TABLE IF NOT EXISTS uncategorized_niches (
     listing_id           TEXT,
     status               TEXT    DEFAULT 'pending',
     suggested_section_id TEXT,
-    suggested_confidence FLOAT
+    suggested_confidence FLOAT,
+    UNIQUE (niche_key, status)
 );
 CREATE INDEX IF NOT EXISTS idx_un_status ON uncategorized_niches(status, detected_at DESC);
 """
