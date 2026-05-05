@@ -323,3 +323,71 @@ def test_enforce_failure_substring_match_works():
     ]
     result, violations = agent._enforce_failure_constraints(output, failure_context)
     assert len(violations) >= 1
+
+
+# ---------------------------------------------------------------------------
+# PA-10: output schema contract tests (audience_target + expansion_potential)
+# ---------------------------------------------------------------------------
+
+from apps.backend.agents._research.scoring_mixin import _ResearchScoringMixin  # noqa: E402
+
+
+def test_confidence_capped_when_audience_target_absent():
+    """Contract (schema v2): audience_target absent → confidence score capped at 0.40."""
+    niche_sample = {
+        # Full quality signals that would push score well above 0.40 without the cap
+        "etsy_tags_13": [f"tag{i}" for i in range(13)],
+        "selling_signals": {
+            "thumbnail_style": "flat lay",
+            "conversion_triggers": ["urgency"],
+            "bundle_vs_single": "single",
+            "first_listing_recommendation": "planner A4",
+        },
+        "pricing": {"conversion_sweet_spot_usd": 7.99, "launch_price_usd": 5.99},
+        "demand": {"peak_months": ["January"], "publish_timing_advice": "Publish now"},
+        # audience_target deliberately absent to trigger the cap
+    }
+    # _calculate_confidence expects output = {"niches": [niche_dict, ...]}
+    output = {"niches": [niche_sample]}
+    data_sources = {
+        "pricing": "etsy_api",
+        "trend": "google_trends",
+        "keywords": "erank_content",
+        "competitors": "etsy_api",
+    }
+    score, missing = _ResearchScoringMixin._calculate_confidence(data_sources, output)
+    assert score <= 0.40, f"Expected score ≤ 0.40 when audience_target absent, got {score}"
+    assert any("audience_target" in m for m in missing), (
+        "Expected 'audience_target' warning in missing list"
+    )
+
+
+def test_niche_item_expansion_potential_non_negative():
+    """Contract: NicheItemResponse.expansion_potential must be None or >= 0."""
+    from pydantic import ValidationError
+    from apps.backend.api.routers.etsy import NicheItemResponse
+
+    _BASE = dict(
+        niche="planner",
+        product_type="printable_pdf",
+        performance_score=0.5,
+        confidence_level="medium",
+        avg_ctr=None,
+        total_orders=None,
+        total_listings=None,
+        total_revenue_eur=None,
+        last_updated_at=None,
+        entry_score=None,
+        tier=None,
+        avg_price_eur=None,
+        google_trend_score=None,
+    )
+    # Valid: None (field is optional)
+    assert NicheItemResponse(**_BASE, expansion_potential=None).expansion_potential is None
+    # Valid: zero
+    assert NicheItemResponse(**_BASE, expansion_potential=0).expansion_potential == 0
+    # Valid: positive int
+    assert NicheItemResponse(**_BASE, expansion_potential=42).expansion_potential == 42
+    # Invalid: negative must raise ValidationError
+    with pytest.raises(ValidationError):
+        NicheItemResponse(**_BASE, expansion_potential=-1)

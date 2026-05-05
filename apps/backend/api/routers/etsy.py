@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class NicheItemResponse(BaseModel):
@@ -27,6 +27,13 @@ class NicheItemResponse(BaseModel):
     audience_target: str | None = None
     expansion_potential: int | None = None
     section_name: str | None = None
+
+    @field_validator("expansion_potential")
+    @classmethod
+    def _expansion_potential_non_negative(cls, v: int | None) -> int | None:
+        if v is not None and v < 0:
+            raise ValueError("expansion_potential must be >= 0")
+        return v
 
 
 class NichesResponse(BaseModel):
