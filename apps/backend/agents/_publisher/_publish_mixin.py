@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from apps.backend.agents._publisher.constants import TAXONOMY_IDS
+from apps.backend.core.etsy_sections_service import EtsySectionsService
 
 logger = logging.getLogger("agentpexi.publisher")
 
@@ -108,6 +109,9 @@ class _PublishMixin:
             "research" if research_data.get("pricing", {}).get("launch_price_usd") else "fallback_hardcoded"
         )
 
+        # 3e-pre. Section lookup — assegna listing alla sezione Etsy corretta
+        section_id = await self._resolve_section_id(niche)
+
         # 3e. Crea draft su Etsy
         taxonomy_id = TAXONOMY_IDS.get(product_type, 2078)
         if taxonomy_id == 0:
@@ -116,11 +120,7 @@ class _PublishMixin:
                 "Usa GET /v3/application/seller-taxonomy/nodes per trovare il taxonomy ID "
                 "Etsy corretto e aggiornalo in publisher.py prima di pubblicare."
             )
-        response = await self._call_tool(
-            "etsy_api",
-            "create_listing",
-            {"title": title, "price": price, "tags": tags},
-            self.etsy_api.create_listing,
+        create_listing_kwargs: dict = dict(
             title=title,
             description=description,
             price=price,
@@ -133,11 +133,32 @@ class _PublishMixin:
             is_digital=True,
             quantity=999,
         )
+        if section_id:
+            create_listing_kwargs["shop_section_id"] = (
+                int(section_id) if section_id.isdigit() else section_id
+            )
+
+        response = await self._call_tool(
+            "etsy_api",
+            "create_listing",
+            {"title": title, "price": price, "tags": tags},
+            self.etsy_api.create_listing,
+            **create_listing_kwargs,
+        )
 
         listing_id = str(response.get("listing_id", ""))
         if not listing_id:
             raise RuntimeError(f"Etsy non ha restituito listing_id: {response}")
         result["listing_id"] = listing_id
+        result["section_id"] = section_id  # per tracciabilità nel result dict
+        # Update section listing count if assigned
+        if section_id:
+            try:
+                db = await self.memory.get_db()
+                ess = EtsySectionsService(db)
+                await ess.update_section_listing_count(section_id, listing_id)
+            except Exception:
+                logger.exception("Failed to update section listing count for section %s", section_id)
 
         # 3f. Upload file
         await self._call_tool(
@@ -293,3 +314,42 @@ class _PublishMixin:
                 await self._telegram_broadcast(message)
             except Exception:
                 logger.exception("Unexpected error")
+
+    async def _resolve_section_id(self, niche: str) -> str | None:
+        """Lookup/auto-map section_id per la niche. Ritorna section_id o None.
+
+        Flusso:
+        1. get_section_for_niche → se trovato, usa
+        2. suggest_section_for_niche → se confidence ≥ 0.5, auto-mappa e usa
+        3. add_to_uncategorized (con hint suggestion se disponibile) → ritorna None
+        """
+        try:
+            db = await self.memory.get_db()
+            ess = EtsySectionsService(db)
+
+            # 1. Lookup esplicito
+            section_id = await ess.get_section_for_niche(niche)
+            if section_id:
+                return section_id
+
+            # 2. Auto-map fuzzy
+            suggested_id, confidence = await ess.suggest_section_for_niche(niche)
+            if suggested_id and confidence is not None and confidence >= 0.5:
+                await ess.map_niche(niche, suggested_id, mapped_by="auto", auto_confidence=confidence)
+                logger.info(
+                    "Section auto-mapped: %s → %s (confidence %.2f)", niche, suggested_id, confidence
+                )
+                return suggested_id
+
+            # 3. Uncategorized (con hint se disponibile)
+            await ess.add_to_uncategorized(
+                niche,
+                suggested_section_id=suggested_id,
+                suggested_confidence=confidence,
+            )
+            logger.info("Section not found for %s — added to uncategorized", niche)
+
+        except Exception:
+            logger.exception("Section lookup failed for %s — publishing without section", niche)
+
+        return None
