@@ -184,3 +184,99 @@ class WarmupOrchestratorMixin:
             })
 
         return candidates
+
+    async def _broadcast(self, event: dict) -> None:
+        """WebSocket broadcast — real impl injected by AgentBase mixin."""
+        if hasattr(self, "_ws_broadcast") and self._ws_broadcast is not None:
+            try:
+                await self._ws_broadcast(event)
+            except Exception as exc:
+                logger.warning("warmup: _broadcast failed: %s", exc)
+
+    async def run_full_warmup(self) -> dict[str, Any]:
+        """Full warmup run: sweep all 4 sections in parallel, store in ChromaDB,
+        synthesize cross-section report via Sonnet, emit WebSocket events.
+
+        Returns:
+            {
+                "all_candidates": dict[section_key, list[candidate_dict]],
+                "total": int,
+                "report": {"recommended": [...], "report_text": str},
+            }
+        """
+        all_candidates: dict[str, list[dict[str, Any]]] = {}
+
+        async def _sweep_and_store(section_key: str) -> list[dict[str, Any]]:
+            candidates = await self.section_sweep(section_key, top_k=5)
+            await self._store_warmup_candidates(section_key, candidates)
+            await self._broadcast({
+                "type": "warmup_progress",
+                "section": section_key,
+                "candidates_count": len(candidates),
+            })
+            return candidates
+
+        results = await asyncio.gather(
+            *[_sweep_and_store(s) for s in self._WARMUP_SECTION_KEYS],
+            return_exceptions=True,
+        )
+
+        for section_key, result in zip(self._WARMUP_SECTION_KEYS, results):
+            if isinstance(result, Exception):
+                logger.error(
+                    "warmup: section_sweep failed section=%r: %s",
+                    section_key, result,
+                )
+                all_candidates[section_key] = []
+            else:
+                all_candidates[section_key] = result  # type: ignore[assignment]
+
+        total = sum(len(v) for v in all_candidates.values())
+
+        report = await self._synthesize_warmup_report(all_candidates)
+
+        await self._broadcast({
+            "type": "warmup_completed",
+            "candidates_count": total,
+            "recommended_count": len(report.get("recommended", [])),
+            "sections": {k: len(v) for k, v in all_candidates.items()},
+        })
+
+        return {
+            "all_candidates": all_candidates,
+            "total": total,
+            "report": report,
+        }
+
+    async def _store_warmup_candidates(
+        self,
+        section_key: str,
+        candidates: list[dict[str, Any]],
+    ) -> list[str]:
+        """Store warmup candidates in ChromaDB with type='warmup_candidate'.
+
+        Returns list of stored doc IDs (empty strings skipped).
+        """
+        doc_ids: list[str] = []
+        for candidate in candidates:
+            niche = candidate.get("niche", "").strip()
+            if not niche:
+                continue
+            text = (
+                f"warmup candidate: {niche} "
+                f"({candidate.get('product_type', 'printable_pdf')}) — "
+                f"section: {section_key}"
+            )
+            metadata: dict[str, str] = {
+                "type":         "warmup_candidate",
+                "section":      section_key,
+                "niche":        niche,
+                "product_type": candidate.get("product_type", "printable_pdf"),
+                "score":        str(round(float(candidate.get("score", 0.0)), 4)),
+                "status":       "pending",
+                "source":       candidate.get("source", f"warmup_{section_key}"),
+            }
+            doc_id = await self.memory.store_insight(text=text, metadata=metadata)
+            if doc_id:
+                doc_ids.append(doc_id)
+        return doc_ids
