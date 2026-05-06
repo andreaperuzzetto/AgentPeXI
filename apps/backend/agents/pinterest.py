@@ -15,6 +15,7 @@ from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 
+from apps.backend.agents._pinterest._generation_mixin import _GenerationMixin
 from apps.backend.agents._pinterest._warmup_mixin import _WarmupMixin
 from apps.backend.agents.base import AgentBase
 from apps.backend.core.config import MODEL_HAIKU
@@ -26,7 +27,7 @@ logger = logging.getLogger("agentpexi.pinterest")
 __all__ = ["PinterestAgent"]
 
 
-class PinterestAgent(_WarmupMixin, AgentBase):
+class PinterestAgent(_WarmupMixin, _GenerationMixin, AgentBase):
     """Agente Pinterest: warm-up, generazione pin, scheduling e delivery."""
 
     card: ClassVar[AgentCard] = AgentCard(
