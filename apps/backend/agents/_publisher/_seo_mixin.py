@@ -7,10 +7,77 @@ import logging
 logger = logging.getLogger("agentpexi.publisher")
 
 
+# AGT-3.3 — LADDER_PROMPTS dispatcher (ETSY_STRATEGY §AGT-3.3)
+# Ogni tier ha regole specifiche per titolo, prezzo e description hook.
+LADDER_PROMPTS: dict[str, dict] = {
+    "tripwire": {
+        "title_prefix": "Printable",          # prima parola forzata — segnala prezzo basso
+        "price_cap_eur": 2.50,                # massimo assoluto per tripwire
+        "description_hook": "budget_anchor",  # "For less than a coffee, get..."
+        "tags_strategy": "volume_first",      # L1 e L2 tag prioritari per impressions
+        "title_rule": "Il titolo INIZIA SEMPRE con la parola 'Printable' — segnala prezzo basso e download immediato.",
+    },
+    "core": {
+        "title_prefix": None,
+        "price_cap_eur": None,
+        "description_hook": "benefit_first",
+        "tags_strategy": "balanced",
+        "title_rule": "Formula standard: [Audience Benefit] [Product Type] for [Specific Audience] | [Differentiator]",
+    },
+    "core_premium": {
+        "title_suffix": "| Complete Edition",
+        "price_multiplier": 1.30,             # +30% rispetto al core base
+        "description_hook": "value_stack",    # enfatizza contenuto aggiuntivo
+        "tags_strategy": "balanced",
+        "title_rule": "Il titolo include '| Complete Edition' o differentiator di valore in posizione finale.",
+    },
+    "bundle": {
+        "title_contains": ["Bundle", "Complete Set", "Full Collection"],
+        "description_hook": "bundle_value",   # elenca componenti, calcola risparmio %
+        "tags_strategy": "l2_l3_focus",       # audience-specific, meno volume play
+        "title_rule": "Il titolo contiene 'Bundle', 'Complete Set', o 'Full Collection' in posizione 2-3.",
+    },
+}
+
+
 class _SeoMixin:
 
-    def _build_seo_system_prompt(self, selling_signals: dict) -> str:
-        """System prompt SEO dinamico con selling_signals e contesto stagionale."""
+    def _build_ladder_context(self, product_tier: str) -> str:
+        """Genera il blocco di istruzioni LADDER per il titolo in base al product_tier.
+
+        Fonte: ETSY_STRATEGY §AGT-3.3 + etsy-seo-mcp TIER 1 patterns.
+        """
+        tier_data = LADDER_PROMPTS.get(product_tier, LADDER_PROMPTS["core"])
+        rule = tier_data.get("title_rule", "")
+        hook = tier_data.get("description_hook", "benefit_first")
+
+        hook_instructions = {
+            "budget_anchor": (
+                "DESCRIPTION HOOK (tripwire): le prime 160 char iniziano con "
+                "un anchor di prezzo basso — es. 'For less than a coffee, get [benefit]...'"
+            ),
+            "benefit_first": (
+                "DESCRIPTION HOOK (core): le prime 160 char partono dal benefit immediato "
+                "— NO 'Welcome to my shop', NO 'This listing is for'."
+            ),
+            "value_stack": (
+                "DESCRIPTION HOOK (premium): le prime 160 char elencano il valore aggiuntivo "
+                "rispetto al core — numero di pagine extra, formati bonus, ecc."
+            ),
+            "bundle_value": (
+                "DESCRIPTION HOOK (bundle): le prime 160 char elencano i componenti del bundle "
+                "e calcolano il risparmio rispetto all'acquisto separato."
+            ),
+        }.get(hook, "")
+
+        return (
+            f"\nLADDER TIER: {product_tier.upper()}\n"
+            f"REGOLA TITOLO: {rule}\n"
+            f"{hook_instructions}\n"
+        )
+
+    def _build_seo_system_prompt(self, selling_signals: dict, product_tier: str = "core", has_research_tags: bool = False) -> str:
+        """System prompt SEO dinamico con selling_signals, AGT-3 copywriting framework e LADDER tier."""
         thumbnail_style = selling_signals.get("thumbnail_style", "clean mockup")
         conversion_triggers = selling_signals.get("conversion_triggers", [])
         bundle_vs_single = selling_signals.get("bundle_vs_single", "single")
@@ -39,24 +106,53 @@ class _SeoMixin:
                 f"Non forzarlo se non c'entra con il prodotto."
             )
 
+        ladder_context = self._build_ladder_context(product_tier)
+
         return (
             "Sei un copywriter Etsy specializzato in prodotti digitali stampabili.\n"
             "Il tuo obiettivo è massimizzare conversioni, non solo ottimizzare per search.\n\n"
-            f"STILE THUMBNAIL DA MENZIONARE NELLA DESCRIPTION: {thumbnail_style}\n"
+            # AGT-3.1 — Copywriting formula
+            "FORMULA TITOLO OBBLIGATORIA (max 140 char, Etsy tronca oltre):\n"
+            "[Audience Benefit] [Product Type] for [Specific Audience] | [Differentiator]\n"
+            "REGOLE TITOLO:\n"
+            "1. Il BENEFIT viene PRIMA del prodotto ('Stay Calm Daily — Mindfulness Journal' > 'Mindfulness Journal')\n"
+            "2. L'AUDIENCE SPECIFICA è SEMPRE inclusa ('for Teachers', 'for ADHD Adults', 'for Brides')\n"
+            "3. Il differentiator finale (dopo |) include: numero specifico, formato, o aggettivo raro\n"
+            "4. MAI keyword stuffing — titoli con 8+ keyword separate da virgole penalizzano il ranking Etsy 2026\n"
+            f"{ladder_context}\n"
+            # AGT-3.2 — Page-CRO 5-section structure
+            "STRUTTURA DESCRIPTION (5 sezioni CRO, ETSY_STRATEGY §AGT-3.2):\n"
+            "  SEZIONE 1 — Above the fold (prime 160 char, CRITICA):\n"
+            "    Benefit immediato + chi è per + cosa ottieni. NO 'Welcome to my shop', NO 'This listing is for'.\n"
+            "    Nessuna emoji nei primi 160 char. Keyword principale nel primo paragrafo.\n"
+            "  SEZIONE 2 — What's included: bullet list specifici e numerici (✓ 52 weekly spreads, non 'many pages')\n"
+            "  SEZIONE 3 — Who it's for: identità + pain point + outcome (il buyer si riconosce)\n"
+            "  SEZIONE 4 — How it works: 'Download the PDF instantly after purchase. Print at home or at any print shop.'\n"
+            "  SEZIONE 5 — (Solo se cluster ha ≥2 listing) Cross-reference altri prodotti correlati\n"
+            # etsy-seo-mcp TIER 1 — Tag strategy
+            "\nSTRATEGIA TAG (etsy-seo-mcp TIER 1):\n"
+            "  13 tag esatti, mix broad/specific:\n"
+            "  - L1 (broad, alto volume): 3-4 tag — es. 'printable planner', 'digital download'\n"
+            "  - L2 (mid, audience-specific): 5-6 tag — es. 'planner for teachers', 'ADHD planner printable'\n"
+            "  - L3 (long-tail, alta conversione): 3-4 tag — es. 'ADHD daily routine planner undated'\n"
+            "  AI DISCLOSURE OBBLIGATORIA (policy Etsy 2024): nella description, PRIMA dei bullet points:\n"
+            "  'This design was created with the assistance of artificial intelligence.'\n"
+            f"\nSTILE THUMBNAIL DA MENZIONARE: {thumbnail_style}\n"
             f"{trigger_instructions}\n"
             f"{bundle_instruction}\n"
             f"{seasonal_instruction}\n\n"
             "REGOLE ASSOLUTE:\n"
-            "1. Title: keyword principale PRIMA di tutto, benefit nei primi 60 chars\n"
-            "2. Description: prima riga ottimizzata per Etsy search preview (150 chars max)\n"
-            "3. Bullet points con \u2022 per le caratteristiche\n"
-            "4. Tags: usa ESATTAMENTE la lista fornita, non modificare\n"
-            "5. Nessun claim falso (no \"best seller\", \"award winning\")\n"
+            "1. Title: segui la FORMULA TITOLO e la REGOLA TITOLO LADDER sopra — il tier sovrascrive le regole generali\n"
+            "2. Description: prima riga ottimizzata per Etsy search preview (160 chars max)\n"
+            "3. Bullet points con ✓ o • per le caratteristiche\n"
+            + (
+                "4. Tags: usa ESATTAMENTE la lista fornita (13 tag ottimizzati da Research)\n"
+                if has_research_tags else
+                "4. Tags: genera 13 tag secondo la strategia L1/L2/L3 descritta sopra\n"
+            ) +
+            "5. Nessun claim falso (no 'best seller', 'award winning')\n"
             "6. Sempre in inglese\n"
-            "7. AI DISCLOSURE OBBLIGATORIA (policy Etsy 2024): includi nella description, "
-            "PRIMA dei bullet points, esattamente questa frase: "
-            "\"This design was created with the assistance of artificial intelligence.\"\n"
-            '8. Rispondi SOLO con JSON valido: {"title": "...", "description": "...", "tags": [...]}\n'
+            '7. Rispondi SOLO con JSON valido: {"title": "...", "description": "...", "tags": [...]}\n'
         )
 
     async def _generate_seo(
@@ -67,6 +163,7 @@ class _SeoMixin:
         color_scheme: str,
         size: str,
         research_data: dict,
+        product_tier: str = "core",  # AGT-3: ladder tier da production_queue
     ) -> dict:
         """Genera title, description, tags via LLM usando dati Research. Retry una volta se JSON malformato."""
         etsy_tags_13 = research_data.get("etsy_tags_13", [])
@@ -75,7 +172,11 @@ class _SeoMixin:
         bundle_vs_single = selling_signals.get("bundle_vs_single", "single")
         thumbnail_style = selling_signals.get("thumbnail_style", "")
 
-        system_prompt = self._build_seo_system_prompt(selling_signals)
+        system_prompt = self._build_seo_system_prompt(
+            selling_signals,
+            product_tier=product_tier,
+            has_research_tags=bool(etsy_tags_13),
+        )
 
         # Build user message con dati Research
         tags_instruction = ""

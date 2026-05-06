@@ -33,6 +33,7 @@ class _PublishMixin:
         pq_task_id: str | None,
         research_data: dict,
         thumbnail_paths_input: list[str] | None = None,
+        product_tier: str = "core",  # AGT-3: da production_queue.product_tier
     ) -> dict:
         """Pubblica un singolo file come draft su Etsy. Ritorna dict con dettagli."""
         result: dict[str, Any] = {
@@ -94,6 +95,7 @@ class _PublishMixin:
             color_scheme=color_scheme,
             size=size,
             research_data=research_data,
+            product_tier=product_tier,
         )
 
         title = seo["title"]

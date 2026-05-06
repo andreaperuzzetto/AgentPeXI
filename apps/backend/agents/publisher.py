@@ -80,6 +80,7 @@ class PublisherAgent(_PublishMixin, _ResolveMixin, _ThumbnailMixin, _SeoMixin, A
         color_schemes: list[str] = data.get("color_schemes", [])
         keywords: list[str] = data.get("keywords", [])
         size: str = data.get("size", "A4")
+        product_tier: str = data.get("product_tier", "core")  # AGT-3: ladder tier
         pq_task_id: str | None = data.get("production_queue_task_id")
 
         # Filtra file esistenti
@@ -116,6 +117,7 @@ class PublisherAgent(_PublishMixin, _ResolveMixin, _ThumbnailMixin, _SeoMixin, A
                     keywords=keywords,
                     size=size,
                     ab_variant=ab_variant,
+                    product_tier=product_tier,
                     pq_task_id=pq_task_id,
                     research_data=data,
                     thumbnail_paths_input=thumbnail_paths_input,
