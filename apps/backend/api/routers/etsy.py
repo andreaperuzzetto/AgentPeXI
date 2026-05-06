@@ -216,19 +216,24 @@ async def get_etsy_niches(
         # Add warmup candidates that don't already exist
         for candidate in warmup_candidates:
             metadata = candidate.get("metadata", {})
-            niche = metadata.get("niche", "")
-            product_type = metadata.get("product_type")
+            niche = metadata.get("niche") or ""
+            product_type = metadata.get("product_type") or ""
             
             # Deduplicate: skip if DB already has this combination
-            pair_key = (niche.lower(), (product_type or "").lower())
+            pair_key = (niche.lower(), product_type.lower())
             if pair_key in existing_pairs:
                 continue
             
             # Build NicheItemResponse from warmup candidate
+            try:
+                performance_score = float(metadata.get("score") or 0.0)
+            except (ValueError, TypeError):
+                performance_score = 0.0
+            
             niches.append(NicheItemResponse(
                 niche=niche,
-                product_type=product_type,
-                performance_score=float(metadata.get("score") or 0.0),
+                product_type=product_type if product_type else None,
+                performance_score=performance_score,
                 confidence_level=metadata.get("status", "pending_warmup"),
                 avg_ctr=None,
                 total_orders=None,

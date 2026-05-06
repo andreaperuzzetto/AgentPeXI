@@ -210,3 +210,99 @@ async def test_niches_handles_warmup_without_product_type(app):
         
     finally:
         state_mod.memory = original_memory
+
+
+@pytest.mark.asyncio
+async def test_niches_handles_null_niche_in_warmup_candidate(app):
+    """Warmup candidate with niche=None should not crash the endpoint."""
+    mock_db = AsyncMock()
+    mock_cursor = AsyncMock()
+    mock_cursor.fetchall.return_value = []
+    mock_db.execute.return_value = mock_cursor
+    
+    # Warmup candidate with niche=None
+    mock_memory = MagicMock()
+    mock_memory.get_db = AsyncMock(return_value=mock_db)
+    mock_memory.query_insights_by_type = AsyncMock(return_value=[
+        {
+            "id": "warmup1",
+            "text": "Candidate with null niche",
+            "metadata": {
+                "type": "warmup_candidate",
+                "niche": None,  # Null value
+                "product_type": None,
+                "score": "0.65",
+                "status": "pending_warmup",
+                "source": "coldstart_bootstrap"
+            }
+        }
+    ])
+    
+    original_memory = state_mod.memory
+    state_mod.memory = mock_memory
+    
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/etsy/niches")
+        
+        # Should return 200 (null candidate is handled gracefully, converted to empty string)
+        assert resp.status_code == 200
+        data = resp.json()
+        niches = data["niches"]
+        
+        # Candidate with empty niche should still be included
+        assert len(niches) == 1
+        assert niches[0]["niche"] == ""
+        assert niches[0]["product_type"] is None
+        assert niches[0]["source_type"] == "warmup_candidate"
+        
+    finally:
+        state_mod.memory = original_memory
+
+
+@pytest.mark.asyncio
+async def test_niches_handles_invalid_score_in_warmup_candidate(app):
+    """Warmup candidate with non-numeric score should default to 0.0."""
+    mock_db = AsyncMock()
+    mock_cursor = AsyncMock()
+    mock_cursor.fetchall.return_value = []
+    mock_db.execute.return_value = mock_cursor
+    
+    # Warmup candidate with invalid score
+    mock_memory = MagicMock()
+    mock_memory.get_db = AsyncMock(return_value=mock_db)
+    mock_memory.query_insights_by_type = AsyncMock(return_value=[
+        {
+            "id": "warmup1",
+            "text": "Candidate with invalid score",
+            "metadata": {
+                "type": "warmup_candidate",
+                "niche": "vintage posters",
+                "product_type": "print",
+                "score": "invalid",  # Non-numeric string
+                "status": "pending_warmup",
+                "source": "coldstart_bootstrap"
+            }
+        }
+    ])
+    
+    original_memory = state_mod.memory
+    state_mod.memory = mock_memory
+    
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/etsy/niches")
+        
+        # Should return 200 and default score to 0.0
+        assert resp.status_code == 200
+        data = resp.json()
+        niches = data["niches"]
+        
+        assert len(niches) == 1
+        assert niches[0]["niche"] == "vintage posters"
+        assert niches[0]["product_type"] == "print"
+        assert niches[0]["performance_score"] == 0.0
+        assert niches[0]["source_type"] == "warmup_candidate"
+        
+    finally:
+        state_mod.memory = original_memory
