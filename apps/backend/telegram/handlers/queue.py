@@ -18,6 +18,7 @@ from apps.backend.telegram.handlers._queue import (
     cmd_remind,
     cmd_remind_list,
     cmd_research,
+    cmd_sections,
     cmd_summarize,
     cmd_urgency,
 )
@@ -42,6 +43,7 @@ def register(
     add(CommandHandler("ladder",    partial(cmd_ladder,      deps), filters=chat_filter))
     add(CommandHandler("bundle",    partial(cmd_bundle,      deps), filters=chat_filter))
     add(CommandHandler("finance",   partial(cmd_finance,     deps), filters=chat_filter))
+    add(CommandHandler("sections",  partial(cmd_sections,    deps), filters=chat_filter))
 
     # Personal
     add(CommandHandler("remind",    partial(cmd_remind,      deps), filters=chat_filter))
