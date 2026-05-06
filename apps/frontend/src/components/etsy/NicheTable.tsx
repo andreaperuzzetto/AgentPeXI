@@ -63,6 +63,11 @@ function statusBadge(item: NicheItem): { label: string; bg: string; fg: string }
     : { label: 'ANALYZING', bg: 'rgba(245,166,35,0.10)', fg: '#F5A623' }
 }
 
+/** WARMUP badge for warmup_candidate niches */
+function isWarmupCandidate(item: NicheItem): boolean {
+  return item.source_type === 'warmup_candidate'
+}
+
 /* ── Score mini-bar ───────────────────────────────────────────────────────── */
 interface ScoreBarProps { value: number | null; color: string }
 
@@ -235,6 +240,23 @@ function NicheRow({ item, index, isLast }: NicheRowProps) {
         </span>
       ) : (
         <span className="mono-num" style={{ fontSize: 10, color: 'rgba(255,255,255,0.18)' }}>—</span>
+      )}
+      {/* Warmup badge — shown only for warmup_candidate niches */}
+      {isWarmupCandidate(item) && (
+        <span style={{
+          display:       'inline-flex',
+          alignItems:    'center',
+          padding:       '2px 7px',
+          borderRadius:  4,
+          fontSize:      10,
+          fontWeight:    600,
+          letterSpacing: '0.06em',
+          background:    'rgba(139,141,152,0.18)',
+          color:         '#8B8D98',
+          marginLeft:    6,
+        }}>
+          WARMUP
+        </span>
       )}
 
       {/* Entry score bar */}

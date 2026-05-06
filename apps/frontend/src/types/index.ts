@@ -261,6 +261,7 @@ export interface NicheItem {
   expansion_potential: number | null
   section_name:        string | null
   product_tier:        'tripwire' | 'core' | 'core_premium' | 'bundle' | null
+  source_type:         'warmup_candidate' | null
 }
 
 /* ── Bundle status (from /api/etsy/bundles) ── */
