@@ -8,9 +8,12 @@ import type { ShopIdentity } from '../../types'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
+const panelStyle = { padding: '12px', background: 'var(--surface-secondary, #1a1a1a)', borderRadius: '8px', marginBottom: '12px' }
+
 export function ShopIdentityPanel() {
   const [identity, setIdentity] = useState<ShopIdentity | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -18,12 +21,20 @@ export function ShopIdentityPanel() {
 
     async function fetchIdentity() {
       try {
-        const resp = await fetch(`${BASE}/api/etsy/shop-identity`, { signal: ac.signal })
+        const resp = await fetch(`${BASE}/api/etsy/shop-identity`, {
+          signal: ac.signal,
+          headers: { 'X-Personal-Key': import.meta.env.VITE_PERSONAL_KEY ?? '' },
+        })
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
         const data = await resp.json()
         if (!cancelled) setIdentity(data.identity ?? null)
       } catch (err) {
-        if (!cancelled) console.warn('ShopIdentityPanel fetch error:', err)
+        if (!cancelled) {
+          if (err instanceof Error && err.name !== 'AbortError') {
+            setError('Failed to load brand identity')
+            console.warn('ShopIdentityPanel fetch error:', err)
+          }
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -34,133 +45,54 @@ export function ShopIdentityPanel() {
   }, [])
 
   if (loading) return (
-    <>
-      <style>{`
-        .shop-identity-panel {
-          padding: 12px;
-          background: var(--surface-secondary, #1a1a1a);
-          border-radius: 8px;
-          margin-bottom: 12px;
-        }
-        .shop-identity-panel--loading .shop-identity-panel__skeleton {
-          height: 72px;
-          background: linear-gradient(90deg, #2a2a2a 25%, #333 50%, #2a2a2a 75%);
-          border-radius: 6px;
-          animation: pulse 1.4s infinite;
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
-      <div className="shop-identity-panel shop-identity-panel--loading">
-        <div className="shop-identity-panel__skeleton" />
-      </div>
-    </>
+    <div style={panelStyle}>
+      <div style={{ height: '72px', background: 'linear-gradient(90deg, #2a2a2a 25%, #333 50%, #2a2a2a 75%)', borderRadius: '6px' }} />
+    </div>
+  )
+
+  if (error) return (
+    <div style={panelStyle}>
+      <span style={{ fontWeight: 600, fontSize: '13px' }}>⚠️ {error}</span>
+    </div>
   )
 
   if (!identity) return (
-    <>
-      <style>{`
-        .shop-identity-panel {
-          padding: 12px;
-          background: var(--surface-secondary, #1a1a1a);
-          border-radius: 8px;
-          margin-bottom: 12px;
-        }
-        .shop-identity-panel--empty {
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-          opacity: 0.6;
-        }
-        .shop-identity-panel__empty-label { font-weight: 600; font-size: 13px; }
-        .shop-identity-panel__hint { font-size: 11px; color: #888; }
-      `}</style>
-      <div className="shop-identity-panel shop-identity-panel--empty">
-        <span className="shop-identity-panel__empty-label">No brand identity active</span>
-        <span className="shop-identity-panel__hint">Use /style_guide on Telegram</span>
-      </div>
-    </>
+    <div style={{ ...panelStyle, display: 'flex', flexDirection: 'column' as const, gap: '4px', opacity: 0.6 }}>
+      <span style={{ fontWeight: 600, fontSize: '13px' }}>No brand identity active</span>
+      <span style={{ fontSize: '11px', color: '#888' }}>Use /style_guide on Telegram</span>
+    </div>
   )
 
   return (
-    <>
-      <style>{`
-        .shop-identity-panel {
-          padding: 12px;
-          background: var(--surface-secondary, #1a1a1a);
-          border-radius: 8px;
-          margin-bottom: 12px;
-        }
-        .shop-identity-panel__header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 8px;
-        }
-        .shop-identity-panel__title { font-weight: 700; font-size: 13px; }
-        .shop-identity-panel__badge {
-          font-size: 10px;
-          padding: 2px 6px;
-          background: #2a3a2a;
-          color: #7ec87e;
-          border-radius: 4px;
-          text-transform: uppercase;
-        }
-        .shop-identity-panel__palette {
-          display: flex;
-          gap: 6px;
-          margin-bottom: 8px;
-        }
-        .shop-identity-panel__swatch {
-          width: 24px;
-          height: 24px;
-          border-radius: 50%;
-          border: 1px solid rgba(255,255,255,0.15);
-          cursor: default;
-        }
-        .shop-identity-panel__tone {
-          font-size: 11px;
-          color: #aaa;
-          line-height: 1.4;
-          margin: 0 0 8px 0;
-        }
-        .shop-identity-panel__logo {
-          margin-top: 8px;
-          border-radius: 6px;
-          object-fit: cover;
-        }
-      `}</style>
-      <div className="shop-identity-panel">
-        <div className="shop-identity-panel__header">
-          <span className="shop-identity-panel__title">{identity.aesthetic_name}</span>
-          <span className="shop-identity-panel__badge">{identity.mockup_style}</span>
-        </div>
-
-        <div className="shop-identity-panel__palette">
-          {[identity.palette_primary, identity.palette_secondary, identity.palette_accent].map((hex) => (
-            <div
-              key={hex}
-              className="shop-identity-panel__swatch"
-              style={{ backgroundColor: hex }}
-              title={hex}
-            />
-          ))}
-        </div>
-
-        <p className="shop-identity-panel__tone">{identity.tone}</p>
-
-        {identity.logo_path && (
-          <img
-            src={`${BASE}/${identity.logo_path}`}
-            alt="Shop logo"
-            className="shop-identity-panel__logo"
-            width={64}
-            height={64}
-          />
-        )}
+    <div style={panelStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+        <span style={{ fontWeight: 700, fontSize: '13px' }}>{identity.aesthetic_name}</span>
+        <span style={{ fontSize: '10px', padding: '2px 6px', background: '#2a3a2a', color: '#7ec87e', borderRadius: '4px', textTransform: 'uppercase' as const }}>
+          {identity.mockup_style.replace(/_/g, ' ')}
+        </span>
       </div>
-    </>
+
+      <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+        {[identity.palette_primary, identity.palette_secondary, identity.palette_accent].map((hex, i) => (
+          <div
+            key={i}
+            style={{ width: '24px', height: '24px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: hex }}
+            title={hex}
+          />
+        ))}
+      </div>
+
+      <p style={{ fontSize: '11px', color: '#aaa', lineHeight: 1.4, margin: 0 }}>{identity.tone}</p>
+
+      {identity.logo_path && (
+        <img
+          src={`${BASE}${identity.logo_path}`}
+          alt="Shop logo"
+          style={{ marginTop: '8px', borderRadius: '6px', objectFit: 'cover' as const }}
+          width={64}
+          height={64}
+        />
+      )}
+    </div>
   )
 }
