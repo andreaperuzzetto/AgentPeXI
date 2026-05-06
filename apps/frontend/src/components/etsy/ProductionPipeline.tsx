@@ -34,6 +34,7 @@ import { useStore }                                   from '../../store'
 /* 5 status attivi per la pipeline bar — in ordine di pipeline */
 const PIPELINE_STAGES = [
   { key: 'pending_design',   label: 'Design',    color: '#F5A623' },
+  { key: 'pending_warmup',   label: 'Warmup',    color: '#8B8D98' },
   { key: 'pending_approval', label: 'Approval',  color: '#C8C8FF' },
   { key: 'approved',         label: 'Approved',  color: '#B57BFF' },
   { key: 'scheduled',        label: 'Scheduled', color: 'rgba(27,255,94,0.75)' },
@@ -45,6 +46,7 @@ interface StatusMeta { label: string; bg: string; fg: string }
 
 const STATUS_META: Record<string, StatusMeta> = {
   pending_design:   { label: 'Design',    bg: 'rgba(245,166,35,0.14)',   fg: '#F5A623' },
+  pending_warmup:   { label: 'Warmup',    bg: 'rgba(139,141,152,0.18)',  fg: '#8B8D98' },
   pending_approval: { label: 'Approval',  bg: 'rgba(200,200,255,0.14)',  fg: '#C8C8FF' },
   approved:         { label: 'Approved',  bg: 'rgba(181,123,255,0.14)',  fg: '#B57BFF' },
   scheduled:        { label: 'Scheduled', bg: 'rgba(27,255,94,0.10)',    fg: 'rgba(27,255,94,0.80)' },
@@ -108,6 +110,7 @@ function fmtRelTime(iso: string): string {
 const STATUS_OPTIONS = [
   { value: 'all',              label: 'All statuses' },
   { value: 'pending_design',   label: 'Design' },
+  { value: 'pending_warmup',   label: 'Warmup' },
   { value: 'pending_approval', label: 'Approval' },
   { value: 'approved',         label: 'Approved' },
   { value: 'scheduled',        label: 'Scheduled' },
@@ -325,6 +328,7 @@ export function ProductionPipeline() {
     const norm = {
       ...counts,
       pending_design:   (counts.pending_design ?? 0) + (counts.planned ?? 0) + (counts.in_progress ?? 0),
+      pending_warmup:   counts.pending_warmup ?? 0,
       published:        (counts.published ?? 0) + (counts.completed ?? 0),
     }
 
