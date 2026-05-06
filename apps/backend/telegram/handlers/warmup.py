@@ -11,6 +11,7 @@ Callbacks (InlineKeyboard):
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from functools import partial
 
@@ -33,6 +34,10 @@ async def cmd_warmup(
 ) -> None:
     """Trigger the full WarmupOrchestrator run and send the approval report."""
     chat_id: int = update.effective_chat.id
+
+    if deps.research_agent is None:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Research agent non disponibile.")
+        return
 
     await context.bot.send_message(
         chat_id=chat_id,
@@ -88,7 +93,9 @@ async def cmd_warmup(
         ])
     for c in recommended:
         niche = c.get("niche", "N/A")
-        doc_id = c.get("doc_id", niche[:20].replace(" ", "_"))
+        product_type = c.get("product_type", "")
+        _hash = hashlib.md5(f"{niche}:{product_type}".encode()).hexdigest()[:16]
+        doc_id = c.get("doc_id") or _hash
         buttons.append([
             InlineKeyboardButton(f"✅ {niche[:30]}", callback_data=f"approve_warmup:{doc_id}"),
             InlineKeyboardButton("❌ Rifiuta", callback_data=f"reject_warmup:{doc_id}"),
@@ -117,6 +124,13 @@ async def cb_approve_warmup_batch(
     query = update.callback_query
     await query.answer()
     chat_id: int = update.effective_chat.id
+
+    if deps.research_agent is None:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Research agent non disponibile.")
+        return
+    if deps.production_queue is None:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Production queue non disponibile.")
+        return
 
     try:
         warmup_docs = await deps.research_agent.memory.query_insights_by_type(
@@ -166,6 +180,13 @@ async def cb_approve_warmup_niche(
     chat_id: int = update.effective_chat.id
     doc_id_or_niche = query.data.replace("approve_warmup:", "").strip()
 
+    if deps.research_agent is None:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Research agent non disponibile.")
+        return
+    if deps.production_queue is None:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Production queue non disponibile.")
+        return
+
     try:
         warmup_docs = await deps.research_agent.memory.query_insights_by_type(
             "warmup_candidate", limit=100
@@ -174,6 +195,10 @@ async def cb_approve_warmup_niche(
             (
                 d for d in warmup_docs
                 if d.get("id") == doc_id_or_niche
+                or _niche_hash(
+                    d.get("metadata", {}).get("niche", ""),
+                    d.get("metadata", {}).get("product_type", ""),
+                ) == doc_id_or_niche
                 or d.get("metadata", {}).get("niche", "").replace(" ", "_")[:20] == doc_id_or_niche
             ),
             None,
@@ -184,6 +209,9 @@ async def cb_approve_warmup_niche(
 
         meta = target.get("metadata", {})
         niche = (meta.get("niche") or "").strip()
+        if not niche:
+            await context.bot.send_message(chat_id=chat_id, text="⚠️ Niche vuota, impossibile approvare.")
+            return
         product_type = meta.get("product_type") or "printable_pdf"
         try:
             score = float(meta.get("score") or 0.0)
@@ -217,6 +245,10 @@ async def cb_reject_warmup_niche(
     chat_id: int = update.effective_chat.id
     doc_id_or_niche = query.data.replace("reject_warmup:", "").strip()
 
+    if deps.research_agent is None:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Research agent non disponibile.")
+        return
+
     try:
         warmup_docs = await deps.research_agent.memory.query_insights_by_type(
             "warmup_candidate", limit=100
@@ -225,6 +257,10 @@ async def cb_reject_warmup_niche(
             (
                 d for d in warmup_docs
                 if d.get("id") == doc_id_or_niche
+                or _niche_hash(
+                    d.get("metadata", {}).get("niche", ""),
+                    d.get("metadata", {}).get("product_type", ""),
+                ) == doc_id_or_niche
                 or d.get("metadata", {}).get("niche", "").replace(" ", "_")[:20] == doc_id_or_niche
             ),
             None,
@@ -265,6 +301,10 @@ async def cmd_warmup_detail(
         await context.bot.send_message(chat_id=chat_id, text="Uso: /warmup_detail <niche>")
         return
 
+    if deps.research_agent is None:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Research agent non disponibile.")
+        return
+
     query_term = " ".join(args).strip().lower()
     try:
         docs = await deps.research_agent.memory.query_insights_by_type("warmup_candidate", limit=100)
@@ -295,6 +335,11 @@ async def cmd_warmup_detail(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _niche_hash(niche: str, product_type: str) -> str:
+    """Generate a stable hash for niche + product_type."""
+    return hashlib.md5(f"{niche}:{product_type}".encode()).hexdigest()[:16]
+
 
 def _fmt_section(key: str) -> str:
     return key.replace("_", " ").title()
