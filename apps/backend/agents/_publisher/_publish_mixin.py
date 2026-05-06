@@ -1,11 +1,18 @@
 """PublisherAgent — single-file publish, failure history, and Telegram notification mixin."""
 from __future__ import annotations
 
+import csv
+import datetime
 import logging
+import os
+import time
 from pathlib import Path
 from typing import Any
 
+import aiohttp
+
 from apps.backend.agents._publisher.constants import TAXONOMY_IDS
+from apps.backend.core.config import settings
 from apps.backend.core.etsy_sections_service import EtsySectionsService
 
 logger = logging.getLogger("agentpexi.publisher")
@@ -140,54 +147,25 @@ class _PublishMixin:
                 int(section_id) if section_id.isdigit() else section_id
             )
 
-        response = await self._call_tool(
-            "etsy_api",
-            "create_listing",
-            {"title": title, "price": price, "tags": tags},
-            self.etsy_api.create_listing,
-            **create_listing_kwargs,
+        listing_id, uploaded_count = await self._dispatch_publish(
+            create_listing_kwargs,
+            file_path,
+            thumbnail_paths,
+            niche,
+            product_type,
         )
-
-        listing_id = str(response.get("listing_id", ""))
         if not listing_id:
-            raise RuntimeError(f"Etsy non ha restituito listing_id: {response}")
+            raise RuntimeError("Publish non ha restituito listing_id")
         result["listing_id"] = listing_id
-        result["section_id"] = section_id  # per tracciabilità nel result dict
-        # Update section listing count if assigned
-        if section_id:
+        result["section_id"] = section_id
+        # Section count update solo per etsy_api (ha listing reale su Etsy)
+        if section_id and os.getenv("PUBLISHER_DELIVERY_METHOD", "csv_export") == "etsy_api":
             try:
                 db = await self.memory.get_db()
                 ess = EtsySectionsService(db)
                 await ess.update_section_listing_count(section_id, listing_id)
             except Exception:
                 logger.exception("Failed to update section listing count for section %s", section_id)
-
-        # 3f. Upload file
-        await self._call_tool(
-            "etsy_api",
-            "upload_file",
-            {"listing_id": listing_id, "file": Path(file_path).name},
-            self.etsy_api.upload_file,
-            listing_id=listing_id,
-            file_path=file_path,
-            name=Path(file_path).name,
-        )
-
-        # 3g. Upload thumbnail
-        uploaded_count = 0
-        for thumb_path in thumbnail_paths:
-            try:
-                await self._call_tool(
-                    "etsy_api",
-                    "upload_image",
-                    {"listing_id": listing_id, "image": thumb_path.name},
-                    self.etsy_api.upload_image,
-                    listing_id=listing_id,
-                    file_path=str(thumb_path),
-                )
-                uploaded_count += 1
-            except Exception as exc:
-                logger.warning("Errore upload thumbnail %s: %s", thumb_path.name, exc)
         result["images_uploaded"] = uploaded_count
 
         # 3h. Salvataggio in SQLite
@@ -355,3 +333,147 @@ class _PublishMixin:
             logger.exception("Section lookup failed for %s — publishing without section", niche)
 
         return None
+
+    # ------------------------------------------------------------------
+    # B-02 · PUBLISHER_DELIVERY_METHOD dispatch layer
+    # ------------------------------------------------------------------
+
+    async def _dispatch_publish(
+        self,
+        create_listing_kwargs: dict,
+        file_path: str,
+        thumbnail_paths: list,
+        niche: str,
+        product_type: str,
+    ) -> tuple[str, int]:
+        """Routes to csv_export | make_webhook | etsy_api. Returns (listing_id, images_uploaded)."""
+        method = os.getenv("PUBLISHER_DELIVERY_METHOD", "csv_export")
+        if method == "make_webhook":
+            listing_id = await self._publish_via_make_webhook(
+                create_listing_kwargs, file_path, niche, product_type
+            )
+            return listing_id, 0
+        elif method == "etsy_api":
+            return await self._publish_via_etsy_api(
+                create_listing_kwargs, file_path, thumbnail_paths
+            )
+        else:  # csv_export (default sicuro dopo ban Etsy)
+            listing_id = await self._publish_via_csv_export(
+                create_listing_kwargs, file_path, niche, product_type
+            )
+            return listing_id, 0
+
+    async def _publish_via_csv_export(
+        self,
+        create_listing_kwargs: dict,
+        file_path: str,
+        niche: str,
+        product_type: str,
+    ) -> str:
+        """Scrive una riga CSV in {STORAGE_PATH}/csv_drafts/YYYY-MM-DD.csv."""
+        date_str = datetime.date.today().isoformat()
+        csv_dir = Path(settings.STORAGE_PATH) / "csv_drafts"
+        csv_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = csv_dir / f"{date_str}.csv"
+
+        listing_id = f"csv_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        row = {
+            "listing_id": listing_id,
+            "niche": niche,
+            "product_type": product_type,
+            "file_path": file_path,
+            "title": create_listing_kwargs.get("title", ""),
+            "description": create_listing_kwargs.get("description", ""),
+            "price": create_listing_kwargs.get("price", ""),
+            "tags": ",".join(create_listing_kwargs.get("tags", [])),
+        }
+
+        file_exists = csv_path.exists()
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=row.keys())
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+
+        logger.info("CSV export: %s → %s", niche, csv_path)
+        return listing_id
+
+    async def _publish_via_make_webhook(
+        self,
+        create_listing_kwargs: dict,
+        file_path: str,
+        niche: str,
+        product_type: str,
+    ) -> str:
+        """POSTa il payload al webhook Make.com e ritorna listing_id con prefisso 'make_'."""
+        webhook_url = os.getenv("MAKE_WEBHOOK_URL", "")
+        if not webhook_url:
+            raise RuntimeError(
+                "MAKE_WEBHOOK_URL env var non configurata per make_webhook delivery"
+            )
+
+        payload = {
+            "niche": niche,
+            "product_type": product_type,
+            "file_path": file_path,
+            **create_listing_kwargs,
+            "tags": ",".join(create_listing_kwargs.get("tags", [])),
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(webhook_url, json=payload) as resp:
+                resp.raise_for_status()
+
+        listing_id = f"make_{int(time.time())}"
+        logger.info("Make.com webhook: %s → %s", niche, listing_id)
+        return listing_id
+
+    async def _publish_via_etsy_api(
+        self,
+        create_listing_kwargs: dict,
+        file_path: str,
+        thumbnail_paths: list,
+    ) -> tuple[str, int]:
+        """Crea listing + upload file + upload thumbnail via Etsy API (path originale)."""
+        title = create_listing_kwargs.get("title", "")
+        price = create_listing_kwargs.get("price", 0)
+        tags = create_listing_kwargs.get("tags", [])
+
+        response = await self._call_tool(
+            "etsy_api",
+            "create_listing",
+            {"title": title, "price": price, "tags": tags},
+            self.etsy_api.create_listing,
+            **create_listing_kwargs,
+        )
+
+        listing_id = str(response.get("listing_id", ""))
+        if not listing_id:
+            raise RuntimeError(f"Etsy non ha restituito listing_id: {response}")
+
+        await self._call_tool(
+            "etsy_api",
+            "upload_file",
+            {"listing_id": listing_id, "file": Path(file_path).name},
+            self.etsy_api.upload_file,
+            listing_id=listing_id,
+            file_path=file_path,
+            name=Path(file_path).name,
+        )
+
+        uploaded_count = 0
+        for thumb_path in thumbnail_paths:
+            try:
+                await self._call_tool(
+                    "etsy_api",
+                    "upload_image",
+                    {"listing_id": listing_id, "image": thumb_path.name},
+                    self.etsy_api.upload_image,
+                    listing_id=listing_id,
+                    file_path=str(thumb_path),
+                )
+                uploaded_count += 1
+            except Exception as exc:
+                logger.warning("Errore upload thumbnail %s: %s", thumb_path.name, exc)
+
+        return listing_id, uploaded_count
