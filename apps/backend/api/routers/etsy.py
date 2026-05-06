@@ -40,6 +40,7 @@ class NicheItemResponse(BaseModel):
         except (ValueError, TypeError):
             return None  # 'high'/'medium'/'low' → None during transition
     section_name: str | None = None
+    source_type: str | None = None
 
 
 class NichesResponse(BaseModel):
@@ -202,6 +203,48 @@ async def get_etsy_niches(
         )
         rows = await cursor.fetchall()
         niches = [NicheItemResponse(**dict(r)) for r in rows]
+        
+        # Part C: Merge warmup candidates from ChromaDB
+        warmup_candidates = await state.memory.query_insights_by_type("warmup_candidate")
+        
+        # Build set of existing (niche, product_type) pairs for deduplication
+        existing_pairs = {
+            (n.niche.lower(), (n.product_type or "").lower())
+            for n in niches
+        }
+        
+        # Add warmup candidates that don't already exist
+        for candidate in warmup_candidates:
+            metadata = candidate.get("metadata", {})
+            niche = metadata.get("niche", "")
+            product_type = metadata.get("product_type")
+            
+            # Deduplicate: skip if DB already has this combination
+            pair_key = (niche.lower(), (product_type or "").lower())
+            if pair_key in existing_pairs:
+                continue
+            
+            # Build NicheItemResponse from warmup candidate
+            niches.append(NicheItemResponse(
+                niche=niche,
+                product_type=product_type,
+                performance_score=float(metadata.get("score") or 0.0),
+                confidence_level=metadata.get("status", "pending_warmup"),
+                avg_ctr=None,
+                total_orders=None,
+                total_listings=None,
+                total_revenue_eur=None,
+                last_updated_at=None,
+                entry_score=None,
+                tier=None,
+                avg_price_eur=None,
+                google_trend_score=None,
+                audience_target=None,
+                expansion_potential=None,
+                section_name=None,
+                source_type="warmup_candidate"
+            ))
+        
         return NichesResponse(niches=niches)
     except Exception:
         logger.exception("get_etsy_niches error")

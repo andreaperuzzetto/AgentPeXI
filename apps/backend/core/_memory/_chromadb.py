@@ -57,6 +57,32 @@ class ChromaDbMixin:
             out.append({"document": doc, "metadata": meta})
         return out
 
+    async def query_insights_by_type(self, type_val: str, limit: int = 50) -> list[dict]:
+        """Return all stored insights matching metadata type."""
+        if self._chroma_collection is None:
+            return []
+        try:
+            results = await asyncio.to_thread(
+                self._chroma_collection.get,
+                where={"type": type_val},
+                limit=limit,
+            )
+            out = []
+            ids = results.get("ids", [])
+            documents = results.get("documents", [])
+            metadatas = results.get("metadatas", [])
+            
+            for i, doc_id in enumerate(ids):
+                out.append({
+                    "id": doc_id,
+                    "text": documents[i] if i < len(documents) else "",
+                    "metadata": metadatas[i] if i < len(metadatas) else {},
+                })
+            return out
+        except Exception:
+            logger.warning(f"query_insights_by_type error for type={type_val}", exc_info=True)
+            return []
+
     async def query_chromadb(
         self,
         query: str,
