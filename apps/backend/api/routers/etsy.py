@@ -58,6 +58,27 @@ class SectionsResponse(BaseModel):
     sections: list[SectionItemResponse]
 
 
+class StyleGuideOptionResponse(BaseModel):
+    id: int
+    aesthetic_name: str
+    palette_primary: str
+    palette_secondary: str
+    palette_accent: str
+    mockup_style: str
+    tone: str
+    logo_path: str | None
+    banner_path: str | None
+    is_active: bool
+
+
+class StyleGuideOptionsResponse(BaseModel):
+    options: list[StyleGuideOptionResponse]
+
+
+class ShopIdentityResponse(BaseModel):
+    identity: StyleGuideOptionResponse | None
+
+
 logger = logging.getLogger("agentpexi.api")
 router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
@@ -357,3 +378,62 @@ async def etsy_shop_optimizer_preview(body: dict | None = None) -> dict:
     except Exception:
         logger.exception("etsy_shop_optimizer_preview error")
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
+
+
+@router.get("/api/etsy/style-guide-options")
+async def get_style_guide_options() -> StyleGuideOptionsResponse:
+    """Lista tutte le opzioni style guide salvate (attive e non)."""
+    try:
+        db = await state.memory.get_db()
+        from apps.backend.core.shop_identity_service import ShopIdentityService
+        svc = ShopIdentityService(db)
+        records = await svc.list_options()
+        options = [
+            StyleGuideOptionResponse(
+                id=r.id,
+                aesthetic_name=r.aesthetic_name,
+                palette_primary=r.palette_primary,
+                palette_secondary=r.palette_secondary,
+                palette_accent=r.palette_accent,
+                mockup_style=r.mockup_style,
+                tone=r.tone,
+                logo_path=r.logo_path,
+                banner_path=r.banner_path,
+                is_active=r.is_active,
+            )
+            for r in records
+        ]
+        return StyleGuideOptionsResponse(options=options)
+    except Exception:
+        logger.exception("get_style_guide_options error")
+        return StyleGuideOptionsResponse(options=[])
+
+
+@router.get("/api/etsy/shop-identity")
+async def get_shop_identity() -> ShopIdentityResponse:
+    """Ritorna l'identity attiva, o null se nessuna è attiva."""
+    try:
+        db = await state.memory.get_db()
+        from apps.backend.core.shop_identity_service import ShopIdentityService
+        svc = ShopIdentityService(db)
+        record = await svc.get_active()
+        if record is None:
+            return ShopIdentityResponse(identity=None)
+        return ShopIdentityResponse(
+            identity=StyleGuideOptionResponse(
+                id=record.id,
+                aesthetic_name=record.aesthetic_name,
+                palette_primary=record.palette_primary,
+                palette_secondary=record.palette_secondary,
+                palette_accent=record.palette_accent,
+                mockup_style=record.mockup_style,
+                tone=record.tone,
+                logo_path=record.logo_path,
+                banner_path=record.banner_path,
+                is_active=record.is_active,
+            )
+        )
+    except Exception:
+        logger.exception("get_shop_identity error")
+        return ShopIdentityResponse(identity=None)
+
