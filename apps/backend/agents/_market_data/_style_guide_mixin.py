@@ -29,12 +29,11 @@ RULES:
 - Palettes must use hex codes (#RRGGBB format)
 - tone must be 1-2 sentences, conversational
 - mockup_style: "flat_lay" OR "lifestyle"
-- rationale: 1 sentence explaining the strategic fit
 
 Respond ONLY with a valid JSON array of exactly 3 objects. No markdown, no extra text.
 Each object must have these exact keys:
   aesthetic_name, palette_primary, palette_secondary, palette_accent,
-  mockup_style, tone, rationale
+  mockup_style, tone
 """
 
 
@@ -64,7 +63,9 @@ class _StyleGuideMixin:
         signals = await self.analyze_all_sections()  # type: ignore[attr-defined]
 
         # 2. Call Haiku
-        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY environment variable not set")
         client = anthropic.AsyncAnthropic(api_key=api_key)
         user_prompt = _build_user_prompt(signals)
 
@@ -78,7 +79,10 @@ class _StyleGuideMixin:
         raw_text = msg.content[0].text.strip()
 
         # 3. Parse JSON
-        options: list[dict[str, Any]] = json.loads(raw_text)
+        try:
+            options: list[dict[str, Any]] = json.loads(raw_text)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse style options from Haiku response: {e}") from e
         if len(options) != 3:
             raise ValueError(f"Expected 3 style options, got {len(options)}")
 
@@ -86,16 +90,19 @@ class _StyleGuideMixin:
         from apps.backend.core.shop_identity_service import ShopIdentityService
         svc = ShopIdentityService(db)
         ids: list[int] = []
-        for opt in options:
-            identity_id = await svc.create(
-                aesthetic_name=opt["aesthetic_name"],
-                palette_primary=opt["palette_primary"],
-                palette_secondary=opt["palette_secondary"],
-                palette_accent=opt["palette_accent"],
-                mockup_style=opt["mockup_style"],
-                tone=opt["tone"],
-                approved_by="ai_generated",
-            )
+        for i, opt in enumerate(options, 1):
+            try:
+                identity_id = await svc.create(
+                    aesthetic_name=opt["aesthetic_name"],
+                    palette_primary=opt["palette_primary"],
+                    palette_secondary=opt["palette_secondary"],
+                    palette_accent=opt["palette_accent"],
+                    mockup_style=opt["mockup_style"],
+                    tone=opt["tone"],
+                    approved_by="ai_generated",
+                )
+            except KeyError as e:
+                raise ValueError(f"Style option {i} missing required field: {e}") from e
             ids.append(identity_id)
             logger.info("StyleGuideMixin: created option id=%d name=%s", identity_id, opt["aesthetic_name"])
 

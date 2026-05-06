@@ -64,7 +64,8 @@ async def test_generate_style_options_creates_3_records(tmp_path):
         """)
         await db.commit()
 
-        with patch("anthropic.AsyncAnthropic") as mock_client_cls:
+        with patch("os.getenv", return_value="test-api-key"), \
+             patch("anthropic.AsyncAnthropic") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client_cls.return_value = mock_client
             mock_msg = MagicMock()
@@ -108,7 +109,8 @@ async def test_generate_style_options_returns_ids(tmp_path):
         """)
         await db.commit()
 
-        with patch("anthropic.AsyncAnthropic") as mock_client_cls:
+        with patch("os.getenv", return_value="test-api-key"), \
+             patch("anthropic.AsyncAnthropic") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client_cls.return_value = mock_client
             mock_msg = MagicMock()
