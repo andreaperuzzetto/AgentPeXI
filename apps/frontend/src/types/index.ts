@@ -131,6 +131,7 @@ export interface WarmupProgressEvent {
   section: string
   analyzed: number
   total: number
+  candidates_count: number
 }
 
 export interface WarmupCompletedEvent {

@@ -128,10 +128,9 @@ function handleMessage(raw: MessageEvent) {
       // Intermediate per-section progress — log only (no store update needed)
       const ev = data as import('../types').WarmupProgressEvent
       console.info(
-        '[WS] warmup_progress section=%s analyzed=%d/%d',
+        '[WS] warmup_progress section=%s candidates=%d',
         ev.section,
-        ev.analyzed,
-        ev.total,
+        ev.candidates_count,
       )
       break
     }
