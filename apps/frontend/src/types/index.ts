@@ -320,3 +320,17 @@ export interface ProductionQueueItem {
   product_tier: 'tripwire' | 'core' | 'core_premium' | 'bundle' | null
   section_name: string | null
 }
+
+/* ── Shop Identity (from /api/etsy/shop-identity) ── */
+
+export interface ShopIdentity {
+  id: number
+  aesthetic_name: string
+  palette_primary: string    // hex e.g. "#C9A84C"
+  palette_secondary: string
+  palette_accent: string
+  mockup_style: string       // "flat_lay" | "lifestyle"
+  tone: string
+  logo_path: string | null
+  is_active: boolean
+}

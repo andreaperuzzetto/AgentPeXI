@@ -3,7 +3,7 @@
  *
  * Layout: two-column
  *   CENTER (1fr):   ProductionPipeline · BudgetGauges · NicheTable
- *   RIGHT  (320px): SectionsPanel · BundleStatus · AdsStatus · ShopOptimizerCard (sticky)
+ *   RIGHT  (320px): ShopIdentityPanel · SectionsPanel · BundleStatus · AdsStatus · ShopOptimizerCard (sticky)
  *
  * Mobile (< 900px): single-column collapse.
  */
@@ -16,6 +16,7 @@ import { BundleStatus }        from '../components/etsy/BundleStatus'
 import { AdsStatus }           from '../components/etsy/AdsStatus'
 import { ShopOptimizerCard }   from '../components/etsy/ShopOptimizerCard'
 import { SectionsPanel }       from '../components/etsy/SectionsPanel'
+import { ShopIdentityPanel }   from '../components/etsy/ShopIdentityPanel'
 
 const springEntry = (delay: number) => ({
   initial:    { opacity: 0, y: 14 } as const,
@@ -73,9 +74,12 @@ export function EtsyView() {
           {/* ── RIGHT: sidebar ──────────────────────────────────────────── */}
           <div className="etsy-sidebar">
             <motion.div {...springEntry(0)}>
-              <SectionsPanel />
+              <ShopIdentityPanel />
             </motion.div>
             <motion.div {...springEntry(0.03)}>
+              <SectionsPanel />
+            </motion.div>
+            <motion.div {...springEntry(0.06)}>
               <BundleStatus />
             </motion.div>
             <motion.div {...springEntry(0.09)}>
