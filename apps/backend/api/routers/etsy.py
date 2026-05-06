@@ -383,6 +383,8 @@ async def etsy_shop_optimizer_preview(body: dict | None = None) -> dict:
 @router.get("/api/etsy/style-guide-options")
 async def get_style_guide_options() -> StyleGuideOptionsResponse:
     """Lista tutte le opzioni style guide salvate (attive e non)."""
+    if not state.memory:
+        return StyleGuideOptionsResponse(options=[])
     try:
         db = await state.memory.get_db()
         from apps.backend.core.shop_identity_service import ShopIdentityService
@@ -412,6 +414,8 @@ async def get_style_guide_options() -> StyleGuideOptionsResponse:
 @router.get("/api/etsy/shop-identity")
 async def get_shop_identity() -> ShopIdentityResponse:
     """Ritorna l'identity attiva, o null se nessuna è attiva."""
+    if not state.memory:
+        return ShopIdentityResponse(identity=None)
     try:
         db = await state.memory.get_db()
         from apps.backend.core.shop_identity_service import ShopIdentityService
