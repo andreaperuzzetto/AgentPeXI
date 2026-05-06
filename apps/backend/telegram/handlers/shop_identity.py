@@ -188,7 +188,11 @@ async def cmd_shop_description(
         return
     await update.message.reply_text("✍️ Genero descrizione shop…")
     try:
-        design = DesignAgent(memory=deps.pepe.memory)
+        design = DesignAgent(
+            anthropic_client=deps.pepe.anthropic_client,
+            memory=deps.pepe.memory,
+            storage=deps.pepe.storage,
+        )
         description = await design.generate_shop_description(identity)
         await update.message.reply_text(
             f"📝 *Descrizione Shop:*\n\n{md_escape(description)}",

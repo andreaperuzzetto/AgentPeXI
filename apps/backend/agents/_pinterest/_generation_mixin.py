@@ -193,8 +193,9 @@ class _GenerationMixin:
                     pin.get("cost_llm", 0.0),
                 ),
             )
-            await db.commit()
             ids.append(cursor.lastrowid)
+
+        await db.commit()
 
         logger.info("[gen/schedule] %d pin schedulati per listing=%s", len(ids), listing_data.get("listing_id"))
         return ids

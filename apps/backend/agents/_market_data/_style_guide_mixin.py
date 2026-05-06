@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any
 
 import anthropic
 import aiosqlite
+
+from apps.backend.core.config import settings
 
 logger = logging.getLogger("agentpexi.market_data.style_guide")
 
@@ -63,10 +64,9 @@ class _StyleGuideMixin:
         signals = await self.analyze_all_sections()  # type: ignore[attr-defined]
 
         # 2. Call Haiku
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
+        if not settings.ANTHROPIC_API_KEY:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set")
-        client = anthropic.AsyncAnthropic(api_key=api_key)
+        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         user_prompt = _build_user_prompt(signals)
 
         logger.info("StyleGuideMixin: calling Haiku for 3 style options")

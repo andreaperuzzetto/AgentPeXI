@@ -25,6 +25,7 @@ import os
 import secrets
 import sys
 import webbrowser
+from urllib.parse import urlencode
 
 import httpx
 from aiohttp import web
@@ -146,9 +147,7 @@ async def run_auth() -> None:
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
     }
-    authorize_url = (
-        f"{PINTEREST_AUTHORIZE_URL}?{'&'.join(f'{k}={v}' for k, v in params.items())}"
-    )
+    authorize_url = f"{PINTEREST_AUTHORIZE_URL}?{urlencode(params)}"
     print("🔗 Apertura browser per autenticazione Pinterest...")
     webbrowser.open(authorize_url)
     print("⏳ In attesa del callback da Pinterest...")
