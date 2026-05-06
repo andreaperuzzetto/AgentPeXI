@@ -80,6 +80,14 @@ class ShopIdentityResponse(BaseModel):
     identity: StyleGuideOptionResponse | None
 
 
+class EtsySyncPayload(BaseModel):
+    listing_id: str
+    views: int
+    favorites: int
+    num_orders: int
+    revenue_eur: float
+
+
 logger = logging.getLogger("agentpexi.api")
 router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
@@ -488,4 +496,51 @@ async def get_shop_identity() -> ShopIdentityResponse:
     except Exception:
         logger.exception("get_shop_identity error")
         return ShopIdentityResponse(identity=None)
+
+
+# ---------------------------------------------------------------------------
+# B-03 · Make.com analytics bridge
+# ---------------------------------------------------------------------------
+
+@router.post("/api/analytics/etsy-sync")
+async def etsy_analytics_sync(payload: EtsySyncPayload) -> dict:
+    """Riceve snapshot analytics da Make.com e li persiste in listing_performance."""
+    if not state.memory:
+        return JSONResponse(status_code=503, content={"error": "Memory non inizializzata"})
+
+    db = await state.memory.get_db()
+
+    cur = await db.execute(
+        "SELECT niche, product_type, template, color_scheme FROM etsy_listings WHERE listing_id = ?",
+        (payload.listing_id,),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"listing_id {payload.listing_id!r} non trovato in etsy_listings"},
+        )
+
+    niche, product_type, template, color_scheme = row
+    await db.execute(
+        """
+        INSERT INTO listing_performance
+            (etsy_listing_id, niche, product_type, template, color_scheme,
+             views, favorites, orders, revenue_eur)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload.listing_id, niche, product_type, template, color_scheme,
+            payload.views, payload.favorites, payload.num_orders, payload.revenue_eur,
+        ),
+    )
+    await db.commit()
+
+    if state.learning_loop is not None:
+        try:
+            await state.learning_loop.update_niche_intelligence()
+        except Exception as exc:
+            logger.warning("etsy_analytics_sync: update_niche_intelligence fallito: %s", exc)
+
+    return {"ok": True, "listing_id": payload.listing_id}
 

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from apps.backend.tools.etsy_api import EtsyAPI
     from apps.backend.telegram.bot import TelegramBot
     from apps.backend.screen.watcher import ScreenWatcher
+    from apps.backend.core.learning_loop import LearningLoop
 
 logger = logging.getLogger("agentpexi.api")
 
@@ -113,3 +114,6 @@ bundle_strategy:    "BundleStrategy | None" = None
 shop_optimizer:     "ShopProfileOptimizer | None" = None
 etsy_ads_manager:   "EtsyAdsManager | None" = None
 finance_tracker:    "FinanceTracker | None" = None
+
+# Blocco B — Pinterest Machine
+learning_loop:      "LearningLoop | None" = None

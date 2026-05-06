@@ -146,6 +146,7 @@ async def lifespan(app: FastAPI):
     state.shop_optimizer = _agents.shop_optimizer
     state.etsy_ads_manager = _agents.etsy_ads_manager
     state.finance_tracker = _agents.finance_tracker
+    state.learning_loop = _agents.learning_loop
 
     # ── Phase 5: Screen watcher ─────────────────────────────────────────────
     state.screen_watcher, _screen_watcher_error = await init_screen_watcher(
