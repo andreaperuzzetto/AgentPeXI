@@ -120,7 +120,7 @@ async def cb_approve_identity(
             f"Mockup: {md_escape(record.mockup_style)}\n"
             f"Tone: {md_escape(record.tone[:97] + '...' if len(record.tone) > 100 else record.tone)}\n\n"
             f"Ora puoi usare `/shop\\-description` per generare la descrizione dello shop\n"
-            f"o `/generate\\-assets` per logo e banner\\.",
+            f"o `/generate\\_assets` per logo e banner\\.",
             parse_mode="MarkdownV2",
         )
         logger.info("shop_identity: activated id=%d name=%s", record.id, record.aesthetic_name)
@@ -129,6 +129,50 @@ async def cb_approve_identity(
     except Exception as exc:
         logger.exception("cb_approve_identity failed: %s", exc)
         await query.edit_message_text(f"⚠️ Errore interno: {exc}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /generate_assets
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def cmd_generate_assets(
+    deps: "BotDependencies",
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """/generate_assets — genera logo e banner per la shop identity attiva."""
+    db = await deps.pepe.memory.get_db()
+    from apps.backend.core.shop_identity_service import ShopIdentityService
+    svc = ShopIdentityService(db)
+    identity = await svc.get_active()
+    if identity is None:
+        await update.message.reply_text(
+            "⚠️ Nessuna brand identity attiva\\. Usa /style\\_guide per approvarne una prima\\.",
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    await update.message.reply_text(
+        f"🖼 Genero logo e banner per *{md_escape(identity.aesthetic_name)}*…",
+        parse_mode="MarkdownV2",
+    )
+    try:
+        from apps.backend.agents.design import DesignAgent
+        design = DesignAgent(
+            anthropic_client=deps.pepe.anthropic_client,
+            memory=deps.pepe.memory,
+            storage=deps.pepe.storage,
+        )
+        result = await design.generate_shop_assets(identity_id=identity.id, db=db)
+        await update.message.reply_text(
+            f"✅ Assets generati\\!\n"
+            f"Logo: `{md_escape(result['logo_path'])}`\n"
+            f"Banner: `{md_escape(result['banner_path'])}`",
+            parse_mode="MarkdownV2",
+        )
+    except Exception as exc:
+        logger.exception("generate_shop_assets failed: %s", exc)
+        await update.message.reply_text(f"⚠️ Errore: {exc}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -146,6 +190,11 @@ def register(
     add(CommandHandler(
         "style_guide",
         partial(cmd_style_guide, deps),
+        filters=chat_filter,
+    ))
+    add(CommandHandler(
+        "generate_assets",
+        partial(cmd_generate_assets, deps),
         filters=chat_filter,
     ))
     add(CallbackQueryHandler(

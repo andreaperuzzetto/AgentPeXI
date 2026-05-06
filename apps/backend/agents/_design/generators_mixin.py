@@ -17,6 +17,7 @@ from apps.backend.core.production_queue import ProductionQueueService as _PQServ
 from apps.backend.core.shop_identity_service import ShopIdentityService as _SIService
 
 if TYPE_CHECKING:
+    import aiosqlite
     from apps.backend.core.shop_identity_service import ShopIdentityRecord
 
 logger = logging.getLogger("agentpexi.design")
@@ -653,6 +654,66 @@ class _DesignGeneratorsMixin:
             },
             confidence=1.0,
         )
+
+    # ------------------------------------------------------------------
+    # Shop Assets Generation
+    # ------------------------------------------------------------------
+
+    async def generate_shop_assets(
+        self,
+        identity_id: int,
+        db: "aiosqlite.Connection",
+        output_dir: "Path | None" = None,
+    ) -> dict[str, str]:
+        """Genera logo (500×500) e banner (3360×840) per la shop identity attiva.
+
+        Usa _image_gen con brief adattato per le dimensioni shop.
+        Aggiorna ShopIdentityService con logo_path e banner_path.
+        Mock-safe: se _image_gen non è disponibile usa placeholder.
+
+        Returns:
+            dict con keys 'logo_path' e 'banner_path'.
+        """
+        from pathlib import Path as _Path
+        from apps.backend.core.shop_identity_service import ShopIdentityService
+
+        svc = ShopIdentityService(db)
+        identity = await svc.get_active()
+        if identity is None or identity.id != identity_id:
+            raise ValueError(f"ShopIdentity {identity_id} is not the active identity")
+
+        base_dir = _Path(output_dir or getattr(self, "storage").base_path) / "shop_assets"
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        logo_path = base_dir / f"logo_{identity_id}.png"
+        banner_path = base_dir / f"banner_{identity_id}.png"
+
+        logo_brief = {
+            "product_type": "shop_logo",
+            "niche": identity.aesthetic_name,
+            "color_scheme": f"{identity.palette_primary}, {identity.palette_secondary}",
+            "style": identity.mockup_style,
+            "width": 500,
+            "height": 500,
+            "selling_signals": {},
+        }
+        banner_brief = {
+            **logo_brief,
+            "product_type": "shop_banner",
+            "width": 3360,
+            "height": 840,
+        }
+
+        mock_mode = self._get_mock_mode()
+        logo_result = await self._image_gen.generate_digital_art(logo_brief, logo_path, mock_mode=mock_mode)
+        banner_result = await self._image_gen.generate_digital_art(banner_brief, banner_path, mock_mode=mock_mode)
+
+        logo_str = str(logo_result or logo_path)
+        banner_str = str(banner_result or banner_path)
+
+        await svc.update(identity_id, logo_path=logo_str, banner_path=banner_str)
+        logger.info("generate_shop_assets: logo=%s banner=%s", logo_str, banner_str)
+        return {"logo_path": logo_str, "banner_path": banner_str}
 
     # ------------------------------------------------------------------
     # Helpers
