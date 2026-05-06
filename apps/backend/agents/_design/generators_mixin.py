@@ -42,18 +42,18 @@ def _build_5component_prompt(brief: dict, identity: "ShopIdentityRecord") -> str
     section_key = brief.get("section_key", "")
 
     section_style = _SECTION_STYLE_MAP.get(section_key, "")
-    palette_str = (
-        f"{identity.palette_primary}, {identity.palette_secondary}, {identity.palette_accent}"
-    )
+    colors = [c for c in [identity.palette_primary, identity.palette_secondary, identity.palette_accent] if c]
+    palette_str = ", ".join(colors) if colors else "natural tones"
     style_base = identity.mockup_style  # "flat_lay" or "lifestyle"
 
     subject = f"high-quality {product_type} printable mockup for {niche}"
-    style = (
-        f"{identity.aesthetic_name} brand aesthetic, "
-        f"color palette {palette_str}, "
-        f"{section_style}, "
-        f"{'flat lay photography' if style_base == 'flat_lay' else 'lifestyle context photography'}"
-    ).strip(", ")
+    style_parts = [
+        f"{identity.aesthetic_name} brand aesthetic",
+        f"color palette {palette_str}",
+        section_style,
+        "flat lay photography" if style_base == "flat_lay" else "lifestyle context photography",
+    ]
+    style = ", ".join(p for p in style_parts if p)
     composition = (
         "centered product display, generous negative space, "
         "rule of thirds, professional product photography"
@@ -429,7 +429,7 @@ class _DesignGeneratorsMixin:
         # --- AGT-4: Try to get active identity for 5-component prompts ---
         identity = None
         try:
-            db = getattr(self._memory, "_db", None)  # type: ignore[attr-defined]
+            db = await self.memory.get_db()
             if db is not None:
                 from apps.backend.core.shop_identity_service import ShopIdentityService
                 svc = ShopIdentityService(db)
@@ -491,7 +491,8 @@ class _DesignGeneratorsMixin:
                         from PIL import Image
                         with Image.open(path) as img:
                             meta = {"width": img.width, "height": img.height}
-                            _verify_image_quality(meta)  # Logs warning if quality is low
+                            if not _verify_image_quality(meta):
+                                logger.warning("Variant A failed quality gate")
                     except Exception:
                         pass  # Fail open — don't block on quality check errors
                 
@@ -523,7 +524,8 @@ class _DesignGeneratorsMixin:
                                 from PIL import Image
                                 with Image.open(path_b) as img:
                                     meta_b = {"width": img.width, "height": img.height}
-                                    _verify_image_quality(meta_b)
+                                    if not _verify_image_quality(meta_b):
+                                        logger.warning("Variant B failed quality gate")
                             except Exception:
                                 pass
                         
