@@ -15,6 +15,7 @@
  */
 
 import { useState, useEffect } from 'react'
+import { fmtEur } from './FinancePanel.helpers'
 // ── Tipi API ──────────────────────────────────────────────────────────────────
 
 interface NicheRow {
@@ -26,16 +27,17 @@ interface NicheRow {
 }
 
 interface FinanceSummary {
-  year:              number
-  month:             number
-  n_sales:           number
-  gross_eur:         number
-  etsy_fees_eur:     number
-  listing_fees_eur:  number
-  design_costs_eur:  number
-  net_eur:           number
-  margin_pct:        number
-  by_niche:          NicheRow[]
+  year:               number
+  month:              number
+  n_sales:            number
+  gross_eur:          number
+  etsy_fees_eur:      number
+  listing_fees_eur:   number
+  design_costs_eur:   number
+  pinterest_costs_eur?: number
+  net_eur:            number
+  margin_pct:         number
+  by_niche:           NicheRow[]
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -44,12 +46,6 @@ const MONTHS_IT = [
   'Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
   'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre',
 ]
-
-function fmtEur(n: number, forceSign = false): string {
-  const abs = Math.abs(n).toFixed(2)
-  if (forceSign) return n >= 0 ? `+€${abs}` : `−€${abs}`
-  return `€${abs}`
-}
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 
@@ -231,6 +227,13 @@ export function FinancePanel() {
               <MetricRow
                 label="LLM cost"
                 value={`−${fmtEur(data.design_costs_eur)}`}
+                positive={false}
+              />
+            )}
+            {(data.pinterest_costs_eur ?? 0) > 0 && (
+              <MetricRow
+                label="Pinterest gen"
+                value={`−${fmtEur(data.pinterest_costs_eur!)}`}
                 positive={false}
               />
             )}

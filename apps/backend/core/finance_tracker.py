@@ -305,6 +305,39 @@ class FinanceTracker:
         }
 
     # ------------------------------------------------------------------
+    # Pinterest costs
+    # ------------------------------------------------------------------
+
+    async def pinterest_costs_month(self, year: int | None = None, month: int | None = None) -> float:
+        """
+        Somma di cost_image_gen + cost_llm da pinterest_queue per il mese dato.
+
+        Filtra solo i pin con status='published' e published_at nel mese richiesto.
+        Ritorna 0.0 se la tabella non esiste o non ci sono righe.
+        """
+        from datetime import datetime, timezone as _tz
+        _now = datetime.now(_tz.utc)
+        _year  = year  or _now.year
+        _month = month or _now.month
+
+        try:
+            db = await self._db()
+            cursor = await db.execute(
+                """
+                SELECT COALESCE(SUM(cost_image_gen + cost_llm), 0.0) AS total
+                FROM pinterest_queue
+                WHERE strftime('%Y', published_at) = ?
+                  AND strftime('%m', published_at) = ?
+                  AND status = 'published'
+                """,
+                (str(_year), f"{_month:02d}"),
+            )
+            row = await cursor.fetchone()
+            return float((row["total"] if row else None) or 0.0)
+        except Exception:
+            return 0.0
+
+    # ------------------------------------------------------------------
     # Goal progress
     # ------------------------------------------------------------------
 
