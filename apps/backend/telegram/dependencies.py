@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from apps.backend.agents.analytics import AnalyticsAgent
+    from apps.backend.agents.research import ResearchAgent
     from apps.backend.core.autopilot_loop import AutopilotLoop
     from apps.backend.core.budget_manager import BudgetManager
     from apps.backend.core.bundle_strategy import BundleStrategy
@@ -46,6 +47,7 @@ class BotDependencies:
         budget_manager     — BudgetManager B2
         publication_policy — PublicationPolicy B2
         etsy_api           — EtsyAPI client B3/step 3.6
+        research_agent     — ResearchAgent A4 (per /warmup)
         analytics_agent    — AnalyticsAgent B4/4.3 (per /ladder diretto)
         learning_loop      — LearningLoop B4/4.5
         bundle_strategy    — BundleStrategy B4/4.6
@@ -65,6 +67,7 @@ class BotDependencies:
     budget_manager: "BudgetManager | None" = None
     publication_policy: "PublicationPolicy | None" = None
     etsy_api: "EtsyAPI | None" = None
+    research_agent: "ResearchAgent | None" = None
     analytics_agent: "AnalyticsAgent | None" = None
     learning_loop: "LearningLoop | None" = None
     bundle_strategy: "BundleStrategy | None" = None
