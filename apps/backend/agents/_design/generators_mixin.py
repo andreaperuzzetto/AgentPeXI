@@ -669,20 +669,21 @@ class _DesignGeneratorsMixin:
 
         Usa _image_gen con brief adattato per le dimensioni shop.
         Aggiorna ShopIdentityService con logo_path e banner_path.
-        Mock-safe: se _image_gen non è disponibile usa placeholder.
 
         Returns:
             dict con keys 'logo_path' e 'banner_path'.
         """
-        from pathlib import Path as _Path
-        from apps.backend.core.shop_identity_service import ShopIdentityService
+        try:
+            _identity_id_int = int(identity_id)
+        except ValueError:
+            raise ValueError(f"identity_id must be numeric, got {identity_id!r}") from None
 
-        svc = ShopIdentityService(db)
+        svc = _SIService(db)
         identity = await svc.get_active()
         if identity is None or str(identity.id) != str(identity_id):
             raise ValueError(f"ShopIdentity {identity_id} is not the active identity")
 
-        base_dir = _Path(output_dir or getattr(self, "storage").base_path) / "shop_assets"
+        base_dir = Path(output_dir or self.storage.base_path) / "shop_assets"
         base_dir.mkdir(parents=True, exist_ok=True)
 
         logo_path = base_dir / f"logo_{identity_id}.png"
@@ -711,7 +712,7 @@ class _DesignGeneratorsMixin:
         logo_str = str(logo_result or logo_path)
         banner_str = str(banner_result or banner_path)
 
-        await svc.update(int(identity_id), logo_path=logo_str, banner_path=banner_str)
+        await svc.update(_identity_id_int, logo_path=logo_str, banner_path=banner_str)
         logger.info("generate_shop_assets: logo=%s banner=%s", logo_str, banner_str)
         return {"logo_path": logo_str, "banner_path": banner_str}
 

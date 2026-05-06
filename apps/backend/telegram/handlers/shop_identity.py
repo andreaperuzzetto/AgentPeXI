@@ -163,7 +163,7 @@ async def cmd_generate_assets(
             memory=deps.pepe.memory,
             storage=deps.pepe.storage,
         )
-        result = await design.generate_shop_assets(identity_id=identity.id, db=db)
+        result = await design.generate_shop_assets(identity_id=str(identity.id), db=db)
         await update.message.reply_text(
             f"✅ Assets generati\\!\n"
             f"Logo: `{md_escape(result['logo_path'])}`\n"
