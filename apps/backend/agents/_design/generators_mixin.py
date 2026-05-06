@@ -661,7 +661,7 @@ class _DesignGeneratorsMixin:
 
     async def generate_shop_assets(
         self,
-        identity_id: int,
+        identity_id: str,
         db: "aiosqlite.Connection",
         output_dir: "Path | None" = None,
     ) -> dict[str, str]:
@@ -679,7 +679,7 @@ class _DesignGeneratorsMixin:
 
         svc = ShopIdentityService(db)
         identity = await svc.get_active()
-        if identity is None or identity.id != identity_id:
+        if identity is None or str(identity.id) != str(identity_id):
             raise ValueError(f"ShopIdentity {identity_id} is not the active identity")
 
         base_dir = _Path(output_dir or getattr(self, "storage").base_path) / "shop_assets"
@@ -711,7 +711,7 @@ class _DesignGeneratorsMixin:
         logo_str = str(logo_result or logo_path)
         banner_str = str(banner_result or banner_path)
 
-        await svc.update(identity_id, logo_path=logo_str, banner_path=banner_str)
+        await svc.update(int(identity_id), logo_path=logo_str, banner_path=banner_str)
         logger.info("generate_shop_assets: logo=%s banner=%s", logo_str, banner_str)
         return {"logo_path": logo_str, "banner_path": banner_str}
 

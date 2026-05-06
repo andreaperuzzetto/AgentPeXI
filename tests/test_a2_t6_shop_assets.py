@@ -56,7 +56,12 @@ async def test_generate_shop_assets_updates_identity(db_with_active_identity, tm
             self._memory = AsyncMock()
 
     agent = _MockGenerators()
-    await agent.generate_shop_assets(identity_id=identity_id, db=db, output_dir=tmp_path)
+    result = await agent.generate_shop_assets(identity_id=str(identity_id), db=db, output_dir=tmp_path)
+
+    expected_logo_path = str(tmp_path / "shop_assets" / f"logo_{identity_id}.png")
+    expected_banner_path = str(tmp_path / "shop_assets" / f"banner_{identity_id}.png")
+    assert result["logo_path"] == expected_logo_path
+    assert result["banner_path"] == expected_banner_path
 
     from apps.backend.core.shop_identity_service import ShopIdentityService
     svc = ShopIdentityService(db)
