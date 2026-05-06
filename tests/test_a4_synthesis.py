@@ -109,3 +109,18 @@ async def test_synthesize_handles_none_scores():
     result = await mixin._synthesize_warmup_report(all_candidates)
     assert isinstance(result["recommended"], list)
     assert isinstance(result["report_text"], str)
+
+
+@pytest.mark.asyncio
+async def test_synthesize_handles_llm_api_failure(agent=None):
+    """LLM API failure (e.g. network error) should trigger fallback, not crash."""
+    mixin = _make_mixin()
+    mixin._call_llm = AsyncMock(side_effect=Exception("network timeout"))
+    all_candidates = {
+        "home_decor": [{"niche": "wall art", "score": 0.8}],
+        "jewelry": [{"niche": "rings", "score": 0.7}],
+    }
+    result = await mixin._synthesize_warmup_report(all_candidates)
+    assert isinstance(result["recommended"], list)
+    assert isinstance(result["report_text"], str)
+    assert "⚠️" in result["report_text"]

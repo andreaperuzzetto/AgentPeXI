@@ -327,34 +327,37 @@ class WarmupOrchestratorMixin:
             "}"
         )
 
-        raw = await self._call_llm(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt="Sei un analista di mercato Etsy specializzato in digital products.",
-            model_override=MODEL_SONNET,
-            max_tokens=2048,
-        )
-
-        # Parse JSON response; fallback to top-scored on any error
+        # Call Sonnet and parse JSON; fallback to top-scored on any error
         try:
+            raw = await self._call_llm(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="Sei un analista di mercato Etsy specializzato in digital products.",
+                model_override=MODEL_SONNET,
+                max_tokens=2048,
+            )
             data = json.loads(raw)
             if (
                 not isinstance(data, dict)
                 or not isinstance(data.get("recommended"), list)
+                or not all(isinstance(item, dict) for item in data.get("recommended", []))
                 or not isinstance(data.get("report_text"), str)
             ):
                 raise AssertionError("invalid structure")
-            return data
-        except (json.JSONDecodeError, AssertionError, TypeError):
+            return {"recommended": data["recommended"], "report_text": data["report_text"]}
+        except (json.JSONDecodeError, AssertionError, TypeError, AttributeError):
             logger.warning("warmup: Sonnet synthesis returned malformed JSON — using fallback")
-            # Fallback: collect all candidates, sort by score desc, take top 8
-            flat: list[dict[str, Any]] = []
-            for candidates in all_candidates.values():
-                flat.extend(candidates)
-            flat.sort(key=lambda c: float(c.get("score") or 0.0), reverse=True)
-            top = flat[:8]
-            return {
-                "recommended": top,
-                "report_text": (
-                    f"⚠️ Sintesi Sonnet non disponibile — {len(top)} candidati scelti per score."
-                ),
-            }
+        except Exception:
+            logger.warning("warmup: LLM API failure — using fallback")
+
+        # Fallback: collect all candidates, sort by score desc, take top 8
+        flat: list[dict[str, Any]] = []
+        for candidates in all_candidates.values():
+            flat.extend(candidates)
+        flat.sort(key=lambda c: float(c.get("score") or 0.0), reverse=True)
+        top = flat[:8]
+        return {
+            "recommended": top,
+            "report_text": (
+                f"⚠️ Sintesi Sonnet non disponibile — {len(top)} candidati scelti per score."
+            ),
+        }
