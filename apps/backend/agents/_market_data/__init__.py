@@ -7,6 +7,7 @@ from ._search_mixin import _SearchMixin
 from ._scoring_mixin import _ScoringMixin
 from ._storage_mixin import _StorageMixin
 from ._collection_mixin import _CollectionMixin
+from ._competitive_mixin import _CompetitiveMixin
 
 __all__ = [
     "MarketSignals",
@@ -15,4 +16,5 @@ __all__ = [
     "_ScoringMixin",
     "_StorageMixin",
     "_CollectionMixin",
+    "_CompetitiveMixin",
 ]
