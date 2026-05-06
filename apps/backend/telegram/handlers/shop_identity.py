@@ -18,6 +18,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from apps.backend.telegram.formatters import md_escape
+from apps.backend.core.shop_identity_service import ShopIdentityService
+from apps.backend.agents.design import DesignAgent
 
 if TYPE_CHECKING:
     from apps.backend.telegram.dependencies import BotDependencies
@@ -35,9 +37,7 @@ async def cmd_style_guide(
 ) -> None:
     """/style_guide — genera 3 opzioni brand identity o mostra quelle esistenti."""
     db = await deps.pepe.memory.get_db()
-    from apps.backend.core.shop_identity_service import ShopIdentityService
     svc = ShopIdentityService(db)
-
     options = await svc.list_options()
 
     if not options:
@@ -103,7 +103,6 @@ async def cb_approve_identity(
         return
 
     db = await deps.pepe.memory.get_db()
-    from apps.backend.core.shop_identity_service import ShopIdentityService
     svc = ShopIdentityService(db)
 
     try:
@@ -142,7 +141,6 @@ async def cmd_generate_assets(
 ) -> None:
     """/generate_assets — genera logo e banner per la shop identity attiva."""
     db = await deps.pepe.memory.get_db()
-    from apps.backend.core.shop_identity_service import ShopIdentityService
     svc = ShopIdentityService(db)
     identity = await svc.get_active()
     if identity is None:
@@ -157,7 +155,6 @@ async def cmd_generate_assets(
         parse_mode="MarkdownV2",
     )
     try:
-        from apps.backend.agents.design import DesignAgent
         design = DesignAgent(
             anthropic_client=deps.pepe.anthropic_client,
             memory=deps.pepe.memory,
@@ -182,7 +179,6 @@ async def cmd_shop_description(
 ) -> None:
     """/shop_description — genera la descrizione shop per l'identity attiva."""
     db = await deps.pepe.memory.get_db()
-    from apps.backend.core.shop_identity_service import ShopIdentityService
     svc = ShopIdentityService(db)
     identity = await svc.get_active()
     if identity is None:
@@ -192,12 +188,11 @@ async def cmd_shop_description(
         return
     await update.message.reply_text("✍️ Genero descrizione shop…")
     try:
-        from apps.backend.agents.design import DesignAgent
         design = DesignAgent(memory=deps.pepe.memory)
         description = await design.generate_shop_description(identity)
         await update.message.reply_text(
             f"📝 *Descrizione Shop:*\n\n{md_escape(description)}",
-            parse_mode="Markdown"
+            parse_mode="MarkdownV2"
         )
     except Exception as exc:
         logger.exception("generate_shop_description failed: %s", exc)

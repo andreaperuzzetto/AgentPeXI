@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import anthropic as _anthropic
 
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.tools.playwright_export import generate_pdf_thumbnail
@@ -725,9 +728,6 @@ class _DesignGeneratorsMixin:
         Returns:
             Testo descrizione shop (max ~500 char, tono coerente con identity).
         """
-        import os
-        import anthropic as _anthropic
-
         system = (
             "You are a conversion-focused copywriter for Etsy digital product shops.\n"
             "Write a shop description (About section) that:\n"
