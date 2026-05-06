@@ -470,15 +470,19 @@ class _DesignGeneratorsMixin:
                         mockup_style=("lifestyle" if identity.mockup_style == "flat_lay" else "flat_lay")
                     )
                     prompt_b = _build_5component_prompt(brief, identity_b)
-                    brief["agt4_prompt_a"] = prompt_a
-                    brief["agt4_prompt_b"] = prompt_b
                     logger.info("AGT-4 prompts generated for variant %d", i)
                 except Exception as e:
                     logger.warning("AGT-4 prompt generation failed: %s", e)
 
             out_path = output_dir / f"{slug}_art_{i + 1}.png"
             try:
-                path = await self._image_gen.generate_digital_art(brief, out_path, mock_mode=self._get_mock_mode())
+                # --- AGT-4: Use custom prompt for variant A when identity is active ---
+                brief_a = brief.copy()
+                if prompt_a:
+                    brief_a["agt4_prompt_override"] = prompt_a
+                
+                # Generate variant A (primary)
+                path = await self._image_gen.generate_digital_art(brief_a, out_path, mock_mode=self._get_mock_mode())
                 
                 # --- AGT-4: Quality gate check ---
                 meta = {}
@@ -493,15 +497,43 @@ class _DesignGeneratorsMixin:
                 
                 variant_data = {
                     "file_path": str(path),
+                    "image_path": str(path),  # Backward compatibility
                     "variant_index": i,
                     "art_type": art_type,
                     "file_size_kb": round(path.stat().st_size / 1024, 1),
                     "image_provider": getattr(self._image_gen, "provider_name", "unknown"),
                 }
-                if prompt_a:
+                
+                # --- AGT-4: Generate variant B (lifestyle swap) when identity is active ---
+                if prompt_a and prompt_b:
                     variant_data["agt4_enabled"] = True
                     variant_data["image_path_a"] = str(path)  # Primary variant
-                    # Note: prompt_b would be used for generating a second variant in future
+                    
+                    # Generate variant B
+                    image_path_b = None
+                    try:
+                        out_path_b = output_dir / f"{slug}_art_{i + 1}_b.png"
+                        brief_b = brief.copy()
+                        brief_b["agt4_prompt_override"] = prompt_b  # Override with variant B prompt
+                        path_b = await self._image_gen.generate_digital_art(brief_b, out_path_b, mock_mode=self._get_mock_mode())
+                        
+                        # Quality gate check for variant B
+                        if path_b.exists():
+                            try:
+                                from PIL import Image
+                                with Image.open(path_b) as img:
+                                    meta_b = {"width": img.width, "height": img.height}
+                                    _verify_image_quality(meta_b)
+                            except Exception:
+                                pass
+                        
+                        image_path_b = str(path_b)
+                        logger.info("AGT-4 variant B generated: %s", image_path_b)
+                    except Exception as e:
+                        logger.warning("_run_digital_art: variant B generation failed, skipping: %s", e)
+                    
+                    variant_data["image_path_b"] = image_path_b
+                
                 generated.append(variant_data)
             except Exception as e:
                 logger.warning("Errore Digital Art variante %d: %s", i, e)
