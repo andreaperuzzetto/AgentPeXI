@@ -138,6 +138,11 @@ async def cb_approve_warmup_batch(
         )
         pending = [d for d in warmup_docs if d.get("metadata", {}).get("status") == "pending"]
         pending.sort(key=_safe_score, reverse=True)
+        
+        # Check existing queue items to prevent duplicates
+        existing_items = await deps.production_queue.get_items_by_status("pending_design")
+        existing_pairs = {(item.niche.lower(), item.product_type.lower()) for item in existing_items}
+        
         approved_count = 0
         for doc in pending[:8]:
             meta = doc.get("metadata", {})
@@ -145,6 +150,12 @@ async def cb_approve_warmup_batch(
             product_type = meta.get("product_type") or "printable_pdf"
             if not niche:
                 continue
+            
+            # Skip if already queued
+            if (niche.lower(), product_type.lower()) in existing_pairs:
+                approved_count += 1
+                continue
+            
             try:
                 score = float(meta.get("score") or 0.0)
             except (TypeError, ValueError):
@@ -214,6 +225,18 @@ async def cb_approve_warmup_niche(
             score = float(meta.get("score") or 0.0)
         except (TypeError, ValueError):
             score = 0.0
+
+        # Check if already queued to prevent duplicates
+        existing_items = await deps.production_queue.get_items_by_status("pending_design")
+        existing_pairs = {(item.niche.lower(), item.product_type.lower()) for item in existing_items}
+        
+        if (niche.lower(), product_type.lower()) in existing_pairs:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ *{_esc(niche)}* è già in coda\\.",
+                parse_mode="MarkdownV2",
+            )
+            return
 
         await deps.production_queue.create_item(
             niche=niche,
