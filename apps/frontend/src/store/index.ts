@@ -158,8 +158,10 @@ interface AgentPeXIStore {
   /* Budget extended (Header mini bars) */
   imageCostToday: number
   feeCostToday: number
-  setImageCostToday: (n: number) => void
-  setFeeCostToday:   (n: number) => void
+  pinterestCostToday: number
+  setImageCostToday:     (n: number) => void
+  setFeeCostToday:       (n: number) => void
+  setPinterestCostToday: (n: number) => void
 
   /* Memory query feed — ultimi 20 eventi memory_query (HUD MemoryStreams) */
   memoryQueryFeed: Array<{ agent: string; collection: string; ids: string[]; ts: number }>
@@ -310,10 +312,12 @@ export const useStore = create<AgentPeXIStore>()(persist((set) => ({
   setAutopilotStatus:     (s, niche) => set({ autopilotStatus: s, autopilotCurrentNiche: niche ?? null }),
   setAutopilotItemsToday: (n) => set({ autopilotItemsToday: n }),
 
-  imageCostToday: 0,
-  feeCostToday:   0,
-  setImageCostToday: (n) => set({ imageCostToday: n }),
-  setFeeCostToday:   (n) => set({ feeCostToday: n }),
+  imageCostToday:     0,
+  feeCostToday:       0,
+  pinterestCostToday: 0,
+  setImageCostToday:     (n) => set({ imageCostToday: n }),
+  setFeeCostToday:       (n) => set({ feeCostToday: n }),
+  setPinterestCostToday: (n) => set({ pinterestCostToday: n }),
 
   memoryQueryFeed: [],
   pushMemoryQuery: (q) =>

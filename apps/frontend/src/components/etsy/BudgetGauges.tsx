@@ -1,14 +1,15 @@
 /**
- * BudgetGauges — pannello 3 gauge radiali: LLM · Image · Fee
+ * BudgetGauges — pannello 4 gauge radiali: LLM · Image · Fee · Pinterest
  *
- * FE-Blocco 4, Step 4.2
+ * FE-Blocco 4, Step 4.2 (aggiornato B-12)
  *
  * Dati (dallo store, popolati da Shell.tsx ogni 30s via /api/costs):
- *   LLM:   llmStats.runCost      vs dailySlice (budgetMonthlyUsd / 30)
- *   Image: imageCostToday        vs dailySlice
- *   Fee:   feeCostToday          vs dailySlice
+ *   LLM:       llmStats.runCost      vs dailySlice (budgetMonthlyUsd / 30)
+ *   Image:     imageCostToday        vs dailySlice
+ *   Fee:       feeCostToday          vs dailySlice
+ *   Pinterest: pinterestCostToday    vs dailySlice
  *
- * Layout asimmetrico: LLM (flex 1.4) | Image (flex 1.0) | Fee (flex 0.8)
+ * Layout asimmetrico: LLM (flex 1.4) | Image (flex 1.0) | Fee (flex 0.8) | Pinterest (flex 0.8)
  * Il gauge con pct più alta ha scale(1.02) applicato.
  * Warning: colore #FF4444 quando pct >= 80%.
  *
@@ -22,23 +23,9 @@ import { useMemo }       from 'react'
 import { motion }        from 'framer-motion'
 import { useStore }      from '../../store'
 import { RadialGauge }   from '../ui/RadialGauge'
+import { GAUGES, pctOf, usdStr } from './BudgetGauges.helpers'
 
 /* ── Gauge config ─────────────────────────────────────────────────────────── */
-
-interface GaugeConfig {
-  key:      string
-  label:    string
-  color:    string
-  flex:     number   // layout weight (not equal columns)
-  size:     number   // SVG size px
-  delay:    number   // mount stagger
-}
-
-const GAUGES: GaugeConfig[] = [
-  { key: 'llm',   label: 'LLM',   color: '#F5A623', flex: 1.4, size: 128, delay: 0.0 },
-  { key: 'image', label: 'Image', color: '#B57BFF', flex: 1.0, size: 110, delay: 0.08 },
-  { key: 'fee',   label: 'Fee',   color: '#C8C8FF', flex: 0.8, size: 98,  delay: 0.16 },
-]
 
 /* ── Skeleton gauge ───────────────────────────────────────────────────────── */
 function SkeletonGauge({ size, flex, delay }: { size: number; flex: number; delay: number }) {
@@ -70,37 +57,26 @@ function SkeletonGauge({ size, flex, delay }: { size: number; flex: number; dela
   )
 }
 
-/* ── Helpers ──────────────────────────────────────────────────────────────── */
-
-function usdStr(v: number): string {
-  if (v <= 0) return '$0'
-  if (v < 0.01) return '<$0.01'
-  return `$${v.toFixed(2)}`
-}
-
-function pctOf(value: number, limit: number): number {
-  if (limit <= 0) return 0
-  return Math.round((value / limit) * 100)
-}
-
 /* ── BudgetGauges ─────────────────────────────────────────────────────────── */
 export function BudgetGauges() {
-  const llmRunCost       = useStore(s => s.llmStats.runCost)
-  const budgetMonthlyUsd = useStore(s => s.budgetMonthlyUsd)
-  const imageCostToday   = useStore(s => s.imageCostToday)
-  const feeCostToday     = useStore(s => s.feeCostToday)
+  const llmRunCost          = useStore(s => s.llmStats.runCost)
+  const budgetMonthlyUsd    = useStore(s => s.budgetMonthlyUsd)
+  const imageCostToday      = useStore(s => s.imageCostToday)
+  const feeCostToday        = useStore(s => s.feeCostToday)
+  const pinterestCostToday  = useStore(s => s.pinterestCostToday)
 
-  /* Daily budget slice — the common reference for all three gauges */
+  /* Daily budget slice — the common reference for all gauges */
   const dailySlice = budgetMonthlyUsd != null && budgetMonthlyUsd > 0
     ? budgetMonthlyUsd / 30
     : 0
 
   /* Computed pct values */
   const pcts = useMemo(() => ({
-    llm:   pctOf(llmRunCost,     dailySlice),
-    image: pctOf(imageCostToday, dailySlice),
-    fee:   pctOf(feeCostToday,   dailySlice),
-  }), [llmRunCost, imageCostToday, feeCostToday, dailySlice])
+    llm:       pctOf(llmRunCost,          dailySlice),
+    image:     pctOf(imageCostToday,      dailySlice),
+    fee:       pctOf(feeCostToday,        dailySlice),
+    pinterest: pctOf(pinterestCostToday,  dailySlice),
+  }), [llmRunCost, imageCostToday, feeCostToday, pinterestCostToday, dailySlice])
 
   /* Which gauge has the highest pct — gets scale(1.02) */
   const maxKey = useMemo(() => {
@@ -110,9 +86,10 @@ export function BudgetGauges() {
   }, [pcts])
 
   const values: Record<string, number> = {
-    llm:   llmRunCost,
-    image: imageCostToday,
-    fee:   feeCostToday,
+    llm:       llmRunCost,
+    image:     imageCostToday,
+    fee:       feeCostToday,
+    pinterest: pinterestCostToday,
   }
 
   const isSkeleton = budgetMonthlyUsd === null

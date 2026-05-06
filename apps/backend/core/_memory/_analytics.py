@@ -145,6 +145,18 @@ class AnalyticsMixin:
         row = await cursor.fetchone()
         fee_cost_today: float = float((row["total"] if row else None) or 0.0)
 
+        # Pinterest image-gen cost today (cost_image_gen da pinterest_queue pubblicati oggi)
+        try:
+            cursor = await self._db.execute(
+                """SELECT COALESCE(SUM(cost_image_gen), 0.0) AS total
+                   FROM pinterest_queue
+                   WHERE date(published_at) = date('now') AND status = 'published'"""
+            )
+            row = await cursor.fetchone()
+            pinterest_cost_today: float = float((row["total"] if row else None) or 0.0)
+        except Exception:
+            pinterest_cost_today = 0.0
+
         return {
             "per_agent": per_agent,
             "per_tool": per_tool,
@@ -153,8 +165,9 @@ class AnalyticsMixin:
             "total": total,
             "cache": cache,
             "tokens": tokens,
-            "image_cost_today": image_cost_today,
-            "fee_cost_today":   fee_cost_today,
+            "image_cost_today":     image_cost_today,
+            "fee_cost_today":       fee_cost_today,
+            "pinterest_cost_today": pinterest_cost_today,
         }
 
     async def get_agent_logs_summary(self, period_days: int = 14) -> dict:

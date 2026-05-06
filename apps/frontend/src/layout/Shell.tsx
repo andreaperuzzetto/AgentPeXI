@@ -88,15 +88,17 @@ export function Shell() {
     setDomainConfig,
     setImageCostToday,
     setFeeCostToday,
+    setPinterestCostToday,
   } = useStore(
     useShallow((s) => ({
-      setCostsData:        s.setCostsData,
-      addAgentStep:        s.addAgentStep,
-      setAnalyticsSummary: s.setAnalyticsSummary,
-      setChromaStats:      s.setChromaStats,
-      setDomainConfig:     s.setDomainConfig,
-      setImageCostToday:   s.setImageCostToday,
-      setFeeCostToday:     s.setFeeCostToday,
+      setCostsData:          s.setCostsData,
+      addAgentStep:          s.addAgentStep,
+      setAnalyticsSummary:   s.setAnalyticsSummary,
+      setChromaStats:        s.setChromaStats,
+      setDomainConfig:       s.setDomainConfig,
+      setImageCostToday:     s.setImageCostToday,
+      setFeeCostToday:       s.setFeeCostToday,
+      setPinterestCostToday: s.setPinterestCostToday,
     }))
   )
 
@@ -180,8 +182,9 @@ export function Shell() {
             tokenStats:   t  ?? undefined,
             tokensPerDay: td ?? undefined,
           })
-          if (typeof b.image_cost_today === 'number') setImageCostToday(b.image_cost_today)
-          if (typeof b.fee_cost_today   === 'number') setFeeCostToday(b.fee_cost_today)
+          if (typeof b.image_cost_today     === 'number') setImageCostToday(b.image_cost_today)
+          if (typeof b.fee_cost_today       === 'number') setFeeCostToday(b.fee_cost_today)
+          if (typeof b.pinterest_cost_today === 'number') setPinterestCostToday(b.pinterest_cost_today)
         })
         .catch((e: unknown) => { if ((e as DOMException).name === 'AbortError') return })
 
@@ -207,7 +210,7 @@ export function Shell() {
     fetchCosts(controller.signal); fetchAnalytics(controller.signal); fetchChroma(controller.signal)
     const id = setInterval(() => { fetchCosts(controller.signal); fetchAnalytics(controller.signal); fetchChroma(controller.signal) }, 30_000)
     return () => { clearInterval(id); controller.abort() }
-  }, [setCostsData, setAnalyticsSummary, setChromaStats, setImageCostToday, setFeeCostToday])
+  }, [setCostsData, setAnalyticsSummary, setChromaStats, setImageCostToday, setFeeCostToday, setPinterestCostToday])
 
   const ActiveView = (activeZone in VIEWS ? VIEWS[activeZone as keyof typeof VIEWS] : VIEWS.neural)
 
