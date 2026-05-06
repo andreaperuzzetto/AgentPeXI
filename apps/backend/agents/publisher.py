@@ -49,6 +49,7 @@ class PublisherAgent(_PublishMixin, _ResolveMixin, _ThumbnailMixin, _SeoMixin, A
         etsy_api: Any,
         ws_broadcaster: Callable[[dict], Coroutine] | None = None,
         telegram_broadcaster: Callable | None = None,
+        pinterest_agent: Any | None = None,
     ) -> None:
         super().__init__(
             name="publisher",
@@ -60,6 +61,7 @@ class PublisherAgent(_PublishMixin, _ResolveMixin, _ThumbnailMixin, _SeoMixin, A
         self.storage = storage
         self.etsy_api = etsy_api
         self._telegram_broadcast = telegram_broadcaster
+        self._pinterest_agent = pinterest_agent
 
     # ------------------------------------------------------------------
     # run()

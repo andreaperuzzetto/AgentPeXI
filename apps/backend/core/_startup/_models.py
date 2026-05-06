@@ -35,3 +35,4 @@ class AgentBundle:
     shop_optimizer: Any
     etsy_ads_manager: Any
     finance_tracker: Any
+    pinterest_agent: Any

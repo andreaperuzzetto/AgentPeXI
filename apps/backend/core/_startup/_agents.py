@@ -120,11 +120,21 @@ async def init_all_agents(
     from apps.backend.agents.remind import RemindAgent
     from apps.backend.agents.summarize import SummarizeAgent
     from apps.backend.agents.research_personal import ResearchPersonalAgent
+    from apps.backend.agents.pinterest import PinterestAgent
     from apps.backend.core.learning_loop import LearningLoop
     from apps.backend.core.bundle_strategy import BundleStrategy
     from apps.backend.core.etsy_ads import EtsyAdsManager
     from apps.backend.core.finance_tracker import FinanceTracker
     from apps.backend.core.shop_optimizer import ShopProfileOptimizer
+
+    pinterest_agent = PinterestAgent(
+        anthropic_client=pepe.client,
+        memory=memory,
+        ws_broadcaster=ws_broadcast,
+        telegram_broadcaster=telegram_broadcast,
+    )
+    pepe.register_agent("pinterest", pinterest_agent)
+    logger.info("PinterestAgent istanziato (B-08)")
 
     publisher_agent = PublisherAgent(
         anthropic_client=pepe.client,
@@ -133,6 +143,7 @@ async def init_all_agents(
         etsy_api=etsy_api,
         ws_broadcaster=ws_broadcast,
         telegram_broadcaster=telegram_broadcast,
+        pinterest_agent=pinterest_agent,
     )
     pepe.register_agent("publisher", publisher_agent)
 
@@ -233,4 +244,5 @@ async def init_all_agents(
         shop_optimizer=shop_optimizer,
         etsy_ads_manager=etsy_ads_manager,
         finance_tracker=finance_tracker,
+        pinterest_agent=pinterest_agent,
     )

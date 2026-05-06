@@ -1,6 +1,7 @@
 """PublisherAgent — single-file publish, failure history, and Telegram notification mixin."""
 from __future__ import annotations
 
+import asyncio
 import csv
 import datetime
 import logging
@@ -204,6 +205,22 @@ class _PublishMixin:
         await self._notify_telegram(msg)
 
         result["status"] = "published"
+
+        # B-08: fire-and-forget Pinterest pin generation
+        if self._pinterest_agent is not None and listing_id:
+            from apps.backend.core.models import AgentTask
+            asyncio.create_task(self._pinterest_agent.run(AgentTask(
+                agent_name="pinterest",
+                task_id=f"pinterest_{listing_id}",
+                input_data={
+                    "action": "generate_pins",
+                    "listing_id": listing_id,
+                    "niche": niche,
+                    "title": title,
+                    "description": description,
+                },
+            )))
+
         return result
 
     async def _check_failure_history(self, niche: str, research_data: dict) -> dict:

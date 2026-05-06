@@ -148,6 +148,7 @@ async def lifespan(app: FastAPI):
     state.etsy_ads_manager = _agents.etsy_ads_manager
     state.finance_tracker = _agents.finance_tracker
     state.learning_loop = _agents.learning_loop
+    state.pinterest_agent = _agents.pinterest_agent
 
     # ── Phase 5: Screen watcher ─────────────────────────────────────────────
     state.screen_watcher, _screen_watcher_error = await init_screen_watcher(
@@ -195,6 +196,7 @@ async def lifespan(app: FastAPI):
         shop_optimizer=state.shop_optimizer,
         etsy_ads_manager=state.etsy_ads_manager,
         learning_loop=_agents.learning_loop,
+        pinterest_agent=_agents.pinterest_agent,
     )
 
     # ── Phase 8: Telegram bot ───────────────────────────────────────────────

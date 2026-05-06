@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from apps.backend.telegram.bot import TelegramBot
     from apps.backend.screen.watcher import ScreenWatcher
     from apps.backend.core.learning_loop import LearningLoop
+    from apps.backend.agents.pinterest import PinterestAgent
 
 logger = logging.getLogger("agentpexi.api")
 
@@ -117,3 +118,4 @@ finance_tracker:    "FinanceTracker | None" = None
 
 # Blocco B — Pinterest Machine
 learning_loop:      "LearningLoop | None" = None
+pinterest_agent:    "PinterestAgent | None" = None
