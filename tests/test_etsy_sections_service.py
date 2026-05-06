@@ -208,3 +208,93 @@ async def test_add_to_uncategorized_concurrent_no_duplicate(svc, db):
         f"Expected 1 pending row but got {row['n']} — "
         "concurrent check-then-insert race condition not fixed"
     )
+
+
+@pytest.mark.asyncio
+async def test_get_sections_with_uncategorized_counts_empty(svc, db):
+    """Nessuna sezione → lista vuota, no error."""
+    result = await svc.get_sections_with_uncategorized_counts()
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_sections_with_uncategorized_counts_no_pending(svc, db):
+    """Sezioni esistenti, nessuna pending uncategorized → pending_uncategorized=0."""
+    await svc.sync_sections(_SECTIONS)
+    result = await svc.get_sections_with_uncategorized_counts()
+    assert len(result) == 2
+    assert all(r["pending_uncategorized"] == 0 for r in result)
+    assert "section_id" in result[0]
+    assert "section_name" in result[0]
+    assert "listing_count" in result[0]
+    assert "last_listing_at" in result[0]
+
+
+@pytest.mark.asyncio
+async def test_get_sections_with_uncategorized_counts_with_pending(svc, db):
+    """Con pending uncategorized, il conteggio globale compare su tutte le sezioni."""
+    await svc.sync_sections(_SECTIONS)
+    await svc.add_to_uncategorized("mystery_niche")
+    result = await svc.get_sections_with_uncategorized_counts()
+    assert all(r["pending_uncategorized"] == 1 for r in result)
+
+
+@pytest.mark.asyncio
+async def test_suggest_section_for_niche_no_match(svc, db):
+    """Niche senza overlap con sezioni → (None, None)."""
+    await svc.sync_sections(_SECTIONS)
+    section_id, conf = await svc.suggest_section_for_niche("xyz_abstract_concept")
+    assert section_id is None
+    assert conf is None
+
+
+@pytest.mark.asyncio
+async def test_suggest_section_for_niche_match(svc, db):
+    """'party_planner_printable' deve matchare 'Party & Celebrations' con confidence > 0."""
+    await svc.sync_sections(_SECTIONS)
+    section_id, conf = await svc.suggest_section_for_niche("party_planner_printable")
+    assert section_id == "s1", f"Expected s1 (Party), got {section_id}"
+    assert conf is not None and conf > 0.0
+
+
+@pytest.mark.asyncio
+async def test_suggest_section_returns_best_match(svc, db):
+    """'wedding_invitation_printable' matcha 'Wedding' meglio di 'Party & Celebrations'."""
+    await svc.sync_sections(_SECTIONS)
+    section_id, conf = await svc.suggest_section_for_niche("wedding_invitation_printable")
+    assert section_id == "s2", f"Expected s2 (Wedding), got {section_id}"
+    assert conf is not None and conf >= 0.3
+
+
+@pytest.mark.asyncio
+async def test_update_section_listing_count(svc, db):
+    """update_section_listing_count() incrementa listing_count e imposta last_listing_at."""
+    await svc.sync_sections(_SECTIONS)
+    # section s1 parte da listing_count=10
+    await svc.update_section_listing_count("s1", "listing-abc")
+    cursor = await db.execute(
+        "SELECT listing_count, last_listing_at FROM etsy_sections WHERE section_id = 's1'"
+    )
+    row = await cursor.fetchone()
+    assert row["listing_count"] == 11
+    assert row["last_listing_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_stale_sections_empty_when_fresh(svc, db):
+    """Sezioni appena aggiornate non risultano stale."""
+    await svc.sync_sections(_SECTIONS)
+    await db.execute("UPDATE etsy_sections SET last_listing_at = datetime('now')")
+    await db.commit()
+    stale = await svc.get_stale_sections(min_days_inactive=60)
+    assert stale == []
+
+
+@pytest.mark.asyncio
+async def test_get_stale_sections_returns_old(svc, db):
+    """Sezioni senza last_listing_at (NULL) risultano stale."""
+    await svc.sync_sections(_SECTIONS)
+    # last_listing_at è NULL di default dopo sync_sections
+    stale = await svc.get_stale_sections(min_days_inactive=60)
+    assert len(stale) == 2  # entrambe NULL = mai aggiornate = stale
+    assert all("section_name" in s for s in stale)
