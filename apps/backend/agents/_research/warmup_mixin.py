@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Any
@@ -280,3 +281,76 @@ class WarmupOrchestratorMixin:
             if doc_id:
                 doc_ids.append(doc_id)
         return doc_ids
+
+    async def _synthesize_warmup_report(
+        self,
+        all_candidates: dict[str, list[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Call Sonnet once to synthesize cross-section warmup candidates.
+
+        Returns:
+            {
+                "recommended": list[candidate_dict],  # top 6–8 for approval
+                "report_text": str,                   # formatted Telegram message
+            }
+        Falls back to top-scored candidates from input if Sonnet output is malformed.
+        """
+        from apps.backend.core.config import MODEL_SONNET
+
+        # Build a compact summary of candidates for the prompt
+        lines: list[str] = []
+        for section, candidates in all_candidates.items():
+            for c in candidates:
+                lines.append(
+                    f"- [{section}] {c.get('niche', 'N/A')} "
+                    f"({c.get('product_type', 'printable_pdf')}) "
+                    f"score={c.get('score', 0.0):.2f}"
+                )
+
+        candidates_text = "\n".join(lines) if lines else "(nessun candidato trovato)"
+
+        prompt = (
+            "Sei un esperto di nicchie Etsy per printable digitali.\n\n"
+            "Di seguito trovi i candidati emersi dal warmup, organizzati per sezione Etsy:\n\n"
+            f"{candidates_text}\n\n"
+            "Seleziona i migliori 6-8 candidati per il batch iniziale. Considera:\n"
+            "- diversity tra sezioni (almeno 1 per sezione se disponibile)\n"
+            "- score ≥0.65 preferito\n"
+            "- audience ben definita (es. 'ADHD adult', 'bride on a budget')\n\n"
+            "Rispondi SOLO con JSON valido in questo formato:\n"
+            "{\n"
+            '  "recommended": [\n'
+            '    {"niche": "...", "product_type": "...", "score": 0.0, "section": "...", "rationale": "..."},\n'
+            "    ...\n"
+            "  ],\n"
+            '  "report_text": "Warmup completato — N niche raccomandate. [Breve sintesi 2-3 righe]"\n'
+            "}"
+        )
+
+        raw = await self._call_llm(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="Sei un analista di mercato Etsy specializzato in digital products.",
+            model_override=MODEL_SONNET,
+            max_tokens=2048,
+        )
+
+        # Parse JSON response; fallback to top-scored on any error
+        try:
+            data = json.loads(raw)
+            assert isinstance(data.get("recommended"), list)
+            assert isinstance(data.get("report_text"), str)
+            return data
+        except (json.JSONDecodeError, AssertionError, TypeError):
+            logger.warning("warmup: Sonnet synthesis returned malformed JSON — using fallback")
+            # Fallback: collect all candidates, sort by score desc, take top 8
+            flat: list[dict[str, Any]] = []
+            for candidates in all_candidates.values():
+                flat.extend(candidates)
+            flat.sort(key=lambda c: float(c.get("score", 0.0)), reverse=True)
+            top = flat[:8]
+            return {
+                "recommended": top,
+                "report_text": (
+                    f"⚠️ Sintesi Sonnet non disponibile — {len(top)} candidati scelti per score."
+                ),
+            }
