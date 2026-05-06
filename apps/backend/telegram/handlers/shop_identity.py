@@ -175,6 +175,35 @@ async def cmd_generate_assets(
         await update.message.reply_text(f"⚠️ Errore: {exc}")
 
 
+async def cmd_shop_description(
+    deps: "BotDependencies",
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """/shop_description — genera la descrizione shop per l'identity attiva."""
+    db = await deps.pepe.memory.get_db()
+    from apps.backend.core.shop_identity_service import ShopIdentityService
+    svc = ShopIdentityService(db)
+    identity = await svc.get_active()
+    if identity is None:
+        await update.message.reply_text(
+            "⚠️ Nessuna brand identity attiva. Usa /style_guide prima."
+        )
+        return
+    await update.message.reply_text("✍️ Genero descrizione shop…")
+    try:
+        from apps.backend.agents.design import DesignAgent
+        design = DesignAgent(memory=deps.pepe.memory)
+        description = await design.generate_shop_description(identity)
+        await update.message.reply_text(
+            f"📝 *Descrizione Shop:*\n\n{md_escape(description)}",
+            parse_mode="Markdown"
+        )
+    except Exception as exc:
+        logger.exception("generate_shop_description failed: %s", exc)
+        await update.message.reply_text(f"⚠️ Errore: {exc}")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Registration
 # ──────────────────────────────────────────────────────────────────────────────
@@ -195,6 +224,11 @@ def register(
     add(CommandHandler(
         "generate_assets",
         partial(cmd_generate_assets, deps),
+        filters=chat_filter,
+    ))
+    add(CommandHandler(
+        "shop_description",
+        partial(cmd_shop_description, deps),
         filters=chat_filter,
     ))
     add(CallbackQueryHandler(

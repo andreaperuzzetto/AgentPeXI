@@ -716,6 +716,48 @@ class _DesignGeneratorsMixin:
         logger.info("generate_shop_assets: logo=%s banner=%s", logo_str, banner_str)
         return {"logo_path": logo_str, "banner_path": banner_str}
 
+    async def generate_shop_description(
+        self,
+        identity: "ShopIdentityRecord",
+    ) -> str:
+        """Genera una descrizione shop Etsy via Haiku usando il tone of voice dell'identity attiva.
+
+        Returns:
+            Testo descrizione shop (max ~500 char, tono coerente con identity).
+        """
+        import os
+        import anthropic as _anthropic
+
+        system = (
+            "You are a conversion-focused copywriter for Etsy digital product shops.\n"
+            "Write a shop description (About section) that:\n"
+            "- Opens with a hook (NOT 'Welcome to my shop')\n"
+            "- Reflects the brand aesthetic and tone given\n"
+            "- Mentions the 4 product categories: party/celebrations, wellness, planners, kids learning\n"
+            "- Is 3-4 short paragraphs, max 500 characters total\n"
+            "- Uses the brand's specific tone of voice\n"
+            "Respond with ONLY the shop description text, no extra commentary."
+        )
+        user_msg = (
+            f"Brand: {identity.aesthetic_name}\n"
+            f"Palette: {identity.palette_primary}, {identity.palette_secondary}, {identity.palette_accent}\n"
+            f"Tone of voice: {identity.tone}\n"
+            f"Mockup style: {identity.mockup_style}\n\n"
+            "Write the Etsy shop About section:"
+        )
+
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        client = _anthropic.AsyncAnthropic(api_key=api_key)
+        msg = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=600,
+            system=system,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        description = msg.content[0].text.strip()
+        logger.info("generate_shop_description: %d chars", len(description))
+        return description
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
