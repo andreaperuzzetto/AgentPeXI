@@ -59,10 +59,11 @@ async def cmd_style_guide(
     buttons = []
     for i, opt in enumerate(options, 1):
         status = "✅ ATTIVA" if opt.is_active else f"Opzione {i}"
+        tone_text = opt.tone[:77] + "..." if len(opt.tone) > 80 else opt.tone
         lines.append(
             f"*{status}: {md_escape(opt.aesthetic_name)}*\n"
             f"  Palette: `{opt.palette_primary}` · `{opt.palette_secondary}` · `{opt.palette_accent}`\n"
-            f"  Mockup: {opt.mockup_style} | Tone: {md_escape(opt.tone[:80])}"
+            f"  Mockup: {md_escape(opt.mockup_style)} \\| Tone: {md_escape(tone_text)}"
         )
         if not opt.is_active:
             buttons.append(
@@ -116,8 +117,8 @@ async def cb_approve_identity(
             f"✅ *Brand Identity attivata\\!*\n\n"
             f"*{md_escape(record.aesthetic_name)}*\n"
             f"Palette: `{record.palette_primary}` · `{record.palette_secondary}` · `{record.palette_accent}`\n"
-            f"Mockup: {record.mockup_style}\n"
-            f"Tone: {md_escape(record.tone[:100])}\n\n"
+            f"Mockup: {md_escape(record.mockup_style)}\n"
+            f"Tone: {md_escape(record.tone[:97] + '...' if len(record.tone) > 100 else record.tone)}\n\n"
             f"Ora puoi usare `/shop\\-description` per generare la descrizione dello shop\n"
             f"o `/generate\\-assets` per logo e banner\\.",
             parse_mode="MarkdownV2",

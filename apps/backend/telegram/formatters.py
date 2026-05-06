@@ -22,18 +22,20 @@ TG_LIMIT = 4000
 # Escape
 # ---------------------------------------------------------------------------
 
-_MD_SPECIAL = ("_", "*", "`", "[")
+import re
+
+_MDV2_SPECIAL = re.compile(r'([_*\[\]()~`>#+\-=|{}.!\\])')
 
 
 def md_escape(text: str) -> str:
-    """Escapa i caratteri speciali Markdown v1 nei valori dinamici.
+    """Escape all MarkdownV2 special characters.
 
     Usare per nomi nicchia, file path, output LLM e qualsiasi valore
-    che possa contenere ``_  *  `  [`` che romperebbero il parse Telegram.
+    che possa contenere caratteri speciali che romperebbero il parse Telegram.
+    
+    MarkdownV2 requires escaping: _ * [ ] ( ) ~ ` > # + - = | { } . ! \\
     """
-    for ch in _MD_SPECIAL:
-        text = text.replace(ch, f"\\{ch}")
-    return text
+    return _MDV2_SPECIAL.sub(r'\\\1', str(text))
 
 
 # ---------------------------------------------------------------------------
