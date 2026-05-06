@@ -86,6 +86,15 @@ async def test_cb_approve_warmup_batch_adds_to_queue():
                 "status": "pending",
             },
         },
+        {
+            "id": "doc-batch-002",
+            "metadata": {
+                "niche": "gratitude journal",
+                "product_type": "printable_pdf",
+                "score": 0.91,
+                "status": "pending",
+            },
+        },
     ])
     deps.production_queue = MagicMock()
     deps.production_queue.get_items_by_status = AsyncMock(return_value=[])
@@ -101,10 +110,14 @@ async def test_cb_approve_warmup_batch_adds_to_queue():
 
     await cb_approve_warmup_batch(update, context, deps)
 
-    deps.production_queue.create_item.assert_awaited_once()
-    call_kwargs = deps.production_queue.create_item.call_args[1]
-    assert call_kwargs["niche"] == "anxiety journal"
-    assert call_kwargs["entry_score"] == pytest.approx(0.82)
+    assert deps.production_queue.create_item.call_count == 2
+    deps.production_queue.create_item.assert_awaited()
+    # Verify both items were added
+    all_calls = deps.production_queue.create_item.call_args_list
+    niches_added = {call[1]["niche"] for call in all_calls}
+    assert niches_added == {"anxiety journal", "gratitude journal"}
+    context.bot.send_message.assert_awaited()
+    update.callback_query.answer.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -143,6 +156,9 @@ async def test_cb_approve_warmup_niche_adds_single_item():
     deps.production_queue.create_item.assert_awaited_once()
     call_kwargs = deps.production_queue.create_item.call_args[1]
     assert call_kwargs["niche"] == "wedding planner printable"
+    assert call_kwargs["product_type"] == "printable_pdf"
+    context.bot.send_message.assert_awaited()
+    update.callback_query.answer.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -180,3 +196,5 @@ async def test_cb_reject_warmup_niche_updates_rejected_status():
     call_args = deps.research_agent.memory.update_insight_metadata.call_args[0]
     assert call_args[0] == "doc-abc-123"
     assert call_args[1]["status"] == "rejected"
+    context.bot.send_message.assert_awaited()
+    update.callback_query.answer.assert_awaited_once()
