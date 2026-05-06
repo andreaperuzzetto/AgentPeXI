@@ -273,7 +273,7 @@ class WarmupOrchestratorMixin:
                 "section":      section_key,
                 "niche":        niche,
                 "product_type": candidate.get("product_type", "printable_pdf"),
-                "score":        str(round(float(candidate.get("score", 0.0)), 4)),
+                "score":        str(round(float(candidate.get("score") or 0.0), 4)),
                 "status":       "pending",
                 "source":       candidate.get("source", f"warmup_{section_key}"),
             }
@@ -304,7 +304,7 @@ class WarmupOrchestratorMixin:
                 lines.append(
                     f"- [{section}] {c.get('niche', 'N/A')} "
                     f"({c.get('product_type', 'printable_pdf')}) "
-                    f"score={c.get('score', 0.0):.2f}"
+                    f"score={(c.get('score') or 0.0):.2f}"
                 )
 
         candidates_text = "\n".join(lines) if lines else "(nessun candidato trovato)"
@@ -337,8 +337,12 @@ class WarmupOrchestratorMixin:
         # Parse JSON response; fallback to top-scored on any error
         try:
             data = json.loads(raw)
-            assert isinstance(data.get("recommended"), list)
-            assert isinstance(data.get("report_text"), str)
+            if (
+                not isinstance(data, dict)
+                or not isinstance(data.get("recommended"), list)
+                or not isinstance(data.get("report_text"), str)
+            ):
+                raise AssertionError("invalid structure")
             return data
         except (json.JSONDecodeError, AssertionError, TypeError):
             logger.warning("warmup: Sonnet synthesis returned malformed JSON — using fallback")
@@ -346,7 +350,7 @@ class WarmupOrchestratorMixin:
             flat: list[dict[str, Any]] = []
             for candidates in all_candidates.values():
                 flat.extend(candidates)
-            flat.sort(key=lambda c: float(c.get("score", 0.0)), reverse=True)
+            flat.sort(key=lambda c: float(c.get("score") or 0.0), reverse=True)
             top = flat[:8]
             return {
                 "recommended": top,

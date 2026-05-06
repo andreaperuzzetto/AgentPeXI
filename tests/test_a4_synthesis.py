@@ -81,3 +81,31 @@ async def test_synthesize_tolerates_malformed_json():
     assert "report_text" in result
     # Falls back to top-scored candidates from all sections
     assert isinstance(result["recommended"], list)
+
+
+@pytest.mark.asyncio
+async def test_synthesize_handles_null_json():
+    """LLM returning JSON null should trigger fallback, not crash."""
+    mixin = _make_mixin()
+    mixin._call_llm = AsyncMock(return_value="null")
+    all_candidates = {
+        "home_decor": [{"niche": "wall art", "score": 0.8}],
+    }
+    result = await mixin._synthesize_warmup_report(all_candidates)
+    assert isinstance(result["recommended"], list)
+    assert isinstance(result["report_text"], str)
+    assert "⚠️" in result["report_text"]
+
+
+@pytest.mark.asyncio
+async def test_synthesize_handles_none_scores():
+    """Candidates with score=None should not crash fallback sorting."""
+    mixin = _make_mixin()
+    mixin._call_llm = AsyncMock(return_value="invalid json{{{")
+    all_candidates = {
+        "home_decor": [{"niche": "wall art", "score": None}],
+        "jewelry": [{"niche": "rings", "score": 0.7}],
+    }
+    result = await mixin._synthesize_warmup_report(all_candidates)
+    assert isinstance(result["recommended"], list)
+    assert isinstance(result["report_text"], str)
