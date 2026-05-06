@@ -166,6 +166,7 @@ async def cb_approve_warmup_batch(
                 entry_score=score,
             )
             approved_count += 1
+            existing_pairs.add((niche.lower(), product_type.lower()))
 
         await context.bot.send_message(
             chat_id=chat_id,
