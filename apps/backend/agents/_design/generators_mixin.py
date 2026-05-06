@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.tools.playwright_export import generate_pdf_thumbnail
@@ -15,7 +16,85 @@ from apps.backend.agents._design.utils import _count_pdf_pages, _get_cover_title
 from apps.backend.core.production_queue import ProductionQueueService as _PQService
 from apps.backend.core.shop_identity_service import ShopIdentityService as _SIService
 
+if TYPE_CHECKING:
+    from apps.backend.core.shop_identity_service import ShopIdentityRecord
+
 logger = logging.getLogger("agentpexi.design")
+
+
+# Section-specific style overrides for AGT-4
+_SECTION_STYLE_MAP: dict[str, str] = {
+    "party_celebrations":  "warm gold tones, festive and elegant, soft bokeh, celebration atmosphere",
+    "wellness_self_care":  "sage green and cream palette, natural textures, serene and grounding",
+    "planners_organizers": "clean white background, muted neutrals, functional minimalism",
+    "kids_learning":       "bright primary colors, playful bold typography, cheerful warm lighting",
+}
+
+
+def _build_5component_prompt(brief: dict, identity: "ShopIdentityRecord") -> str:
+    """Build a structured 5-component image prompt for fal.ai / Replicate.
+
+    Components (ordered by weight per AGT-4.1 spec):
+      SUBJECT → STYLE → COMPOSITION → TECHNICAL → NEGATIVE PROMPT
+    """
+    product_type = brief.get("product_type", "printable")
+    niche = brief.get("niche", "")
+    section_key = brief.get("section_key", "")
+
+    section_style = _SECTION_STYLE_MAP.get(section_key, "")
+    palette_str = (
+        f"{identity.palette_primary}, {identity.palette_secondary}, {identity.palette_accent}"
+    )
+    style_base = identity.mockup_style  # "flat_lay" or "lifestyle"
+
+    subject = f"high-quality {product_type} printable mockup for {niche}"
+    style = (
+        f"{identity.aesthetic_name} brand aesthetic, "
+        f"color palette {palette_str}, "
+        f"{section_style}, "
+        f"{'flat lay photography' if style_base == 'flat_lay' else 'lifestyle context photography'}"
+    ).strip(", ")
+    composition = (
+        "centered product display, generous negative space, "
+        "rule of thirds, professional product photography"
+    )
+    technical = (
+        "3000x3000px, 300 DPI, sharp focus, studio lighting, "
+        "Etsy listing hero image quality, PNG format"
+    )
+    negative = (
+        "blurry, low quality, watermark, text overlay, ugly, deformed, "
+        "nsfw, violent, dark theme, pixelated, jpeg artifacts, "
+        "oversaturated, amateur photography"
+    )
+
+    return (
+        f"SUBJECT: {subject}\n"
+        f"STYLE: {style}\n"
+        f"COMPOSITION: {composition}\n"
+        f"TECHNICAL: {technical}\n"
+        f"NEGATIVE PROMPT: {negative}"
+    )
+
+
+def _verify_image_quality(meta: dict) -> bool:
+    """Check fal.ai/Replicate metadata for minimum dimensions (≥2000px).
+
+    Fails open (returns True) if width/height are absent — don't block on missing data.
+    """
+    import logging as _log
+    _logger = _log.getLogger("agentpexi.design.quality_gate")
+    width = meta.get("width")
+    height = meta.get("height")
+    if width is None or height is None:
+        _logger.warning("_verify_image_quality: no size metadata — failing open")
+        return True
+    if width < 2000 or height < 2000:
+        _logger.warning(
+            "_verify_image_quality: image %dx%d is below 2000px minimum", width, height
+        )
+        return False
+    return True
 
 
 class _DesignGeneratorsMixin:
@@ -347,11 +426,22 @@ class _DesignGeneratorsMixin:
         art_type = normalized_input.get("art_type", "wall_art")
         style_preset = normalized_input.get("style_preset", "minimal")
 
+        # --- AGT-4: Try to get active identity for 5-component prompts ---
+        identity = None
+        try:
+            db = getattr(self._memory, "_db", None)  # type: ignore[attr-defined]
+            if db is not None:
+                from apps.backend.core.shop_identity_service import ShopIdentityService
+                svc = ShopIdentityService(db)
+                identity = await svc.get_active()
+        except Exception:
+            pass  # Fall back to standard brief if identity unavailable
+
         provider = getattr(self._image_gen, "provider_name", "flux" if self._image_gen.is_available else "placeholder")
         await self._log_step(
             "thinking",
             f"Generazione {num_variants} Digital Art PNG per niche '{niche}' "
-            f"(art_type={art_type}, api={provider})",
+            f"(art_type={art_type}, api={provider}, agt4={'enabled' if identity else 'disabled'})",
         )
 
         generated: list[dict] = []
@@ -364,17 +454,55 @@ class _DesignGeneratorsMixin:
                 "style_preset": style_preset,
                 "colors": normalized_input.get("colors", {}),
                 "quote": normalized_input.get("quote", ""),
+                "product_type": art_type,  # For AGT-4 prompt building
+                "section_key": normalized_input.get("section_key", ""),
             }
+
+            # --- AGT-4: Build 5-component prompts when identity is active ---
+            prompt_a = None
+            prompt_b = None
+            if identity is not None:
+                from dataclasses import replace as dc_replace
+                try:
+                    prompt_a = _build_5component_prompt(brief, identity)
+                    identity_b = dc_replace(
+                        identity,
+                        mockup_style=("lifestyle" if identity.mockup_style == "flat_lay" else "flat_lay")
+                    )
+                    prompt_b = _build_5component_prompt(brief, identity_b)
+                    brief["agt4_prompt_a"] = prompt_a
+                    brief["agt4_prompt_b"] = prompt_b
+                    logger.info("AGT-4 prompts generated for variant %d", i)
+                except Exception as e:
+                    logger.warning("AGT-4 prompt generation failed: %s", e)
+
             out_path = output_dir / f"{slug}_art_{i + 1}.png"
             try:
                 path = await self._image_gen.generate_digital_art(brief, out_path, mock_mode=self._get_mock_mode())
-                generated.append({
+                
+                # --- AGT-4: Quality gate check ---
+                meta = {}
+                if path.exists():
+                    try:
+                        from PIL import Image
+                        with Image.open(path) as img:
+                            meta = {"width": img.width, "height": img.height}
+                            _verify_image_quality(meta)  # Logs warning if quality is low
+                    except Exception:
+                        pass  # Fail open — don't block on quality check errors
+                
+                variant_data = {
                     "file_path": str(path),
                     "variant_index": i,
                     "art_type": art_type,
                     "file_size_kb": round(path.stat().st_size / 1024, 1),
                     "image_provider": getattr(self._image_gen, "provider_name", "unknown"),
-                })
+                }
+                if prompt_a:
+                    variant_data["agt4_enabled"] = True
+                    variant_data["image_path_a"] = str(path)  # Primary variant
+                    # Note: prompt_b would be used for generating a second variant in future
+                generated.append(variant_data)
             except Exception as e:
                 logger.warning("Errore Digital Art variante %d: %s", i, e)
 
