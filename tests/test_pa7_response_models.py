@@ -74,12 +74,46 @@ class TestNicheItemResponseFields:
             avg_price_eur=9.99,
             google_trend_score=65.0,
             audience_target="home decor lovers",
-            expansion_potential="high",
+            expansion_potential=25,
             section_name="Wall Art",
         )
         assert item.niche == "wall art"
         assert item.audience_target == "home decor lovers"
         assert item.section_name == "Wall Art"
+
+    def test_expansion_potential_accepts_int(self):
+        from apps.backend.api.routers.etsy import NicheItemResponse
+        item = NicheItemResponse(
+            niche="x", product_type=None, performance_score=0.5,
+            confidence_level="medium", avg_ctr=None, total_orders=0,
+            total_listings=0, total_revenue_eur=0.0, last_updated_at=None,
+            entry_score=None, tier=None, avg_price_eur=None,
+            google_trend_score=None, expansion_potential=20,
+        )
+        assert item.expansion_potential == 20
+
+    def test_expansion_potential_coerces_string_int(self):
+        from apps.backend.api.routers.etsy import NicheItemResponse
+        item = NicheItemResponse(
+            niche="x", product_type=None, performance_score=0.5,
+            confidence_level="medium", avg_ctr=None, total_orders=0,
+            total_listings=0, total_revenue_eur=0.0, last_updated_at=None,
+            entry_score=None, tier=None, avg_price_eur=None,
+            google_trend_score=None, expansion_potential="15",
+        )
+        assert item.expansion_potential == 15
+
+    def test_expansion_potential_coerces_legacy_string_to_none(self):
+        """Legacy 'high'/'medium'/'low' → None during DB transition."""
+        from apps.backend.api.routers.etsy import NicheItemResponse
+        item = NicheItemResponse(
+            niche="x", product_type=None, performance_score=0.5,
+            confidence_level="medium", avg_ctr=None, total_orders=0,
+            total_listings=0, total_revenue_eur=0.0, last_updated_at=None,
+            entry_score=None, tier=None, avg_price_eur=None,
+            google_trend_score=None, expansion_potential="high",
+        )
+        assert item.expansion_potential is None
 
 
 class TestNichesResponseWrapper:

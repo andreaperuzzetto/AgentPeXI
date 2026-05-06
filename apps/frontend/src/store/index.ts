@@ -191,12 +191,14 @@ interface AgentPeXIStore {
     statusFilter: string
     warmupState: 'idle' | 'running' | 'completed'
     warmupCandidatesCount: number
+    sectionsVersion: number
   }
   setNicheTableFilter:  (filter: string) => void
   setPipelineNicheFilter: (filter: string) => void
   setEtsyStatusFilter: (statusFilter: string) => void
   setEtsyActiveSection:(key: string | null) => void
   setEtsyWarmupState:  (state: 'idle' | 'running' | 'completed', count?: number) => void
+  bumpSectionsVersion: () => void
 }
 
 export const useStore = create<AgentPeXIStore>()(persist((set) => ({
@@ -354,6 +356,7 @@ export const useStore = create<AgentPeXIStore>()(persist((set) => ({
     statusFilter: 'all',
     warmupState: 'idle',
     warmupCandidatesCount: 0,
+    sectionsVersion: 0,
   },
   setNicheTableFilter:    (filter) => set((s) => ({ etsyView: { ...s.etsyView, nicheTableFilter: filter } })),
   setPipelineNicheFilter: (filter) => set((s) => ({ etsyView: { ...s.etsyView, pipelineNicheFilter: filter } })),
@@ -366,6 +369,7 @@ export const useStore = create<AgentPeXIStore>()(persist((set) => ({
       warmupCandidatesCount: count ?? s.etsyView.warmupCandidatesCount,
     },
   })),
+  bumpSectionsVersion: () => set((s) => ({ etsyView: { ...s.etsyView, sectionsVersion: s.etsyView.sectionsVersion + 1 } })),
 }), {
   name: 'agentpexi-etsy-view',
   storage: createJSONStorage(() => localStorage),

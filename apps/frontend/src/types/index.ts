@@ -131,6 +131,7 @@ export interface WarmupProgressEvent {
   section: string
   analyzed: number
   total: number
+  candidates_count: number
 }
 
 export interface WarmupCompletedEvent {
@@ -257,8 +258,10 @@ export interface NicheItem {
   google_trend_score:  number | null
   /* PA-7 nuovi campi */
   audience_target:     string | null
-  expansion_potential: 'high' | 'medium' | 'low' | null
+  expansion_potential: number | null
   section_name:        string | null
+  product_tier:        'tripwire' | 'core' | 'core_premium' | 'bundle' | null
+  source_type:         'warmup_candidate' | null
 }
 
 /* ── Bundle status (from /api/etsy/bundles) ── */
@@ -296,6 +299,7 @@ export type ProductionQueueStatus =
   | 'planned'
   | 'in_progress'
   | 'completed'
+  | 'pending_warmup'
   | string   // forward compat
 
 export interface ProductionQueueItem {
@@ -315,4 +319,20 @@ export interface ProductionQueueItem {
   ads_activated: number | null
   created_at: string
   updated_at: string
+  product_tier: 'tripwire' | 'core' | 'core_premium' | 'bundle' | null
+  section_name: string | null
+}
+
+/* ── Shop Identity (from /api/etsy/shop-identity) ── */
+
+export interface ShopIdentity {
+  id: number
+  aesthetic_name: string
+  palette_primary: string    // hex e.g. "#C9A84C"
+  palette_secondary: string
+  palette_accent: string
+  mockup_style: string       // "flat_lay" | "lifestyle"
+  tone: string
+  logo_path: string | null
+  is_active: boolean
 }

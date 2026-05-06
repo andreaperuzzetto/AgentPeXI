@@ -124,19 +124,27 @@ function handleMessage(raw: MessageEvent) {
       })
       break
 
-    case 'warmup_progress':
-      // TODO: implement handler — aggiorna store.etsyView.warmupState in A.4
-      console.debug('[WS] warmup_progress not yet handled', data)
+    case 'warmup_progress': {
+      // Intermediate per-section progress — log only (no store update needed)
+      const ev = data as import('../types').WarmupProgressEvent
+      console.info(
+        '[WS] warmup_progress section=%s candidates=%d',
+        ev.section,
+        ev.candidates_count,
+      )
       break
+    }
 
-    case 'warmup_completed':
-      // TODO: implement handler — aggiorna warmupState + warmupCandidatesCount in A.4
-      console.debug('[WS] warmup_completed not yet handled', data)
+    case 'warmup_completed': {
+      const ev = data as import('../types').WarmupCompletedEvent
+      store.setEtsyWarmupState('completed', ev.candidates_count)
+      console.info('[WS] warmup_completed candidates=%d', ev.candidates_count)
       break
+    }
 
     case 'section_mapped':
-      // TODO: implement handler — aggiorna SectionsPanel in A.1
-      console.debug('[WS] section_mapped not yet handled', data)
+      useStore.getState().bumpSectionsVersion()
+      console.debug('[WS] section_mapped → refreshed SectionsPanel', data.niche_key, '→', data.section_name)
       break
 
     case 'approval_flow':

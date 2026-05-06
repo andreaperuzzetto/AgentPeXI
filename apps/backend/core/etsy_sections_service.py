@@ -106,3 +106,110 @@ class EtsySectionsService:
             (niche_key, _now_iso(), listing_id, suggested_section_id, suggested_confidence),
         )
         await self._db.commit()
+
+    async def get_sections_with_uncategorized_counts(self) -> list[dict]:
+        """Returns all active sections with global count of pending uncategorized niches.
+
+        pending_uncategorized is a global count (not per-section):
+        how many niches are not yet mapped to any section.
+        """
+        cursor = await self._db.execute(
+            """
+            SELECT
+                es.section_id,
+                es.section_name,
+                es.listing_count,
+                es.last_listing_at,
+                (SELECT COUNT(*) FROM uncategorized_niches WHERE status = 'pending') AS pending_uncategorized
+            FROM etsy_sections es
+            WHERE es.is_active = 1
+            ORDER BY es.listing_count DESC, es.section_name ASC
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def suggest_section_for_niche(
+        self,
+        niche_key: str,
+        min_confidence: float = 0.3,
+    ) -> tuple[str | None, float | None]:
+        """Fuzzy-match niche_key against active Etsy section names.
+
+        Algorithm: word overlap recall against section name words.
+        Example: 'wedding_invitation_printable' → words={'wedding','invitation','printable'}
+                 'Wedding' → words={'wedding'} → overlap=1/1=1.0
+
+        Returns (section_id, confidence) if confidence >= min_confidence, else (None, None).
+        """
+        cursor = await self._db.execute(
+            "SELECT section_id, section_name FROM etsy_sections WHERE is_active = 1"
+        )
+        sections = await cursor.fetchall()
+        if not sections:
+            return None, None
+
+        niche_words = set(niche_key.replace("_", " ").lower().split())
+        best_id: str | None = None
+        best_conf: float = 0.0
+
+        for row in sections:
+            # Normalize: "Party & Celebrations" → {"party", "celebrations"}
+            section_words = {
+                w.strip().lower()
+                for w in row["section_name"].replace("&", " ").split()
+                if len(w.strip()) > 2
+            }
+            if not section_words:
+                continue
+            intersection = niche_words & section_words
+            # Recall against section words (more stable than niche words)
+            conf = len(intersection) / len(section_words)
+            if conf > best_conf:
+                best_conf = conf
+                best_id = str(row["section_id"])
+
+        if best_conf >= min_confidence:
+            return best_id, round(best_conf, 3)
+        return None, None
+
+    async def update_section_listing_count(
+        self,
+        section_id: str,
+        listing_id: str,  # noqa: ARG002 — reserved for future FK
+    ) -> None:
+        """Increment listing_count and update last_listing_at for a section.
+
+        Called by _publish_mixin after a successful publish with an assigned section_id.
+        """
+        await self._db.execute(
+            """
+            UPDATE etsy_sections
+            SET listing_count   = listing_count + 1,
+                last_listing_at = ?
+            WHERE section_id = ?
+            """,
+            (_now_iso(), section_id),
+        )
+        await self._db.commit()
+
+    async def get_stale_sections(self, min_days_inactive: int = 60) -> list[dict]:
+        """Returns active sections with no listing for more than min_days_inactive days.
+
+        Sections with last_listing_at IS NULL (never updated) are considered stale.
+        """
+        cursor = await self._db.execute(
+            """
+            SELECT section_id, section_name, last_listing_at, listing_count
+            FROM etsy_sections
+            WHERE is_active = 1
+              AND (
+                  last_listing_at IS NULL
+                  OR datetime(last_listing_at) < datetime('now', ? || ' days')
+              )
+            ORDER BY last_listing_at ASC
+            """,
+            (f"-{min_days_inactive}",),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]

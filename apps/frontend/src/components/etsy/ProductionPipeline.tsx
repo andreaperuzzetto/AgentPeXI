@@ -34,6 +34,7 @@ import { useStore }                                   from '../../store'
 /* 5 status attivi per la pipeline bar — in ordine di pipeline */
 const PIPELINE_STAGES = [
   { key: 'pending_design',   label: 'Design',    color: '#F5A623' },
+  { key: 'pending_warmup',   label: 'Warmup',    color: '#8B8D98' },
   { key: 'pending_approval', label: 'Approval',  color: '#C8C8FF' },
   { key: 'approved',         label: 'Approved',  color: '#B57BFF' },
   { key: 'scheduled',        label: 'Scheduled', color: 'rgba(27,255,94,0.75)' },
@@ -45,6 +46,7 @@ interface StatusMeta { label: string; bg: string; fg: string }
 
 const STATUS_META: Record<string, StatusMeta> = {
   pending_design:   { label: 'Design',    bg: 'rgba(245,166,35,0.14)',   fg: '#F5A623' },
+  pending_warmup:   { label: 'Warmup',    bg: 'rgba(139,141,152,0.18)',  fg: '#8B8D98' },
   pending_approval: { label: 'Approval',  bg: 'rgba(200,200,255,0.14)',  fg: '#C8C8FF' },
   approved:         { label: 'Approved',  bg: 'rgba(181,123,255,0.14)',  fg: '#B57BFF' },
   scheduled:        { label: 'Scheduled', bg: 'rgba(27,255,94,0.10)',    fg: 'rgba(27,255,94,0.80)' },
@@ -60,6 +62,14 @@ const STATUS_META: Record<string, StatusMeta> = {
 
 function statusMeta(s: string): StatusMeta {
   return STATUS_META[s] ?? { label: s.toUpperCase().slice(0, 8), bg: 'rgba(139,141,152,0.10)', fg: '#8B8D98' }
+}
+
+/** Badge metadata for product_tier */
+const TIER_META: Record<string, { label: string; bg: string; fg: string }> = {
+  tripwire:     { label: 'TRIPWIRE',  bg: 'rgba(59,130,246,0.14)',  fg: '#60A5FA' },
+  core:         { label: 'CORE',      bg: 'rgba(27,255,94,0.12)',   fg: '#1BFF5E' },
+  core_premium: { label: 'PREMIUM',   bg: 'rgba(245,166,35,0.14)',  fg: '#F5A623' },
+  bundle:       { label: 'BUNDLE',    bg: 'rgba(167,139,250,0.14)', fg: '#A78BFA' },
 }
 
 /* Product type: short label */
@@ -100,6 +110,7 @@ function fmtRelTime(iso: string): string {
 const STATUS_OPTIONS = [
   { value: 'all',              label: 'All statuses' },
   { value: 'pending_design',   label: 'Design' },
+  { value: 'pending_warmup',   label: 'Warmup' },
   { value: 'pending_approval', label: 'Approval' },
   { value: 'approved',         label: 'Approved' },
   { value: 'scheduled',        label: 'Scheduled' },
@@ -200,7 +211,9 @@ function TableRow({ item, index, isLast }: RowProps) {
 
       {/* Status badge */}
       <span className="mono-num" style={{
-        display:       'inline-block',
+        display:       'inline-flex',
+        alignItems:    'center',
+        gap:           4,
         fontSize:      9,
         fontWeight:    600,
         letterSpacing: '0.07em',
@@ -214,6 +227,35 @@ function TableRow({ item, index, isLast }: RowProps) {
         textOverflow:  'ellipsis',
       }}>
         {meta.label}
+        {item.product_tier && TIER_META[item.product_tier] ? (
+          <span style={{
+            background:    TIER_META[item.product_tier].bg,
+            color:         TIER_META[item.product_tier].fg,
+            fontSize:      9,
+            fontWeight:    700,
+            padding:       '1px 5px',
+            borderRadius:  3,
+            textTransform: 'uppercase' as const,
+            marginLeft:    4,
+          }}>
+            {TIER_META[item.product_tier].label}
+          </span>
+        ) : null}
+        {item.section_name && (
+          <span style={{
+            fontSize: 9, fontWeight: 600,
+            padding: '1px 5px', borderRadius: 3,
+            background: 'rgba(99,102,241,0.12)', color: '#818CF8',
+            marginLeft: 4, textTransform: 'uppercase' as const,
+            display: 'inline-block',
+            maxWidth: 60,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {item.section_name.length > 9 ? item.section_name.slice(0, 8) + '…' : item.section_name}
+          </span>
+        )}
       </span>
 
       {/* Type / Company */}
@@ -286,6 +328,7 @@ export function ProductionPipeline() {
     const norm = {
       ...counts,
       pending_design:   (counts.pending_design ?? 0) + (counts.planned ?? 0) + (counts.in_progress ?? 0),
+      pending_warmup:   counts.pending_warmup ?? 0,
       published:        (counts.published ?? 0) + (counts.completed ?? 0),
     }
 

@@ -31,7 +31,7 @@ Schema OBBLIGATORIO:
       "viable": true,
       "viability_reason": "perché è viable o perché è stata scartata",
       "audience_target": "descrizione del buyer persona specifico (es: donne 25-40 con ansia, genitori di bambini ADHD)",
-      "expansion_potential": "high|medium|low — possibilità di espandere in bundle o varianti correlate",
+      "expansion_potential": 25,  # intero — stima listing producibili in subniche (hard min: 10, soft target: ≥20)
       "demand": {
         "level": "high|medium|low",
         "trend": "growing|stable|declining",

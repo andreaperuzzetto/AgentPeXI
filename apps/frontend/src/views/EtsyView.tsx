@@ -1,12 +1,11 @@
 /**
  * EtsyView — vista completa pipeline Etsy
  *
- * Layout: three-column
- *   LEFT    (280px): SectionsPanel (PA A.1 — placeholder)
- *   CENTER  (1fr):   ProductionPipeline · BudgetGauges · NicheTable
- *   RIGHT   (300px): BundleStatus · AdsStatus · ShopOptimizerCard (sticky)
+ * Layout: two-column
+ *   CENTER (1fr):   ProductionPipeline · BudgetGauges · NicheTable
+ *   RIGHT  (320px): ShopIdentityPanel · SectionsPanel · BundleStatus · AdsStatus · ShopOptimizerCard (sticky)
  *
- * Mobile (< 800px): single-column collapse.
+ * Mobile (< 900px): single-column collapse.
  */
 
 import { motion }              from 'framer-motion'
@@ -16,6 +15,8 @@ import { NicheTable }          from '../components/etsy/NicheTable'
 import { BundleStatus }        from '../components/etsy/BundleStatus'
 import { AdsStatus }           from '../components/etsy/AdsStatus'
 import { ShopOptimizerCard }   from '../components/etsy/ShopOptimizerCard'
+import { SectionsPanel }       from '../components/etsy/SectionsPanel'
+import { ShopIdentityPanel }   from '../components/etsy/ShopIdentityPanel'
 
 const springEntry = (delay: number) => ({
   initial:    { opacity: 0, y: 14 } as const,
@@ -29,7 +30,7 @@ export function EtsyView() {
       <style>{`
         .etsy-grid {
           display: grid;
-          grid-template-columns: 280px 1fr 300px;
+          grid-template-columns: 1fr 320px;
           gap: 16px;
           align-items: start;
           width: 100%;
@@ -41,7 +42,7 @@ export function EtsyView() {
           flex-direction: column;
           gap: 16px;
         }
-        @media (max-width: 800px) {
+        @media (max-width: 900px) {
           .etsy-grid { grid-template-columns: 1fr; }
           .etsy-sidebar { position: static; }
         }
@@ -57,7 +58,7 @@ export function EtsyView() {
       }}>
         <div className="etsy-grid">
 
-          {/* ── LEFT: main content ──────────────────────────────────────── */}
+          {/* ── CENTER: main content ────────────────────────────────────── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
             <motion.div {...springEntry(0)}>
               <ProductionPipeline />
@@ -72,7 +73,13 @@ export function EtsyView() {
 
           {/* ── RIGHT: sidebar ──────────────────────────────────────────── */}
           <div className="etsy-sidebar">
+            <motion.div {...springEntry(0)}>
+              <ShopIdentityPanel />
+            </motion.div>
             <motion.div {...springEntry(0.03)}>
+              <SectionsPanel />
+            </motion.div>
+            <motion.div {...springEntry(0.06)}>
               <BundleStatus />
             </motion.div>
             <motion.div {...springEntry(0.09)}>

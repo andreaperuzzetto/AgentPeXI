@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Any
@@ -184,3 +185,179 @@ class WarmupOrchestratorMixin:
             })
 
         return candidates
+
+    async def _broadcast(self, event: dict) -> None:
+        """WebSocket broadcast — real impl injected by AgentBase mixin."""
+        if hasattr(self, "_ws_broadcast") and self._ws_broadcast is not None:
+            try:
+                await self._ws_broadcast(event)
+            except Exception as exc:
+                logger.warning("warmup: _broadcast failed: %s", exc)
+
+    async def run_full_warmup(self) -> dict[str, Any]:
+        """Full warmup run: sweep all 4 sections in parallel, store in ChromaDB,
+        synthesize cross-section report via Sonnet, emit WebSocket events.
+
+        Returns:
+            {
+                "all_candidates": dict[section_key, list[candidate_dict]],
+                "total": int,
+                "report": {"recommended": [...], "report_text": str},
+            }
+        """
+        all_candidates: dict[str, list[dict[str, Any]]] = {}
+
+        async def _sweep_and_store(section_key: str) -> list[dict[str, Any]]:
+            candidates = await self.section_sweep(section_key, top_k=5)
+            await self._store_warmup_candidates(section_key, candidates)
+            await self._broadcast({
+                "type": "warmup_progress",
+                "section": section_key,
+                "candidates_count": len(candidates),
+            })
+            return candidates
+
+        results = await asyncio.gather(
+            *[_sweep_and_store(s) for s in self._WARMUP_SECTION_KEYS],
+            return_exceptions=True,
+        )
+
+        for section_key, result in zip(self._WARMUP_SECTION_KEYS, results):
+            if isinstance(result, Exception):
+                logger.error(
+                    "warmup: section_sweep failed section=%r: %s",
+                    section_key, result,
+                )
+                all_candidates[section_key] = []
+            else:
+                all_candidates[section_key] = result  # type: ignore[assignment]
+
+        total = sum(len(v) for v in all_candidates.values())
+
+        report = await self._synthesize_warmup_report(all_candidates)
+
+        await self._broadcast({
+            "type": "warmup_completed",
+            "candidates_count": total,
+            "recommended_count": len(report.get("recommended", [])),
+            "sections": {k: len(v) for k, v in all_candidates.items()},
+        })
+
+        return {
+            "all_candidates": all_candidates,
+            "total": total,
+            "report": report,
+        }
+
+    async def _store_warmup_candidates(
+        self,
+        section_key: str,
+        candidates: list[dict[str, Any]],
+    ) -> list[str]:
+        """Store warmup candidates in ChromaDB with type='warmup_candidate'.
+
+        Returns list of stored doc IDs (empty strings skipped).
+        """
+        doc_ids: list[str] = []
+        for candidate in candidates:
+            niche = candidate.get("niche", "").strip()
+            if not niche:
+                continue
+            text = (
+                f"warmup candidate: {niche} "
+                f"({candidate.get('product_type', 'printable_pdf')}) — "
+                f"section: {section_key}"
+            )
+            metadata: dict[str, str] = {
+                "type":         "warmup_candidate",
+                "section":      section_key,
+                "niche":        niche,
+                "product_type": candidate.get("product_type", "printable_pdf"),
+                "score":        str(round(float(candidate.get("score") or 0.0), 4)),
+                "status":       "pending",
+                "source":       candidate.get("source", f"warmup_{section_key}"),
+            }
+            doc_id = await self.memory.store_insight(text=text, metadata=metadata)
+            if doc_id:
+                doc_ids.append(doc_id)
+        return doc_ids
+
+    async def _synthesize_warmup_report(
+        self,
+        all_candidates: dict[str, list[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Call Sonnet once to synthesize cross-section warmup candidates.
+
+        Returns:
+            {
+                "recommended": list[candidate_dict],  # top 6–8 for approval
+                "report_text": str,                   # formatted Telegram message
+            }
+        Falls back to top-scored candidates from input if Sonnet output is malformed.
+        """
+        from apps.backend.core.config import MODEL_SONNET
+
+        # Build a compact summary of candidates for the prompt
+        lines: list[str] = []
+        for section, candidates in all_candidates.items():
+            for c in candidates:
+                lines.append(
+                    f"- [{section}] {c.get('niche', 'N/A')} "
+                    f"({c.get('product_type', 'printable_pdf')}) "
+                    f"score={(c.get('score') or 0.0):.2f}"
+                )
+
+        candidates_text = "\n".join(lines) if lines else "(nessun candidato trovato)"
+
+        prompt = (
+            "Sei un esperto di nicchie Etsy per printable digitali.\n\n"
+            "Di seguito trovi i candidati emersi dal warmup, organizzati per sezione Etsy:\n\n"
+            f"{candidates_text}\n\n"
+            "Seleziona i migliori 6-8 candidati per il batch iniziale. Considera:\n"
+            "- diversity tra sezioni (almeno 1 per sezione se disponibile)\n"
+            "- score ≥0.65 preferito\n"
+            "- audience ben definita (es. 'ADHD adult', 'bride on a budget')\n\n"
+            "Rispondi SOLO con JSON valido in questo formato:\n"
+            "{\n"
+            '  "recommended": [\n'
+            '    {"niche": "...", "product_type": "...", "score": 0.0, "section": "...", "rationale": "..."},\n'
+            "    ...\n"
+            "  ],\n"
+            '  "report_text": "Warmup completato — N niche raccomandate. [Breve sintesi 2-3 righe]"\n'
+            "}"
+        )
+
+        # Call Sonnet and parse JSON; fallback to top-scored on any error
+        try:
+            raw = await self._call_llm(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="Sei un analista di mercato Etsy specializzato in digital products.",
+                model_override=MODEL_SONNET,
+                max_tokens=2048,
+            )
+            data = json.loads(raw)
+            if (
+                not isinstance(data, dict)
+                or not isinstance(data.get("recommended"), list)
+                or not all(isinstance(item, dict) for item in data.get("recommended", []))
+                or not isinstance(data.get("report_text"), str)
+            ):
+                raise AssertionError("invalid structure")
+            return {"recommended": data["recommended"], "report_text": data["report_text"]}
+        except (json.JSONDecodeError, AssertionError, TypeError, AttributeError):
+            logger.warning("warmup: Sonnet synthesis returned malformed JSON — using fallback")
+        except Exception:
+            logger.warning("warmup: LLM API failure — using fallback")
+
+        # Fallback: collect all candidates, sort by score desc, take top 8
+        flat: list[dict[str, Any]] = []
+        for candidates in all_candidates.values():
+            flat.extend(candidates)
+        flat.sort(key=lambda c: float(c.get("score") or 0.0), reverse=True)
+        top = flat[:8]
+        return {
+            "recommended": top,
+            "report_text": (
+                f"⚠️ Sintesi Sonnet non disponibile — {len(top)} candidati scelti per score."
+            ),
+        }

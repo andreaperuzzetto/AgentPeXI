@@ -24,7 +24,7 @@ def test_md_escape_backtick():
 
 
 def test_md_escape_open_bracket():
-    assert md_escape("[link]") == r"\[link]"
+    assert md_escape("[link]") == r"\[link\]"
 
 
 def test_md_escape_no_special_chars():
@@ -44,8 +44,16 @@ def test_md_escape_all_special_chars():
     assert result == r"\_\*\`\["
 
 
+def test_md_escape_all_mdv2_special_chars():
+    """Test that all 18 MarkdownV2 special chars are escaped."""
+    text = "_*[]()~`>#+-=|{}.!"
+    result = md_escape(text)
+    # Each char should be preceded by backslash
+    assert result == r"\_\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!"
+
+
 def test_md_escape_does_not_modify_unrelated_chars():
-    text = "hello world! @#$%^&()+={}|;:',.<>?/"
+    text = "hello world @$%^&;:',/?"
     assert md_escape(text) == text
 
 

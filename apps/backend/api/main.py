@@ -205,6 +205,7 @@ async def lifespan(app: FastAPI):
         budget_manager=state.budget_manager,
         publication_policy=state.publication_policy,
         etsy_api=state.etsy_api,
+        research_agent=_pepe.research_agent,
         analytics_agent=_agents.analytics_agent,
         learning_loop=_agents.learning_loop,
         bundle_strategy=state.bundle_strategy,

@@ -17,17 +17,52 @@ logger = logging.getLogger("agentpexi.research")
 
 class _ResearchDiscoveryMixin:
 
-    # Categorie macro per il mining: usate per Google Trends e Tavily discovery
-    _DISCOVERY_CATEGORIES: list[str] = [
-        "printable planner digital download",
-        "wall art printable etsy",
-        "habit tracker printable",
-        "budget planner printable",
-        "digital art print etsy bestseller",
-        "quote print wall art etsy",
-        "botanical print etsy",
-        "journal printable etsy",
+    # Google Trends keywords — one per section (short keyword-level for Trends API).
+    # NOT buyer-persona: Google Trends needs short representative keywords.
+    _TREND_KEYWORDS: list[str] = [
+        "party printable digital download",
+        "self care printable journal",
+        "planner printable digital",
+        "kids learning printable worksheet",
     ]
+
+    # Audience-level discovery categories: 4 sections × 6 buyer-persona queries.
+    # Queries describe the BUYER, not the product — audience specificity principle.
+    # Canonical source: ETSY_STRATEGY §C.2
+    _DISCOVERY_CATEGORIES_BY_SECTION: dict[str, list[str]] = {
+        "party_celebrations": [
+            "bride planning her wedding on a budget printable",
+            "mom organizing a baby shower party digital download",
+            "parent looking for birthday party decorations printable",
+            "bride tribe bachelorette party planner printable",
+            "family planning graduation party printables",
+            "couple looking for wedding invitation template editable",
+        ],
+        "wellness_self_care": [
+            "woman starting a self-care routine printable tracker",
+            "person managing anxiety with journaling digital download",
+            "adult doing 30 day challenge habit tracker printable",
+            "yoga practitioner mindfulness journal printable",
+            "burnout recovery wellness planner digital download",
+            "person working on mental health daily check-in worksheet",
+        ],
+        "planners_organizers": [
+            "teacher looking for classroom organization planner printable",
+            "small business owner needing weekly planner digital download",
+            "ADHD adult looking for focus and productivity planner printable",
+            "student organizing semester schedule printable download",
+            "remote worker structuring daily routine digital planner",
+            "home manager building household binder printable organizer",
+        ],
+        "kids_learning": [
+            "homeschool parent looking for curriculum worksheets printable",
+            "teacher needing classroom activity printables download",
+            "parent teaching toddler letters alphabet flashcards printable",
+            "kindergarten teacher looking for circle time activity printable",
+            "parent finding screen-free kids activities printable",
+            "first grade teacher math worksheets printable resource",
+        ],
+    }
     # Max Google Trends calls per discover cycle (balances freshness vs API latency).
     # Increase to query more macro categories; decrease to speed up discovery.
     _N_TREND_CATEGORIES: int = 4
@@ -87,10 +122,11 @@ class _ResearchDiscoveryMixin:
         """Genera 6-8 candidati (niche, product_type) da fonti dati reali.
 
         Fonti (tutte in parallelo):
-        1. Google Trends su _DISCOVERY_CATEGORIES
+        1. Google Trends su _TREND_KEYWORDS
         2. ChromaDB: finance_directive (scale/abandon), niche_roi_snapshot, design_winner
         3. Stagionalità calendario (mese corrente + look-ahead 5 settimane)
         4. Tavily: trending Etsy digital products ora
+        5. _DISCOVERY_CATEGORIES_BY_SECTION: 24 buyer-persona queries (4 sezioni × 6)
 
         Ritorna lista deduplicata di {"niche": str, "product_type": str, "source": str}
         """
@@ -107,11 +143,11 @@ class _ResearchDiscoveryMixin:
                 self._call_tool(
                     tool_name="google_trends",
                     action="get_trends",
-                    input_params={"keyword": cat},
+                    input_params={"keyword": kw},
                     fn=get_google_trends,
-                    keyword=cat,
+                    keyword=kw,
                 )
-                for cat in self._DISCOVERY_CATEGORIES[:self._N_TREND_CATEGORIES]
+                for kw in self._TREND_KEYWORDS[:self._N_TREND_CATEGORIES]
             ]),
             # 2. Finance: niches_to_scale + niche_roi_snapshot
             self.memory.query_chromadb_recent(
@@ -196,10 +232,22 @@ class _ResearchDiscoveryMixin:
         if isinstance(trend_results, list):
             for i, t in enumerate(trend_results):
                 if isinstance(t, dict) and t.get("percent_change", 0) > 10:
-                    cat = self._DISCOVERY_CATEGORIES[i] if i < len(self._DISCOVERY_CATEGORIES) else ""
-                    if cat:
-                        pt = "digital_art_png" if any(w in cat for w in ("wall art", "botanical", "print", "quote")) else "printable_pdf"
-                        _add(cat, pt, f"trends_+{t.get('percent_change', 0):.0f}pct")
+                    kw = self._TREND_KEYWORDS[i] if i < len(self._TREND_KEYWORDS) else ""
+                    if kw:
+                        pt = "digital_art_png" if any(w in kw for w in ("wall art", "botanical", "print", "quote")) else "printable_pdf"
+                        _add(kw, pt, f"trends_+{t.get('percent_change', 0):.0f}pct")
+
+        # Audience-level candidates from _DISCOVERY_CATEGORIES_BY_SECTION.
+        # Buyer-persona queries generate section-aware candidates.
+        # source includes section_key for traceability and SectionsPanel distribution.
+        for section_key, queries in self._DISCOVERY_CATEGORIES_BY_SECTION.items():
+            for query in queries:
+                pt = (
+                    "digital_art_png"
+                    if any(w in query for w in ("print", "art", "wall", "botanical", "quote", "invitation"))
+                    else "printable_pdf"
+                )
+                _add(query, pt, f"section:{section_key}")
 
         # Padding con DEFAULT_NICHES se candidati insufficienti (cold-start)
         if len(candidates) < 4:

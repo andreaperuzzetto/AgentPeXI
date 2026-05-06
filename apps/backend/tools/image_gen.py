@@ -282,6 +282,9 @@ class ImageGenerator:
 
     def _build_prompt(self, brief: dict) -> str:
         """Alias pubblico per compatibilità con NanaBananaGenerator."""
+        # AGT-4: Check for custom prompt override first
+        if "agt4_prompt_override" in brief:
+            return brief["agt4_prompt_override"]
         return self._build_flux_prompt(brief)
 
     def _build_flux_prompt(self, brief: dict) -> str:
@@ -479,6 +482,10 @@ class NanaBananaGenerator:
         Sfrutta le capacità di text rendering aggiungendo istruzioni
         esplicite per quote prints e tipografia.
         """
+        # AGT-4: Check for custom prompt override first
+        if "agt4_prompt_override" in brief:
+            return brief["agt4_prompt_override"]
+        
         niche = brief.get("niche", "")
         art_type = brief.get("art_type", "wall_art")
         style_preset = brief.get("style_preset", "minimal")

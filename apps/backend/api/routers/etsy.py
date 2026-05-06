@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class NicheItemResponse(BaseModel):
@@ -25,12 +25,60 @@ class NicheItemResponse(BaseModel):
     google_trend_score: float | None
     # nuovi campi PA-7 (opzionali — la query non li popola ancora)
     audience_target: str | None = None
-    expansion_potential: Literal["high", "medium", "low"] | None = None
+    expansion_potential: int | None = None
+
+    @field_validator("expansion_potential", mode="before")
+    @classmethod
+    def _coerce_expansion_potential(cls, v: object) -> int | None:
+        """Coerce DB TEXT→int; graceful fallback for legacy 'high'/'medium'/'low'."""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None  # 'high'/'medium'/'low' → None during transition
     section_name: str | None = None
+    source_type: str | None = None
 
 
 class NichesResponse(BaseModel):
     niches: list[NicheItemResponse]
+
+
+class SectionItemResponse(BaseModel):
+    section_id: str
+    section_name: str
+    listing_count: int
+    last_listing_at: str | None
+    pending_uncategorized: int
+
+
+class SectionsResponse(BaseModel):
+    sections: list[SectionItemResponse]
+
+
+class StyleGuideOptionResponse(BaseModel):
+    id: int
+    aesthetic_name: str
+    palette_primary: str
+    palette_secondary: str
+    palette_accent: str
+    mockup_style: str
+    tone: str
+    logo_path: str | None
+    banner_path: str | None
+    is_active: bool
+
+
+class StyleGuideOptionsResponse(BaseModel):
+    options: list[StyleGuideOptionResponse]
+
+
+class ShopIdentityResponse(BaseModel):
+    identity: StyleGuideOptionResponse | None
+
 
 logger = logging.getLogger("agentpexi.api")
 router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
@@ -155,9 +203,78 @@ async def get_etsy_niches(
         )
         rows = await cursor.fetchall()
         niches = [NicheItemResponse(**dict(r)) for r in rows]
+        
+        # Part C: Merge warmup candidates from ChromaDB
+        warmup_candidates = await state.memory.query_insights_by_type("warmup_candidate")
+        
+        # Build set of existing (niche, product_type) pairs for deduplication
+        existing_pairs = {
+            (n.niche.lower(), (n.product_type or "").lower())
+            for n in niches
+        }
+        
+        # Add warmup candidates that don't already exist
+        for candidate in warmup_candidates:
+            metadata = candidate.get("metadata", {})
+            niche = metadata.get("niche") or ""
+            product_type = metadata.get("product_type") or ""
+            
+            # Deduplicate: skip if DB already has this combination
+            pair_key = (niche.lower(), product_type.lower())
+            if pair_key in existing_pairs:
+                continue
+            
+            # Build NicheItemResponse from warmup candidate
+            try:
+                performance_score = float(metadata.get("score") or 0.0)
+            except (ValueError, TypeError):
+                performance_score = 0.0
+            
+            niches.append(NicheItemResponse(
+                niche=niche,
+                product_type=product_type if product_type else None,
+                performance_score=performance_score,
+                confidence_level=metadata.get("status", "pending_warmup"),
+                avg_ctr=None,
+                total_orders=None,
+                total_listings=None,
+                total_revenue_eur=None,
+                last_updated_at=None,
+                entry_score=None,
+                tier=None,
+                avg_price_eur=None,
+                google_trend_score=None,
+                audience_target=None,
+                expansion_potential=None,
+                section_name=None,
+                source_type="warmup_candidate"
+            ))
+        
         return NichesResponse(niches=niches)
     except Exception:
         logger.exception("get_etsy_niches error")
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+
+
+@router.get("/api/etsy/sections")
+async def get_etsy_sections() -> SectionsResponse:
+    """
+    Ritorna tutte le sezioni Etsy attive con conteggio listing e pending uncategorized.
+
+    pending_uncategorized: numero globale di niche non ancora mappate a una sezione.
+    last_listing_at: timestamp ISO dell'ultimo listing pubblicato in questa sezione.
+    """
+    if not state.memory:
+        return JSONResponse(status_code=503, content={"error": "MemoryManager non inizializzato"})
+    try:
+        from apps.backend.core.etsy_sections_service import EtsySectionsService
+        db = await state.memory.get_db()
+        ess = EtsySectionsService(db)
+        raw = await ess.get_sections_with_uncategorized_counts()
+        sections = [SectionItemResponse(**s) for s in raw]
+        return SectionsResponse(sections=sections)
+    except Exception:
+        logger.exception("get_etsy_sections error")
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
@@ -309,3 +426,66 @@ async def etsy_shop_optimizer_preview(body: dict | None = None) -> dict:
     except Exception:
         logger.exception("etsy_shop_optimizer_preview error")
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
+
+
+@router.get("/api/etsy/style-guide-options")
+async def get_style_guide_options() -> StyleGuideOptionsResponse:
+    """Lista tutte le opzioni style guide salvate (attive e non)."""
+    if not state.memory:
+        return StyleGuideOptionsResponse(options=[])
+    try:
+        db = await state.memory.get_db()
+        from apps.backend.core.shop_identity_service import ShopIdentityService
+        svc = ShopIdentityService(db)
+        records = await svc.list_options()
+        options = [
+            StyleGuideOptionResponse(
+                id=r.id,
+                aesthetic_name=r.aesthetic_name,
+                palette_primary=r.palette_primary,
+                palette_secondary=r.palette_secondary,
+                palette_accent=r.palette_accent,
+                mockup_style=r.mockup_style,
+                tone=r.tone,
+                logo_path=r.logo_path,
+                banner_path=r.banner_path,
+                is_active=r.is_active,
+            )
+            for r in records
+        ]
+        return StyleGuideOptionsResponse(options=options)
+    except Exception:
+        logger.exception("get_style_guide_options error")
+        return StyleGuideOptionsResponse(options=[])
+
+
+@router.get("/api/etsy/shop-identity")
+async def get_shop_identity() -> ShopIdentityResponse:
+    """Ritorna l'identity attiva, o null se nessuna è attiva."""
+    if not state.memory:
+        return ShopIdentityResponse(identity=None)
+    try:
+        db = await state.memory.get_db()
+        from apps.backend.core.shop_identity_service import ShopIdentityService
+        svc = ShopIdentityService(db)
+        record = await svc.get_active()
+        if record is None:
+            return ShopIdentityResponse(identity=None)
+        return ShopIdentityResponse(
+            identity=StyleGuideOptionResponse(
+                id=record.id,
+                aesthetic_name=record.aesthetic_name,
+                palette_primary=record.palette_primary,
+                palette_secondary=record.palette_secondary,
+                palette_accent=record.palette_accent,
+                mockup_style=record.mockup_style,
+                tone=record.tone,
+                logo_path=record.logo_path,
+                banner_path=record.banner_path,
+                is_active=record.is_active,
+            )
+        )
+    except Exception:
+        logger.exception("get_shop_identity error")
+        return ShopIdentityResponse(identity=None)
+

@@ -146,6 +146,9 @@ export function Header() {
     }))
   )
 
+  const warmupState = useStore(s => s.etsyView.warmupState)
+  const warmupCount = useStore(s => s.etsyView.warmupCandidatesCount)
+
   const mockEnabled = (systemStatus as { mock_mode?: boolean }).mock_mode ?? false
   const toggleMock  = () => {
     fetch('/api/system/mock', {
@@ -177,6 +180,7 @@ export function Header() {
   const fmtUsd = (v: number) => v < 0.005 ? '$0' : v < 0.01 ? '<$0.01' : `$${v.toFixed(2)}`
 
   return (
+    <>
     <div style={{
       position:     'fixed',
       top:          12,
@@ -237,5 +241,37 @@ export function Header() {
       <MockToggle enabled={mockEnabled} onToggle={toggleMock} />
 
     </div>
+
+    {/* Warmup completed banner */}
+    {warmupState === 'completed' && warmupCount > 0 && (
+      <div style={{
+        position:     'fixed',
+        top:          76,
+        left:         leftOffset,
+        right:        12,
+        zIndex:       19,
+        background:   'rgba(245,166,35,0.12)',
+        borderBottom: '1px solid rgba(245,166,35,0.25)',
+        borderRadius: '0 0 8px 8px',
+        padding:      '6px 24px',
+        fontSize:     12,
+        color:        '#F5A623',
+        display:      'flex',
+        alignItems:   'center',
+        gap:          8,
+      }}>
+        <span>⚡</span>
+        <span>
+          Warmup completato — <strong>{warmupCount}</strong> niche da approvare
+        </span>
+        <a
+          href="#etsy-view"
+          style={{ color: '#F5A623', textDecoration: 'underline', marginLeft: 8 }}
+        >
+          Vai a NicheTable →
+        </a>
+      </div>
+    )}
+    </>
   )
 }

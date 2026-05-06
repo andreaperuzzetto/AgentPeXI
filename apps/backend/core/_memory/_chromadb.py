@@ -43,6 +43,21 @@ class ChromaDbMixin:
             self._fire_bg(self._bridge_callback(text, "etsy"))
         return doc_id
 
+    async def update_insight_metadata(self, doc_id: str, metadata: dict) -> bool:
+        """Update metadata of an existing ChromaDB document by ID. Returns True on success."""
+        if self._chroma_collection is None:
+            return False
+        try:
+            await asyncio.to_thread(
+                self._chroma_collection.update,
+                ids=[doc_id],
+                metadatas=[metadata],
+            )
+            return True
+        except Exception:
+            logger.warning("update_insight_metadata failed for doc_id=%s", doc_id)
+            return False
+
     async def query_insights(self, query: str, n_results: int = 5) -> list[dict]:
         if self._chroma_collection is None:
             return []
@@ -56,6 +71,32 @@ class ChromaDbMixin:
             meta = (results.get("metadatas", [[]])[0][i]) if results.get("metadatas") else {}
             out.append({"document": doc, "metadata": meta})
         return out
+
+    async def query_insights_by_type(self, type_val: str, limit: int = 50) -> list[dict]:
+        """Return all stored insights matching metadata type."""
+        if self._chroma_collection is None:
+            return []
+        try:
+            results = await asyncio.to_thread(
+                self._chroma_collection.get,
+                where={"type": type_val},
+                limit=limit,
+            )
+            out = []
+            ids = results.get("ids", [])
+            documents = results.get("documents", [])
+            metadatas = results.get("metadatas", [])
+            
+            for i, doc_id in enumerate(ids):
+                out.append({
+                    "id": doc_id,
+                    "text": documents[i] if i < len(documents) else "",
+                    "metadata": metadatas[i] if i < len(metadatas) else {},
+                })
+            return out
+        except Exception:
+            logger.warning(f"query_insights_by_type error for type={type_val}", exc_info=True)
+            return []
 
     async def query_chromadb(
         self,

@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import anthropic as _anthropic
 
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.tools.playwright_export import generate_pdf_thumbnail
@@ -15,7 +19,86 @@ from apps.backend.agents._design.utils import _count_pdf_pages, _get_cover_title
 from apps.backend.core.production_queue import ProductionQueueService as _PQService
 from apps.backend.core.shop_identity_service import ShopIdentityService as _SIService
 
+if TYPE_CHECKING:
+    import aiosqlite
+    from apps.backend.core.shop_identity_service import ShopIdentityRecord
+
 logger = logging.getLogger("agentpexi.design")
+
+
+# Section-specific style overrides for AGT-4
+_SECTION_STYLE_MAP: dict[str, str] = {
+    "party_celebrations":  "warm gold tones, festive and elegant, soft bokeh, celebration atmosphere",
+    "wellness_self_care":  "sage green and cream palette, natural textures, serene and grounding",
+    "planners_organizers": "clean white background, muted neutrals, functional minimalism",
+    "kids_learning":       "bright primary colors, playful bold typography, cheerful warm lighting",
+}
+
+
+def _build_5component_prompt(brief: dict, identity: "ShopIdentityRecord") -> str:
+    """Build a structured 5-component image prompt for fal.ai / Replicate.
+
+    Components (ordered by weight per AGT-4.1 spec):
+      SUBJECT → STYLE → COMPOSITION → TECHNICAL → NEGATIVE PROMPT
+    """
+    product_type = brief.get("product_type", "printable")
+    niche = brief.get("niche", "")
+    section_key = brief.get("section_key", "")
+
+    section_style = _SECTION_STYLE_MAP.get(section_key, "")
+    colors = [c for c in [identity.palette_primary, identity.palette_secondary, identity.palette_accent] if c]
+    palette_str = ", ".join(colors) if colors else "natural tones"
+    style_base = identity.mockup_style  # "flat_lay" or "lifestyle"
+
+    subject = f"high-quality {product_type} printable mockup for {niche}"
+    style_parts = [
+        f"{identity.aesthetic_name} brand aesthetic",
+        f"color palette {palette_str}",
+        section_style,
+        "flat lay photography" if style_base == "flat_lay" else "lifestyle context photography",
+    ]
+    style = ", ".join(p for p in style_parts if p)
+    composition = (
+        "centered product display, generous negative space, "
+        "rule of thirds, professional product photography"
+    )
+    technical = (
+        "3000x3000px, 300 DPI, sharp focus, studio lighting, "
+        "Etsy listing hero image quality, PNG format"
+    )
+    negative = (
+        "blurry, low quality, watermark, text overlay, ugly, deformed, "
+        "nsfw, violent, dark theme, pixelated, jpeg artifacts, "
+        "oversaturated, amateur photography"
+    )
+
+    return (
+        f"SUBJECT: {subject}\n"
+        f"STYLE: {style}\n"
+        f"COMPOSITION: {composition}\n"
+        f"TECHNICAL: {technical}\n"
+        f"NEGATIVE PROMPT: {negative}"
+    )
+
+
+def _verify_image_quality(meta: dict) -> bool:
+    """Check fal.ai/Replicate metadata for minimum dimensions (≥2000px).
+
+    Fails open (returns True) if width/height are absent — don't block on missing data.
+    """
+    import logging as _log
+    _logger = _log.getLogger("agentpexi.design.quality_gate")
+    width = meta.get("width")
+    height = meta.get("height")
+    if width is None or height is None:
+        _logger.warning("_verify_image_quality: no size metadata — failing open")
+        return True
+    if width < 2000 or height < 2000:
+        _logger.warning(
+            "_verify_image_quality: image %dx%d is below 2000px minimum", width, height
+        )
+        return False
+    return True
 
 
 class _DesignGeneratorsMixin:
@@ -347,11 +430,22 @@ class _DesignGeneratorsMixin:
         art_type = normalized_input.get("art_type", "wall_art")
         style_preset = normalized_input.get("style_preset", "minimal")
 
+        # --- AGT-4: Try to get active identity for 5-component prompts ---
+        identity = None
+        try:
+            db = await self.memory.get_db()
+            if db is not None:
+                from apps.backend.core.shop_identity_service import ShopIdentityService
+                svc = ShopIdentityService(db)
+                identity = await svc.get_active()
+        except Exception:
+            pass  # Fall back to standard brief if identity unavailable
+
         provider = getattr(self._image_gen, "provider_name", "flux" if self._image_gen.is_available else "placeholder")
         await self._log_step(
             "thinking",
             f"Generazione {num_variants} Digital Art PNG per niche '{niche}' "
-            f"(art_type={art_type}, api={provider})",
+            f"(art_type={art_type}, api={provider}, agt4={'enabled' if identity else 'disabled'})",
         )
 
         generated: list[dict] = []
@@ -364,17 +458,89 @@ class _DesignGeneratorsMixin:
                 "style_preset": style_preset,
                 "colors": normalized_input.get("colors", {}),
                 "quote": normalized_input.get("quote", ""),
+                "product_type": art_type,  # For AGT-4 prompt building
+                "section_key": normalized_input.get("section_key", ""),
             }
+
+            # --- AGT-4: Build 5-component prompts when identity is active ---
+            prompt_a = None
+            prompt_b = None
+            if identity is not None:
+                from dataclasses import replace as dc_replace
+                try:
+                    prompt_a = _build_5component_prompt(brief, identity)
+                    identity_b = dc_replace(
+                        identity,
+                        mockup_style=("lifestyle" if identity.mockup_style == "flat_lay" else "flat_lay")
+                    )
+                    prompt_b = _build_5component_prompt(brief, identity_b)
+                    logger.info("AGT-4 prompts generated for variant %d", i)
+                except Exception as e:
+                    logger.warning("AGT-4 prompt generation failed: %s", e)
+
             out_path = output_dir / f"{slug}_art_{i + 1}.png"
             try:
-                path = await self._image_gen.generate_digital_art(brief, out_path, mock_mode=self._get_mock_mode())
-                generated.append({
+                # --- AGT-4: Use custom prompt for variant A when identity is active ---
+                brief_a = brief.copy()
+                if prompt_a:
+                    brief_a["agt4_prompt_override"] = prompt_a
+                
+                # Generate variant A (primary)
+                path = await self._image_gen.generate_digital_art(brief_a, out_path, mock_mode=self._get_mock_mode())
+                
+                # --- AGT-4: Quality gate check ---
+                meta = {}
+                if path.exists():
+                    try:
+                        from PIL import Image
+                        with Image.open(path) as img:
+                            meta = {"width": img.width, "height": img.height}
+                            if not _verify_image_quality(meta):
+                                logger.warning("Variant A failed quality gate")
+                    except Exception:
+                        pass  # Fail open — don't block on quality check errors
+                
+                variant_data = {
                     "file_path": str(path),
+                    "image_path": str(path),  # Backward compatibility
                     "variant_index": i,
                     "art_type": art_type,
                     "file_size_kb": round(path.stat().st_size / 1024, 1),
                     "image_provider": getattr(self._image_gen, "provider_name", "unknown"),
-                })
+                }
+                
+                # --- AGT-4: Generate variant B (lifestyle swap) when identity is active ---
+                if prompt_a and prompt_b:
+                    variant_data["agt4_enabled"] = True
+                    variant_data["image_path_a"] = str(path)  # Primary variant
+                    
+                    # Generate variant B
+                    image_path_b = None
+                    try:
+                        out_path_b = output_dir / f"{slug}_art_{i + 1}_b.png"
+                        brief_b = brief.copy()
+                        brief_b["agt4_prompt_override"] = prompt_b  # Override with variant B prompt
+                        path_b = await self._image_gen.generate_digital_art(brief_b, out_path_b, mock_mode=self._get_mock_mode())
+                        
+                        # Quality gate check for variant B
+                        if path_b.exists():
+                            try:
+                                from PIL import Image
+                                with Image.open(path_b) as img:
+                                    meta_b = {"width": img.width, "height": img.height}
+                                    if not _verify_image_quality(meta_b):
+                                        logger.warning("Variant B failed quality gate")
+                            except Exception:
+                                pass
+                        
+                        image_path_b = str(path_b)
+                        logger.info("AGT-4 variant B generated: %s", image_path_b)
+                    except Exception as e:
+                        logger.warning("_run_digital_art: variant B generation failed, skipping: %s", e)
+                    
+                    variant_data["image_path_b"] = image_path_b
+                
+                generated.append(variant_data)
             except Exception as e:
                 logger.warning("Errore Digital Art variante %d: %s", i, e)
 
@@ -491,6 +657,106 @@ class _DesignGeneratorsMixin:
             },
             confidence=1.0,
         )
+
+    # ------------------------------------------------------------------
+    # Shop Assets Generation
+    # ------------------------------------------------------------------
+
+    async def generate_shop_assets(
+        self,
+        identity_id: str,
+        db: "aiosqlite.Connection",
+        output_dir: "Path | None" = None,
+    ) -> dict[str, str]:
+        """Genera logo (500×500) e banner (3360×840) per la shop identity attiva.
+
+        Usa _image_gen con brief adattato per le dimensioni shop.
+        Aggiorna ShopIdentityService con logo_path e banner_path.
+
+        Returns:
+            dict con keys 'logo_path' e 'banner_path'.
+        """
+        try:
+            _identity_id_int = int(identity_id)
+        except ValueError:
+            raise ValueError(f"identity_id must be numeric, got {identity_id!r}") from None
+
+        svc = _SIService(db)
+        identity = await svc.get_active()
+        if identity is None or str(identity.id) != str(identity_id):
+            raise ValueError(f"ShopIdentity {identity_id} is not the active identity")
+
+        base_dir = Path(output_dir or self.storage.base_path) / "shop_assets"
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        logo_path = base_dir / f"logo_{identity_id}.png"
+        banner_path = base_dir / f"banner_{identity_id}.png"
+
+        logo_brief = {
+            "product_type": "shop_logo",
+            "niche": identity.aesthetic_name,
+            "color_scheme": f"{identity.palette_primary}, {identity.palette_secondary}",
+            "style": identity.mockup_style,
+            "width": 500,
+            "height": 500,
+            "selling_signals": {},
+        }
+        banner_brief = {
+            **logo_brief,
+            "product_type": "shop_banner",
+            "width": 3360,
+            "height": 840,
+        }
+
+        mock_mode = self._get_mock_mode()
+        logo_result = await self._image_gen.generate_digital_art(logo_brief, logo_path, mock_mode=mock_mode)
+        banner_result = await self._image_gen.generate_digital_art(banner_brief, banner_path, mock_mode=mock_mode)
+
+        logo_str = str(logo_result or logo_path)
+        banner_str = str(banner_result or banner_path)
+
+        await svc.update(_identity_id_int, logo_path=logo_str, banner_path=banner_str)
+        logger.info("generate_shop_assets: logo=%s banner=%s", logo_str, banner_str)
+        return {"logo_path": logo_str, "banner_path": banner_str}
+
+    async def generate_shop_description(
+        self,
+        identity: "ShopIdentityRecord",
+    ) -> str:
+        """Genera una descrizione shop Etsy via Haiku usando il tone of voice dell'identity attiva.
+
+        Returns:
+            Testo descrizione shop (max ~500 char, tono coerente con identity).
+        """
+        system = (
+            "You are a conversion-focused copywriter for Etsy digital product shops.\n"
+            "Write a shop description (About section) that:\n"
+            "- Opens with a hook (NOT 'Welcome to my shop')\n"
+            "- Reflects the brand aesthetic and tone given\n"
+            "- Mentions the 4 product categories: party/celebrations, wellness, planners, kids learning\n"
+            "- Is 3-4 short paragraphs, max 500 characters total\n"
+            "- Uses the brand's specific tone of voice\n"
+            "Respond with ONLY the shop description text, no extra commentary."
+        )
+        user_msg = (
+            f"Brand: {identity.aesthetic_name}\n"
+            f"Palette: {identity.palette_primary}, {identity.palette_secondary}, {identity.palette_accent}\n"
+            f"Tone of voice: {identity.tone}\n"
+            f"Mockup style: {identity.mockup_style}\n\n"
+            "Write the Etsy shop About section:"
+        )
+
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        client = _anthropic.AsyncAnthropic(api_key=api_key)
+        msg = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=600,
+            system=system,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        description = msg.content[0].text.strip()
+        logger.info("generate_shop_description: %d chars", len(description))
+        return description
 
     # ------------------------------------------------------------------
     # Helpers
