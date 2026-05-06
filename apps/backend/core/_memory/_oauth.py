@@ -42,8 +42,9 @@ class OAuthMixin:
     async def get_oauth_tokens(self, provider: str) -> dict | None:
         """Ritorna i token OAuth in chiaro per `provider`, o None se non esistono.
 
-        I valori `access_token_encrypted` / `refresh_token_encrypted` nel dict
-        restituito sono già decifrati — i nomi dei campi restano per compatibilità.
+        Il dict restituito contiene le chiavi ``access_token`` e ``refresh_token``
+        (già decifrate). Le colonne DB si chiamano ancora ``*_encrypted`` per
+        compatibilità con lo schema esistente.
         """
         cursor = await self._db.execute(
             "SELECT * FROM oauth_tokens WHERE provider = ?", (provider,)
@@ -54,10 +55,10 @@ class OAuthMixin:
         data = dict(row)
         fernet = self._fernet()
         try:
-            data["access_token_encrypted"] = fernet.decrypt(
+            data["access_token"] = fernet.decrypt(
                 data["access_token_encrypted"].encode()
             ).decode()
-            data["refresh_token_encrypted"] = fernet.decrypt(
+            data["refresh_token"] = fernet.decrypt(
                 data["refresh_token_encrypted"].encode()
             ).decode()
         except Exception as exc:

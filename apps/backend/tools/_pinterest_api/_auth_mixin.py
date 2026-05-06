@@ -49,7 +49,7 @@ class _AuthMixin:
                 logger.error("Refresh token Pinterest fallito: %s", exc)
                 raise
 
-        return tokens["access_token_encrypted"]  # già decifrato da get_oauth_tokens
+        return tokens["access_token"]
 
     async def _refresh_token(self, tokens: dict) -> None:
         """Refresh access_token usando refresh_token Pinterest."""
@@ -60,7 +60,7 @@ class _AuthMixin:
                 PINTEREST_TOKEN_URL,
                 data={
                     "grant_type": "refresh_token",
-                    "refresh_token": tokens["refresh_token_encrypted"],
+                    "refresh_token": tokens["refresh_token"],
                     "client_id": settings.PINTEREST_CLIENT_ID,
                     "client_secret": settings.PINTEREST_CLIENT_SECRET,
                 },
@@ -69,7 +69,7 @@ class _AuthMixin:
             data = resp.json()
 
         new_access = data["access_token"]
-        new_refresh = data.get("refresh_token", tokens["refresh_token_encrypted"])
+        new_refresh = data.get("refresh_token", tokens["refresh_token"])
         expires_in = data.get("expires_in", 3600)
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
 

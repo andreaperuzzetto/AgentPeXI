@@ -167,7 +167,7 @@ async def test_pinterest_auth_shows_connected_when_valid_token():
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     deps = _make_deps(db)
     deps.pepe.memory.get_oauth_tokens = AsyncMock(return_value={
-        "access_token_encrypted": "tok",
+        "access_token": "tok",
         "expires_at": future,
         "updated_at": "2026-05-01T10:00:00",
     })

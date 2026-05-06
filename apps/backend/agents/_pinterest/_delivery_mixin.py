@@ -27,7 +27,7 @@ class _DeliveryMixin:
         Returns:
             "tailwind_queued" se delivery via Tailwind, altrimenti il pinterest_pin_id.
         """
-        method = os.getenv("PINTEREST_DELIVERY_METHOD", "tailwind")
+        method = settings.PINTEREST_DELIVERY_METHOD
         if method == "direct":
             return await self._deliver_via_direct(pin)
         return await self._deliver_via_tailwind(pin)

@@ -84,5 +84,6 @@ class _PinterestMixin:
                     f"❌ Pinterest pin {pin_queue_id} fallito: {exc}"
                 )
                 logger.error(
-                    "pinterest_publisher: pin %d fallito: %s", pin_queue_id, exc
+                    "pinterest_publisher: pin %d fallito: %s", pin_queue_id, exc,
+                    exc_info=True,
                 )

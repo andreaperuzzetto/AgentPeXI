@@ -66,16 +66,19 @@ class _StyleGuideMixin:
         # 2. Call Haiku
         if not settings.ANTHROPIC_API_KEY:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set")
-        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         user_prompt = _build_user_prompt(signals)
 
         logger.info("StyleGuideMixin: calling Haiku for 3 style options")
-        msg = await client.messages.create(
-            model=_HAIKU_MODEL,
-            max_tokens=1200,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
+        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        try:
+            msg = await client.messages.create(
+                model=_HAIKU_MODEL,
+                max_tokens=1200,
+                system=_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+        finally:
+            await client.close()
         raw_text = msg.content[0].text.strip()
 
         # 3. Parse JSON

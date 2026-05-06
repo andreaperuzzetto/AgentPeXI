@@ -394,7 +394,7 @@ async def test_status_connected_true_when_valid_token(app):
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     mem = _make_memory(db)
     mem.get_oauth_tokens = AsyncMock(return_value={
-        "access_token_encrypted": "tok",
+        "access_token": "tok",
         "expires_at": future,
     })
 

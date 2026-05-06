@@ -128,7 +128,8 @@ class TestDeliverPinRouting:
         mock_api.create_pin = AsyncMock(return_value={"id": "pin_abc123"})
         agent = _make_agent(pinterest_api=mock_api)
 
-        with patch.dict(os.environ, {"PINTEREST_DELIVERY_METHOD": "direct"}):
+        with patch("apps.backend.agents._pinterest._delivery_mixin.settings") as mock_cfg:
+            mock_cfg.PINTEREST_DELIVERY_METHOD = "direct"
             result = await agent.deliver_pin(dict(_PIN_ROW))
 
         assert result == "pin_abc123"
@@ -138,10 +139,10 @@ class TestDeliverPinRouting:
         """When PINTEREST_DELIVERY_METHOD=tailwind, also routes to tailwind."""
         agent = _make_agent()
 
-        with patch.dict(os.environ, {"PINTEREST_DELIVERY_METHOD": "tailwind"}):
-            with patch("apps.backend.agents._pinterest._delivery_mixin.settings") as mock_cfg:
-                mock_cfg.STORAGE_PATH = str(tmp_path)
-                result = await agent.deliver_pin(dict(_PIN_ROW))
+        with patch("apps.backend.agents._pinterest._delivery_mixin.settings") as mock_cfg:
+            mock_cfg.PINTEREST_DELIVERY_METHOD = "tailwind"
+            mock_cfg.STORAGE_PATH = str(tmp_path)
+            result = await agent.deliver_pin(dict(_PIN_ROW))
 
         assert result == "tailwind_queued"
 

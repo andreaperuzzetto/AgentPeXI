@@ -26,7 +26,7 @@ async def cmd_pinterest_status(
 
     # OAuth
     tokens = await deps.pepe.memory.get_oauth_tokens("pinterest")
-    connected = tokens is not None and bool(tokens.get("access_token_encrypted"))
+    connected = tokens is not None and bool(tokens.get("access_token"))
     connected_icon = "🟢" if connected else "🔴"
 
     # Queue counts
@@ -92,7 +92,7 @@ async def cmd_pinterest_auth(
 ) -> None:
     """/pinterest_auth — stato autenticazione OAuth Pinterest."""
     tokens = await deps.pepe.memory.get_oauth_tokens("pinterest")
-    connected = tokens is not None and bool(tokens.get("access_token_encrypted"))
+    connected = tokens is not None and bool(tokens.get("access_token"))
     connected_icon = "🟢" if connected else "🔴"
     connected_label = "Connesso" if connected else "Non connesso"
 

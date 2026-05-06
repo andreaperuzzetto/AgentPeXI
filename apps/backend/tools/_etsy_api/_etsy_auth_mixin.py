@@ -94,11 +94,11 @@ class _AuthMixin:
                     )
                 raise
 
-        return tokens["access_token_encrypted"]
+        return tokens["access_token"]
 
     async def _refresh_token(self, tokens: dict) -> None:
         """Refresh access_token usando refresh_token."""
-        refresh_token = tokens["refresh_token_encrypted"]
+        refresh_token = tokens["refresh_token"]
 
         client = await self._get_client()
         resp = await client.post(

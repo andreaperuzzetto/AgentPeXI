@@ -95,8 +95,8 @@ async def test_get_valid_token_returns_access_token_when_valid():
     memory = MagicMock()
     memory.get_oauth_tokens = AsyncMock(
         return_value={
-            "access_token_encrypted": "my_access_token",
-            "refresh_token_encrypted": "my_refresh_token",
+            "access_token": "my_access_token",
+            "refresh_token": "my_refresh_token",
             "expires_at": future_dt,
             "updated_at": None,
         }
@@ -133,8 +133,8 @@ async def test_check_auth_status_connected_when_valid():
     memory = MagicMock()
     memory.get_oauth_tokens = AsyncMock(
         return_value={
-            "access_token_encrypted": "tok",
-            "refresh_token_encrypted": "rtok",
+            "access_token": "tok",
+            "refresh_token": "rtok",
             "expires_at": future_dt,
             "updated_at": "2026-05-01T10:00:00",
         }
@@ -155,8 +155,8 @@ async def test_check_auth_status_not_connected_when_expired():
     memory = MagicMock()
     memory.get_oauth_tokens = AsyncMock(
         return_value={
-            "access_token_encrypted": "tok",
-            "refresh_token_encrypted": "rtok",
+            "access_token": "tok",
+            "refresh_token": "rtok",
             "expires_at": past_dt,
             "updated_at": None,
         }
@@ -276,8 +276,8 @@ async def test_auth_status_connected_when_valid_token(app):
     mock_memory = MagicMock()
     mock_memory.get_oauth_tokens = AsyncMock(
         return_value={
-            "access_token_encrypted": "tok",
-            "refresh_token_encrypted": "rtok",
+            "access_token": "tok",
+            "refresh_token": "rtok",
             "expires_at": future_dt,
             "updated_at": "2026-05-01T10:00:00",
         }
