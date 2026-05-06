@@ -18,12 +18,7 @@ import { PinterestPanel }      from '../components/etsy/PinterestPanel'
 import { ShopOptimizerCard }   from '../components/etsy/ShopOptimizerCard'
 import { SectionsPanel }       from '../components/etsy/SectionsPanel'
 import { ShopIdentityPanel }   from '../components/etsy/ShopIdentityPanel'
-
-const springEntry = (delay: number) => ({
-  initial:    { opacity: 0, y: 14 } as const,
-  animate:    { opacity: 1, y: 0  } as const,
-  transition: { type: 'spring' as const, stiffness: 280, damping: 30, delay },
-})
+import { springEntry }          from './EtsyView.helpers'
 
 export function EtsyView() {
   return (
