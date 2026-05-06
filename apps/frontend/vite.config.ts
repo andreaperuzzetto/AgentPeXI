@@ -16,5 +16,8 @@ export default defineConfig(({ mode }) => {
         '/ws': { target: 'ws://localhost:8000', ws: true },
       },
     },
+    test: {
+      exclude: ['**/._*', '**/node_modules/**'],
+    },
   }
 })
