@@ -238,6 +238,21 @@ function TableRow({ item, index, isLast }: RowProps) {
             {TIER_META[item.product_tier].label}
           </span>
         ) : null}
+        {item.section_name && (
+          <span style={{
+            fontSize: 9, fontWeight: 600,
+            padding: '1px 5px', borderRadius: 3,
+            background: 'rgba(99,102,241,0.12)', color: '#818CF8',
+            marginLeft: 4, textTransform: 'uppercase' as const,
+            display: 'inline-block',
+            maxWidth: 60,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {item.section_name.length > 9 ? item.section_name.slice(0, 8) + '…' : item.section_name}
+          </span>
+        )}
       </span>
 
       {/* Type / Company */}

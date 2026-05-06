@@ -46,6 +46,7 @@ export function SectionsPanel() {
 
   const activeSectionKey = useStore((s) => s.etsyView.activeSectionKey)
   const setActiveSection = useStore((s) => s.setEtsyActiveSection)
+  const sectionsVersion = useStore((s) => s.etsyView.sectionsVersion)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -67,7 +68,7 @@ export function SectionsPanel() {
     }
     load()
     return () => { controller.abort() }
-  }, [])
+  }, [sectionsVersion])
 
   if (loading) {
     return (

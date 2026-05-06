@@ -135,8 +135,8 @@ function handleMessage(raw: MessageEvent) {
       break
 
     case 'section_mapped':
-      // TODO: implement handler — aggiorna SectionsPanel in A.1
-      console.debug('[WS] section_mapped not yet handled', data)
+      useStore.getState().bumpSectionsVersion()
+      console.debug('[WS] section_mapped → refreshed SectionsPanel', data.niche_key, '→', data.section_name)
       break
 
     case 'approval_flow':

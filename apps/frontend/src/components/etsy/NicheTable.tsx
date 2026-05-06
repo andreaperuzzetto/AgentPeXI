@@ -102,6 +102,21 @@ function ScoreBar({ value, color }: ScoreBarProps) {
   )
 }
 
+/* ── Section badge helper ─────────────────────────────────────────────────── */
+function sectionBadgeColor(name: string | null): { bg: string; fg: string } {
+  if (!name) return { bg: 'rgba(139,141,152,0.12)', fg: '#8B8D98' }
+  const l = name.toLowerCase()
+  if (l.includes('party') || l.includes('celebr') || l.includes('wedding'))
+    return { bg: 'rgba(245,158,11,0.14)', fg: '#F59E0B' }
+  if (l.includes('wellness') || l.includes('self') || l.includes('care'))
+    return { bg: 'rgba(16,185,129,0.14)', fg: '#10B981' }
+  if (l.includes('planner') || l.includes('organ'))
+    return { bg: 'rgba(99,102,241,0.14)', fg: '#818CF8' }
+  if (l.includes('kid') || l.includes('learn') || l.includes('school'))
+    return { bg: 'rgba(236,72,153,0.14)', fg: '#F472B6' }
+  return { bg: 'rgba(139,141,152,0.12)', fg: '#8B8D98' }
+}
+
 /* ── Column config ────────────────────────────────────────────────────────── */
 
 type SortKey = 'entry_score' | 'performance_score' | 'avg_ctr'
@@ -113,8 +128,8 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 ]
 
 /* ── Grid template ────────────────────────────────────────────────────────── */
-// niche(1fr) · audience(180px) · potential(60px) · tier(52px) · score(84px) · trend(22px) · status(72px)
-const GRID = '1fr 180px 60px 52px 84px 22px 72px'
+// niche(1fr) · audience(180px) · potential(60px) · tier(52px) · score(84px) · trend(22px) · status(72px) · section(72px)
+const GRID = '1fr 180px 60px 52px 84px 22px 72px 72px'
 
 /* ── Skeleton row ─────────────────────────────────────────────────────────── */
 function SkeletonRow({ delay = 0 }: { delay?: number }) {
@@ -142,6 +157,7 @@ function SkeletonRow({ delay = 0 }: { delay?: number }) {
       </div>
       <div style={{ height: 9, borderRadius: 3, background: 'rgba(255,255,255,0.04)' }} />
       <div style={{ height: 16, borderRadius: 3, background: 'rgba(255,255,255,0.06)' }} />
+      <div style={{ height: 16, borderRadius: 3, background: 'rgba(255,255,255,0.04)', maxWidth: 50 }} />
     </motion.div>
   )
 }
@@ -239,6 +255,29 @@ function NicheRow({ item, index, isLast }: NicheRowProps) {
         textTransform: 'uppercase',
       }}>
         {status.label}
+      </span>
+
+      {/* Section badge */}
+      <span>
+        {(() => {
+          const { bg, fg } = sectionBadgeColor(item.section_name)
+          if (!item.section_name) return <span style={{ color: '#8B8D98', fontSize: 10 }}>—</span>
+          return (
+            <span className="mono-num" style={{
+              background: bg, color: fg,
+              fontSize: 9, fontWeight: 700,
+              padding: '2px 5px', borderRadius: 3,
+              textTransform: 'uppercase' as const,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              display: 'inline-block',
+              maxWidth: 68,
+              textOverflow: 'ellipsis',
+            }}>
+              {item.section_name.length > 10 ? item.section_name.slice(0, 9) + '…' : item.section_name}
+            </span>
+          )
+        })()}
       </span>
     </motion.div>
   )
@@ -386,6 +425,7 @@ export function NicheTable() {
           { key: 'entry_score', label: 'SCORE'     },
           { key: 'trend',       label: '↕'         },
           { key: 'status',      label: 'STATUS'    },
+          { key: 'section',     label: 'SECTION'   },
         ].map(h => (
           <span
             key={h.key}

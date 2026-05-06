@@ -318,4 +318,5 @@ export interface ProductionQueueItem {
   created_at: string
   updated_at: string
   product_tier: 'tripwire' | 'core' | 'core_premium' | 'bundle' | null
+  section_name: string | null
 }
