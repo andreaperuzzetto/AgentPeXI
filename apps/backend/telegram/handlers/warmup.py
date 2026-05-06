@@ -137,10 +137,7 @@ async def cb_approve_warmup_batch(
             "warmup_candidate", limit=100
         )
         pending = [d for d in warmup_docs if d.get("metadata", {}).get("status") == "pending"]
-        pending.sort(
-            key=lambda d: float(d.get("metadata", {}).get("score") or 0),
-            reverse=True,
-        )
+        pending.sort(key=_safe_score, reverse=True)
         approved_count = 0
         for doc in pending[:8]:
             meta = doc.get("metadata", {})
@@ -335,6 +332,14 @@ async def cmd_warmup_detail(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _safe_score(d: dict) -> float:
+    """Return float score from a ChromaDB doc dict, defaulting to 0.0 on any error."""
+    try:
+        return float(d.get("metadata", {}).get("score") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
 
 def _niche_hash(niche: str, product_type: str) -> str:
     """Generate a stable hash for niche + product_type."""
