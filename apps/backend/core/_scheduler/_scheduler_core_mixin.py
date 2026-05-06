@@ -206,6 +206,16 @@ class _CoreMixin:
             )
             logger.info("Job shop_optimizer registrato (lunedì 07:00)")
 
+        # A.1 — Empty sections check giornaliero 09:00 (sezioni inattive >60gg)
+        self._scheduler.add_job(
+            self._check_empty_sections,
+            trigger=CronTrigger(hour=9, minute=0),
+            id="empty_sections_check",
+            name="Empty sections check (A.1)",
+            replace_existing=True,
+        )
+        logger.info("Job empty_sections_check registrato (09:00 daily)")
+
         # Etsy learning loop domenicale 02:00 — analytics + finance aggiornano i segnali ChromaDB
         # (design_winner, niche_roi_snapshot, finance_directive, finance_insight)
         self._scheduler.add_job(

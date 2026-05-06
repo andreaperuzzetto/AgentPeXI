@@ -253,3 +253,35 @@ class _EtsyMixin:
             await self.etsy_ads_manager.auto_manage_ads()
         except Exception as exc:
             logger.error("etsy_ads_manager job fallito: %s", exc)
+
+    async def _check_empty_sections(self) -> None:
+        """Alert Telegram per sezioni senza listing da più di 60 giorni.
+
+        Schedulato ogni giorno alle 09:00. Sezioni con last_listing_at IS NULL
+        (mai aggiornate) sono incluse — potrebbero avere sezione vuota da sempre.
+        """
+        if self.memory is None:
+            logger.debug("_check_empty_sections: memory non iniettata, skip")
+            return
+
+        from apps.backend.core.etsy_sections_service import EtsySectionsService
+
+        try:
+            db = await self.memory.get_db()
+            ess = EtsySectionsService(db)
+            stale = await ess.get_stale_sections(min_days_inactive=60)
+        except Exception:
+            logger.exception("_check_empty_sections: errore query DB")
+            return
+
+        if not stale:
+            return
+
+        lines = ["⚠️ Sezioni Etsy senza listing da >60gg:"]
+        for s in stale:
+            last = s.get("last_listing_at") or "mai"
+            count = s.get("listing_count", 0)
+            lines.append(f"• {s['section_name']} (ultimo: {last}, totale: {count})")
+        lines.append("\nAzione: pubblica un listing in queste sezioni o verifica la strategia.")
+        await self._notify_telegram("\n".join(lines))
+        logger.info("_check_empty_sections: %d sezioni stale notificate", len(stale))
