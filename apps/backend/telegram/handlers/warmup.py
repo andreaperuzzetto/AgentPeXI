@@ -153,7 +153,6 @@ async def cb_approve_warmup_batch(
             
             # Skip if already queued
             if (niche.lower(), product_type.lower()) in existing_pairs:
-                approved_count += 1
                 continue
             
             try:
@@ -290,10 +289,15 @@ async def cb_reject_warmup_niche(
         if target:
             meta = dict(target.get("metadata", {}))
             meta["status"] = "rejected"
-            await deps.research_agent.memory.store_insight(
-                text=target.get("document", f"warmup candidate: {niche_name}"),
-                metadata=meta,
-            )
+            doc_id = target.get("id")
+            if doc_id:
+                await deps.research_agent.memory.update_insight_metadata(doc_id, meta)
+            else:
+                # Fallback: if no id, store_insight as before (best-effort)
+                await deps.research_agent.memory.store_insight(
+                    text=target.get("document", f"warmup candidate: {niche_name}"),
+                    metadata=meta,
+                )
 
         await context.bot.send_message(
             chat_id=chat_id,

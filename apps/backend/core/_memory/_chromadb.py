@@ -43,6 +43,21 @@ class ChromaDbMixin:
             self._fire_bg(self._bridge_callback(text, "etsy"))
         return doc_id
 
+    async def update_insight_metadata(self, doc_id: str, metadata: dict) -> bool:
+        """Update metadata of an existing ChromaDB document by ID. Returns True on success."""
+        if self._chroma_collection is None:
+            return False
+        try:
+            await asyncio.to_thread(
+                self._chroma_collection.update,
+                ids=[doc_id],
+                metadatas=[metadata],
+            )
+            return True
+        except Exception:
+            logger.warning("update_insight_metadata failed for doc_id=%s", doc_id)
+            return False
+
     async def query_insights(self, query: str, n_results: int = 5) -> list[dict]:
         if self._chroma_collection is None:
             return []
