@@ -82,7 +82,7 @@ class TelegramBot:
     def _register_handlers(self) -> None:
         """Delega la registrazione ai moduli handler di B3."""
         assert self._app is not None
-        from apps.backend.telegram.handlers import autopilot, config, queue, shop_identity, shop_setup, system, warmup
+        from apps.backend.telegram.handlers import autopilot, config, pinterest, queue, shop_identity, shop_setup, system, warmup
 
         autopilot.register(self._app, self._deps, self._chat_filter)
         system.register(self._app, self._deps, self._chat_filter)
@@ -91,6 +91,7 @@ class TelegramBot:
         shop_setup.register(self._app, self._deps, self._chat_filter)
         shop_identity.register(self._app, self._deps, self._chat_filter)
         warmup.register(self._app, self._deps, self._chat_filter)
+        pinterest.register(self._app, self._deps, self._chat_filter)
 
     # ------------------------------------------------------------------
     # Notifiche (callback registrato in Pepe)
