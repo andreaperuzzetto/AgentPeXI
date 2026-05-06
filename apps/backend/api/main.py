@@ -42,6 +42,7 @@ from apps.backend.api.routers import (
     finance,
     memory_routes,
     personal,
+    pinterest,
     screen,
     system,
     wiki,
@@ -290,6 +291,7 @@ app.include_router(wiki.router)
 app.include_router(memory_routes.router)
 app.include_router(etsy.router)
 app.include_router(finance.router)
+app.include_router(pinterest.router)
 
 
 # ------------------------------------------------------------------
