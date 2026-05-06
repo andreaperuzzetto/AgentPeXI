@@ -6,6 +6,7 @@ Non fa chiamate LLM — solo strutturazione di pattern noti.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 # Anchor estetici per sezione calibrati su top-seller Etsy 2026
@@ -63,7 +64,7 @@ class _CompetitiveMixin:
         Usa anchor statici calibrati su top-seller Etsy 2026.
         Non fa chiamate di rete o LLM — completamente mock-safe.
         """
-        anchor = _SECTION_AESTHETIC_ANCHORS.get(section_key, _GENERIC_FALLBACK).copy()
+        anchor = deepcopy(_SECTION_AESTHETIC_ANCHORS.get(section_key, _GENERIC_FALLBACK))
         anchor["section_key"] = section_key
         return anchor
 

@@ -6,7 +6,7 @@ from apps.backend.core.memory import MemoryManager
 
 
 @pytest.fixture
-def mock_memory(tmp_path):
+def mock_memory():
     mem = AsyncMock(spec=MemoryManager)
     return mem
 
