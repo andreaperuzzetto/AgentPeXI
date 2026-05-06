@@ -45,6 +45,19 @@ class NicheItemResponse(BaseModel):
 class NichesResponse(BaseModel):
     niches: list[NicheItemResponse]
 
+
+class SectionItemResponse(BaseModel):
+    section_id: str
+    section_name: str
+    listing_count: int
+    last_listing_at: str | None
+    pending_uncategorized: int
+
+
+class SectionsResponse(BaseModel):
+    sections: list[SectionItemResponse]
+
+
 logger = logging.getLogger("agentpexi.api")
 router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
@@ -171,6 +184,28 @@ async def get_etsy_niches(
         return NichesResponse(niches=niches)
     except Exception:
         logger.exception("get_etsy_niches error")
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+
+
+@router.get("/api/etsy/sections")
+async def get_etsy_sections() -> SectionsResponse:
+    """
+    Ritorna tutte le sezioni Etsy attive con conteggio listing e pending uncategorized.
+
+    pending_uncategorized: numero globale di niche non ancora mappate a una sezione.
+    last_listing_at: timestamp ISO dell'ultimo listing pubblicato in questa sezione.
+    """
+    if not state.memory:
+        return JSONResponse(status_code=503, content={"error": "MemoryManager non inizializzato"})
+    try:
+        from apps.backend.core.etsy_sections_service import EtsySectionsService
+        db = await state.memory.get_db()
+        ess = EtsySectionsService(db)
+        raw = await ess.get_sections_with_uncategorized_counts()
+        sections = [SectionItemResponse(**s) for s in raw]
+        return SectionsResponse(sections=sections)
+    except Exception:
+        logger.exception("get_etsy_sections error")
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
