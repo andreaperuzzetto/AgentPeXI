@@ -8,6 +8,7 @@ from apps.backend.core._scheduler import (
     _WikiMixin,
     _PersonalMixin,
     _EtsyMixin,
+    _PinterestMixin,
     _extract_color_schemes,
 )
 
@@ -20,6 +21,7 @@ class Scheduler(
     _WikiMixin,
     _PersonalMixin,
     _EtsyMixin,
+    _PinterestMixin,
     object,
 ):
     """Gestione job schedulati con APScheduler (AsyncIO)."""

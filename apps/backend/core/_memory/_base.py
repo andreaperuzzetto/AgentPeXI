@@ -405,6 +405,36 @@ CREATE TABLE IF NOT EXISTS uncategorized_niches (
     UNIQUE (niche_key, status)
 );
 CREATE INDEX IF NOT EXISTS idx_un_status ON uncategorized_niches(status, detected_at DESC);
+
+-- Coda pin Pinterest (un record per variante per listing) — B-01
+CREATE TABLE IF NOT EXISTS pinterest_queue (
+    id                    INTEGER  PRIMARY KEY AUTOINCREMENT,
+    production_queue_id   INTEGER  REFERENCES production_queue(id),
+    pin_variant           INTEGER  NOT NULL,
+    image_path            TEXT     NOT NULL,
+    title                 TEXT     NOT NULL,
+    description           TEXT     NOT NULL,
+    board_id              TEXT     NOT NULL,
+    scheduled_at          DATETIME NOT NULL,
+    published_at          DATETIME,
+    pinterest_pin_id      TEXT,
+    status                TEXT     DEFAULT 'pending',
+    delivery_method       TEXT     DEFAULT 'direct',
+    cost_image_gen        FLOAT    DEFAULT 0.0,
+    cost_llm              FLOAT    DEFAULT 0.0,
+    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Board Pinterest configurate (keyword-rich names) — B-01
+CREATE TABLE IF NOT EXISTS pinterest_boards (
+    board_id    TEXT     PRIMARY KEY,
+    board_name  TEXT     NOT NULL,
+    section_key TEXT     NOT NULL,
+    board_type  TEXT     DEFAULT 'section',
+    created_at  DATETIME,
+    pin_count   INTEGER  DEFAULT 0,
+    is_active   BOOLEAN  DEFAULT 1
+);
 """
 
 
@@ -565,6 +595,9 @@ class MemoryBase:
             # poll_listing_performance: listing published_at (filtra per status + data)
             "CREATE INDEX IF NOT EXISTS idx_pq_published ON production_queue(status, published_at)",
             "CREATE INDEX IF NOT EXISTS idx_pq_product_tier ON production_queue(product_tier)",
+            # --- B-01: pinterest_queue indexes ---
+            "CREATE INDEX IF NOT EXISTS idx_pq_status_scheduled ON pinterest_queue(status, scheduled_at)",
+            "CREATE INDEX IF NOT EXISTS idx_pq_board_id ON pinterest_queue(board_id, scheduled_at DESC)",
         ]
         for idx_sql in _new_indexes:
             try:

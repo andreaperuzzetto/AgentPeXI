@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     ETSY_SHOP_ID: str = ""
     ETSY_ENV: str = "sandbox"
 
+    # Pinterest (B.1.0 — stub pronto per Standard Access)
+    PINTEREST_CLIENT_ID: str = ""
+    PINTEREST_CLIENT_SECRET: str = ""
+    PINTEREST_DELIVERY_METHOD: str = "tailwind"  # tailwind | direct
+
     # POD — Print on Demand (Printify) — B5/5.5 scaffolding
     # Disabilitato di default. Attivare solo quando Printify è configurato (Blocco 6+).
     POD_ENABLED: bool = False

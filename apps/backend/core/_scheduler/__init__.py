@@ -7,6 +7,7 @@ from apps.backend.core._scheduler._scheduler_system_mixin import _SystemMixin
 from apps.backend.core._scheduler._scheduler_wiki_mixin import _WikiMixin
 from apps.backend.core._scheduler._scheduler_personal_mixin import _PersonalMixin
 from apps.backend.core._scheduler._scheduler_etsy_mixin import _EtsyMixin
+from apps.backend.core._scheduler._scheduler_pinterest_mixin import _PinterestMixin
 
 __all__ = [
     "_CoreMixin",
@@ -14,5 +15,6 @@ __all__ = [
     "_WikiMixin",
     "_PersonalMixin",
     "_EtsyMixin",
+    "_PinterestMixin",
     "_extract_color_schemes",
 ]

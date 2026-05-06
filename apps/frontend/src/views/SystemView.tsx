@@ -13,52 +13,20 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../store'
 import { GlassCard } from '../components/ui/GlassCard'
 import { AgentCard, AGENT_MODELS } from '../components/AgentCard/AgentCard'
-import type { AgentCardProps, AgentLayer } from '../components/AgentCard/AgentCard'
+import type { AgentCardProps } from '../components/AgentCard/AgentCard'
 import type { AgentStep } from '../types'
+import {
+  BUSINESS_AGENTS,
+  SERVICE_AGENTS,
+  PERSONAL_AGENTS,
+  SERVICE_STATUS_OVERRIDES,
+} from './SystemView.helpers'
+import type { AgentDef } from './SystemView.helpers'
 
 // ── Agent / service definitions ────────────────────────────────────────────────
 
-interface AgentDef {
-  name:             string
-  layer:            AgentLayer
-  isService?:       boolean
-  pipelinePos?:     string
-}
-
-const BUSINESS_AGENTS: AgentDef[] = [
-  { name: 'research',    layer: 'business', pipelinePos: '1 · research' },
-  { name: 'design',      layer: 'business', pipelinePos: '2 · design' },
-  { name: 'publisher',   layer: 'business', pipelinePos: '3 · publisher' },
-  { name: 'analytics',   layer: 'business' },
-  { name: 'finance',     layer: 'business' },
-  { name: 'market_data', layer: 'business' },
-]
-
-const SERVICE_AGENTS: AgentDef[] = [
-  { name: 'autopilot_loop',   layer: 'service', isService: true },
-  { name: 'learning_loop',    layer: 'service', isService: true },
-  { name: 'bundle_strategy',  layer: 'service', isService: true },
-  { name: 'etsy_ads_manager', layer: 'service', isService: true },
-  { name: 'shop_optimizer',   layer: 'service', isService: true },
-  { name: 'finance_tracker',  layer: 'service', isService: true },
-]
-
-const PERSONAL_AGENTS: AgentDef[] = [
-  { name: 'recall',            layer: 'personal' },
-  { name: 'remind',            layer: 'personal' },
-  { name: 'summarize',         layer: 'personal' },
-  { name: 'research_personal', layer: 'personal' },
-  { name: 'watcher',           layer: 'personal' },
-]
-
 // Stable empty array so Zustand selectors don't return a new reference on every call
 const EMPTY_STEPS: AgentStep[] = []
-
-
-const SERVICE_STATUS_OVERRIDES = new Set([
-  'autopilot_loop', 'learning_loop', 'bundle_strategy',
-  'etsy_ads_manager', 'shop_optimizer', 'finance_tracker',
-])
 
 const SPRING_ENTRY = (delay: number) => ({
   initial:    { opacity: 0, y: 10 } as const,

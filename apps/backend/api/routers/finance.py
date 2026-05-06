@@ -72,7 +72,11 @@ async def get_finance_summary(
             for r in rows
         ]
 
-        return {**summary, "by_niche": by_niche}
+        pinterest_costs_eur = round(
+            await state.finance_tracker.pinterest_costs_month(year=_year, month=_month), 4
+        )
+
+        return {**summary, "by_niche": by_niche, "pinterest_costs_eur": pinterest_costs_eur}
     except Exception as exc:
         logger.exception("get_finance_summary error")
         return JSONResponse(status_code=500, content={"error": "Internal server error"})

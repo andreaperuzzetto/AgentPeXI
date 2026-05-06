@@ -75,6 +75,8 @@ class _CoreMixin:
         etsy_ads_manager: Any = None,
         # Blocco 4 / 5.3 — LearningLoop (A/B thumbnail comparison)
         learning_loop: Any = None,
+        # Blocco B — Pinterest Machine
+        pinterest_agent: Any = None,
     ) -> None:
         self.memory = memory
         self._ws_broadcast = ws_broadcaster
@@ -98,6 +100,8 @@ class _CoreMixin:
         self.etsy_ads_manager  = etsy_ads_manager
         # Blocco 4 / 5.3
         self.learning_loop     = learning_loop
+        # Blocco B — Pinterest Machine
+        self.pinterest_agent   = pinterest_agent
         self._scheduler = AsyncIOScheduler()
         # Track job execution state: job_id → {status, last_run}
         self._job_status: dict[str, dict[str, Any]] = {}
@@ -289,6 +293,16 @@ class _CoreMixin:
         )
 
         logger.info("Job predefiniti registrati (ssd_health_check, agent_status_sync)")
+
+        # Blocco B — Pinterest publisher ogni 15 minuti
+        self._scheduler.add_job(
+            self._run_pinterest_publisher,
+            trigger=IntervalTrigger(minutes=15),
+            id="pinterest_publisher",
+            name="Pinterest publisher (B-07)",
+            replace_existing=True,
+        )
+        logger.info("Job pinterest_publisher registrato (ogni 15min)")
 
     # ------------------------------------------------------------------
     # Caricamento job da SQLite
