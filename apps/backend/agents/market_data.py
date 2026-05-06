@@ -23,6 +23,7 @@ from apps.backend.agents._market_data import (
     _SearchMixin,
     _CollectionMixin,
     _CompetitiveMixin,
+    _StyleGuideMixin,
     _MockMixin,
 )
 
@@ -35,6 +36,7 @@ class MarketDataAgent(
     _SearchMixin,
     _CollectionMixin,
     _CompetitiveMixin,
+    _StyleGuideMixin,
     _MockMixin,
     object,
 ):
