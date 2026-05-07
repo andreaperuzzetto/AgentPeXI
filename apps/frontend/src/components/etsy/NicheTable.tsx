@@ -18,6 +18,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence }                    from 'framer-motion'
 import type { NicheItem }                             from '../../types'
 import { useStore }                                   from '../../store'
+import { gapBadgeStyle, gapLabel }                   from './NicheTable.helpers'
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -133,8 +134,8 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 ]
 
 /* ── Grid template ────────────────────────────────────────────────────────── */
-// niche(1fr) · audience(180px) · potential(60px) · tier(52px) · score(84px) · trend(22px) · status(72px) · section(72px)
-const GRID = '1fr 180px 60px 52px 84px 22px 72px 72px'
+// niche(1fr) · audience(180px) · potential(60px) · tier(52px) · score(84px) · trend(22px) · status(72px) · section(72px) · gap(120px)
+const GRID = '1fr 180px 60px 52px 84px 22px 72px 72px 120px'
 
 /* ── Skeleton row ─────────────────────────────────────────────────────────── */
 function SkeletonRow({ delay = 0 }: { delay?: number }) {
@@ -162,7 +163,8 @@ function SkeletonRow({ delay = 0 }: { delay?: number }) {
       </div>
       <div style={{ height: 9, borderRadius: 3, background: 'rgba(255,255,255,0.04)' }} />
       <div style={{ height: 16, borderRadius: 3, background: 'rgba(255,255,255,0.06)' }} />
-      <div style={{ height: 16, borderRadius: 3, background: 'rgba(255,255,255,0.04)', maxWidth: 50 }} />
+      <div style={{ height: 9, borderRadius: 3, background: 'rgba(255,255,255,0.04)', maxWidth: 50 }} />
+      <div style={{ height: 16, borderRadius: 3, background: 'rgba(255,255,255,0.04)', maxWidth: 110 }} />
     </motion.div>
   )
 }
@@ -297,6 +299,32 @@ function NicheRow({ item, index, isLast }: NicheRowProps) {
               textOverflow: 'ellipsis',
             }}>
               {item.section_name.length > 10 ? item.section_name.slice(0, 9) + '…' : item.section_name}
+            </span>
+          )
+        })()}
+      </span>
+
+      {/* Gap to exploit (C.3) */}
+      <span title={item.gap_to_exploit ?? undefined}>
+        {(() => {
+          const label = gapLabel(item.gap_to_exploit ?? null)
+          if (!label) return <span style={{ color: '#8B8D98', fontSize: 10 }}>—</span>
+          const s = gapBadgeStyle(item.gap_to_exploit!)
+          return (
+            <span className="mono-num" style={{
+              background:    s.background,
+              color:         s.color,
+              fontSize:      9,
+              fontWeight:    600,
+              padding:       '2px 5px',
+              borderRadius:  3,
+              whiteSpace:    'nowrap',
+              overflow:      'hidden',
+              display:       'inline-block',
+              maxWidth:      116,
+              textOverflow:  'ellipsis',
+            }}>
+              {label}
             </span>
           )
         })()}
@@ -448,6 +476,7 @@ export function NicheTable() {
           { key: 'trend',       label: '↕'         },
           { key: 'status',      label: 'STATUS'    },
           { key: 'section',     label: 'SECTION'   },
+          { key: 'gap',         label: 'GAP'       },
         ].map(h => (
           <span
             key={h.key}
