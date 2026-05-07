@@ -58,10 +58,45 @@ e `ai_producibility`. Scoring ribilanciato.
 
 | File | Cambiamento |
 |---|---|
+| `apps/backend/agents/_research/utils.py` | **NUOVO** — `_compute_cluster_id()` helper (deve esistere prima di C.1.2, usato in analysis_mixin per bundle buttons) |
 | `apps/backend/agents/_research/prompts.py` | Aggiunge `ladder` dict + `ai_producibility` allo schema; bump a v3 |
 | `apps/backend/agents/_research/analysis_mixin.py` | 3 LLM call sequenziali; `requires_human_review` flag |
 | `apps/backend/agents/_research/scoring_mixin.py` | `expansion_potential` integer check; pesi ribilanciati |
-| `apps/backend/core/_memory/_base.py` | Validazione `product_tier` a livello app (SQLite non supporta ALTER + CHECK) |
+| `apps/backend/core/production_queue.py` | `product_tier` field in dataclass + validazione in `create_item()` |
+| `apps/backend/core/_autopilot/_scheduler_etsy_mixin.py` | Nuovo job 48h re-invia Telegram per bundle `pending_approval` |
+| `apps/backend/api/routers/telegram.py` | Handler `bundle_approve:` + `bundle_decline:` callbacks |
+| `apps/backend/core/production_queue.py` (status) | `pending_human_review` propagato a tutte le query status-filtered |
+| `apps/backend/core/_autopilot/_loop_mixin.py` | `pending_human_review` incluso nel depth check + recovery |
+| `apps/backend/core/_autopilot/_commands_mixin.py` | `pending_human_review` in pending count + cleanup |
+| `apps/backend/api/routers/system.py:133` | `pending_human_review` nel valid-status set |
+| `apps/backend/agents/_research/discovery_mixin.py:276` | `pending_human_review` nella lista status IN |
+| `apps/frontend/src/components/etsy/ProductionPipeline.tsx` | `pending_human_review` in PIPELINE_STATUSES |
+| `apps/frontend/src/components/etsy/NicheTable.tsx` | `statusBadge` case per `pending_human_review` |
+
+### C.1.0 — _research/utils.py: estrazione `_compute_cluster_id` (prerequisito)
+
+**⚠️ Dipendenza C.1→C.2 risolta qui.** `_compute_cluster_id` è usata in C.1.2 (bundle Telegram buttons) ma il piano originale la definiva in C.2.1. Va estratta in utils.py prima di qualsiasi altra implementazione C.1.
+
+**Creare `apps/backend/agents/_research/utils.py`:**
+
+```python
+"""_research/utils.py — shared helpers per Research Agent."""
+from __future__ import annotations
+import hashlib
+
+
+def _compute_cluster_id(niche: str) -> str:
+    """cluster_id deterministico: sha256(niche.lower().strip())[:12].
+
+    Case-insensitive: "ADHD Planner" == "adhd planner" == "Adhd  Planner".
+    """
+    return hashlib.sha256(niche.lower().strip().encode()).hexdigest()[:12]
+```
+
+Importare in `analysis_mixin.py` e `research.py` (C.2):
+```python
+from apps.backend.agents._research.utils import _compute_cluster_id
+```
 
 ### C.1.1 — prompts.py: schema v3
 
@@ -144,7 +179,7 @@ tripwire_analysis = await self._call_llm(
         ),
     }],
     system_prompt=SYSTEM_PROMPT,
-    model=MODEL_HAIKU,
+    model_override=MODEL_HAIKU,  # Bug fix: parametro è model_override, non model
 )
 
 # Step 3c — Bundle blueprint call (usa core output come context)
@@ -161,7 +196,7 @@ bundle_analysis = await self._call_llm(
         ),
     }],
     system_prompt=SYSTEM_PROMPT,
-    model=MODEL_HAIKU,
+    model_override=MODEL_HAIKU,  # Bug fix: parametro è model_override, non model
 )
 ```
 
@@ -242,11 +277,14 @@ except (ValueError, TypeError):
     expansion_int = 0
 
 if expansion_int < 10:
-    # Nicchia scartata — confidence cap a 0.0 per questa nicchia
+    # Nicchia scartata — segna come non-viable, NON azzera completeness
+    # (altrimenti impatta gli altri niches nel batch multi-niche)
+    sample["viable"] = False
     sample_missing.append(
         f"expansion_potential={expansion_int} sotto hard minimum 10 — nicchia scartata"
     )
-    completeness = 0.0
+    # Early return: nessun punteggio aggiuntivo ha senso per una nicchia non-viable
+    return 0.0, sample_missing
 elif expansion_int >= 20:
     completeness += 0.05  # soft target boost
 ```
@@ -302,9 +340,8 @@ e `from_row` (d.get("product_tier") or "core").
 # Handler per bundle_approve:{cluster_id} e bundle_decline:{cluster_id}
 if callback_data.startswith("bundle_approve:"):
     cluster_id = callback_data.split(":", 1)[1]
-    # salva in ChromaDB: tipo "bundle_approval", cluster_id, status="approved"
-    await memory.add_to_chromadb(
-        document=f"Bundle approved for cluster {cluster_id}",
+    await memory.store_insight(
+        f"Bundle approved for cluster {cluster_id}",
         metadata={"type": "bundle_approval", "cluster_id": cluster_id, "status": "approved"},
     )
     await bot.answer_callback_query(callback_query_id, "Bundle approvato ✅")
@@ -312,12 +349,73 @@ if callback_data.startswith("bundle_approve:"):
 
 elif callback_data.startswith("bundle_decline:"):
     cluster_id = callback_data.split(":", 1)[1]
-    await memory.add_to_chromadb(
-        document=f"Bundle declined for cluster {cluster_id}",
+    await memory.store_insight(
+        f"Bundle declined for cluster {cluster_id}",
         metadata={"type": "bundle_approval", "cluster_id": cluster_id, "status": "declined"},
     )
     await bot.answer_callback_query(callback_query_id, "Bundle rifiutato")
     await bot.edit_message_text("❌ Bundle blueprint rifiutato.", ...)
+```
+
+> **Nota**: `memory.store_insight(text, metadata)` è l'API corretta di ChromaDB (vedi `_chromadb.py:29`).
+> Non esiste `add_to_chromadb(document_json=...)` — quel parametro non è standard.
+
+### C.1.6 — Scheduler: 48h bundle reminder
+
+**⚠️ Missing dal piano originale** — la spec menzionava questo reminder ma mancava la lista file.
+
+**In `apps/backend/core/_autopilot/_scheduler_etsy_mixin.py`** (aggiungere job):
+
+```python
+async def _check_bundle_reminders(self) -> None:
+    """Re-invia Telegram per bundle pending_approval non visti da 48h."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+    # Query: bundle (product_tier='bundle') pending_approval non aggiornati da 48h
+    db = await self.memory.get_db()
+    rows = await db.execute_fetchall(
+        """SELECT * FROM production_queue
+           WHERE status = 'pending_approval'
+             AND product_tier = 'bundle'
+             AND updated_at < ?
+           ORDER BY id ASC""",
+        (cutoff.isoformat(),),
+    )
+    for row in rows:
+        cluster_id = row["cluster_id"] or ""
+        niche = row["niche"] or "?"
+        await self._notify_telegram(
+            f"🔔 Reminder: bundle '{niche}' in attesa approvazione da >48h\n"
+            f"cluster_id: {cluster_id}",
+            inline_keyboard=[
+                [
+                    {"text": "✅ Approva", "callback_data": f"bundle_approve:{cluster_id}"},
+                    {"text": "❌ Declina", "callback_data": f"bundle_decline:{cluster_id}"},
+                ]
+            ],
+        )
+```
+
+Chiamare `_check_bundle_reminders()` nel ciclo principale del scheduler (ogni 4-6h è sufficiente; il filtro `updated_at < cutoff` evita duplicati ravvicinati).
+
+### C.1.7 — pending_human_review propagation
+
+**⚠️ Missing dal piano originale** — il nuovo status va aggiunto in tutti i punti del codebase che filtrano per status.
+
+| File | Cosa aggiungere |
+|---|---|
+| `apps/backend/core/_autopilot/_loop_mixin.py:154` | `pending_human_review` nell'elenco status per depth check |
+| `apps/backend/core/_autopilot/_loop_mixin.py:251` | `pending_human_review` in `_on_startup_recovery` |
+| `apps/backend/core/_autopilot/_commands_mixin.py:42,47,59,68` | `pending_human_review` nei cleanup e count |
+| `apps/backend/api/routers/system.py:133` | `"pending_human_review"` nel valid-status set |
+| `apps/backend/agents/_research/discovery_mixin.py:276` | `"pending_human_review"` nella lista status IN |
+| `apps/frontend/src/components/etsy/ProductionPipeline.tsx:36` | `{ key: 'pending_human_review', label: 'Review', color: '#fca5a5' }` |
+| `apps/frontend/src/components/etsy/NicheTable.tsx:58` | case `'pending_human_review'` in `statusBadge()` |
+
+**In `_loop_mixin.py`**, `TARGET_QUEUE_DEPTH` conta solo item in Design+Approval pipeline — `pending_human_review` NON deve incrementare depth (altrimenti blocca pipeline):
+```python
+in_pipeline = await self.queue.get_items_by_status("pending_design")
+# pending_human_review è fuori dalla pipeline automatica — non conta per depth
 ```
 
 ### C.1 — TDD: test file
@@ -327,7 +425,7 @@ elif callback_data.startswith("bundle_decline:"):
 ```python
 # Test 1: prompts.py — RESEARCH_SCHEMA_VERSION = "3"
 # Test 2: prompts.py — SYSTEM_PROMPT contiene "ladder", "tripwire", "bundle_blueprint", "ai_producibility"
-# Test 3: scoring — expansion_potential < 10 → completeness = 0.0 (nicchia scartata)
+# Test 3: scoring — expansion_potential < 10 → niche.viable=False (non impatta altri niches)
 # Test 4: scoring — expansion_potential ≥ 20 → boost +0.05
 # Test 5: scoring — expansion_potential = 15 → no boost, no scarto
 # Test 6: scoring — audience_target presente (>10 chars) → +0.08
@@ -380,7 +478,7 @@ async def _build_cluster(
     self,
     winner_niche: str,
     section_key: str,
-    core_result: AgentResult,
+    core_niche_data: dict,  # Bug fix: era core_result: AgentResult — qui passa il dict diretto
 ) -> list[dict]:
     """
     Costruisce cluster di 5-6 listing da un vincitore:
@@ -392,7 +490,7 @@ async def _build_cluster(
     Restituisce lista di dict pronti per create_cluster_items().
     """
     cluster_id = _compute_cluster_id(winner_niche)
-    core_data = (core_result.output_data or {}).get("niches", [{}])[0]
+    core_data = core_niche_data  # Bug fix: era (core_result.output_data or {}).get("niches", [{}])[0]
     ladder = core_data.get("ladder", {})
 
     cluster_items = []
@@ -477,11 +575,13 @@ async def _generate_core_variations(
     response = await self._call_llm(
         messages=[{"role": "user", "content": prompt}],
         system_prompt=SYSTEM_PROMPT,
-        model=MODEL_HAIKU,
+        model_override=MODEL_HAIKU,  # Bug fix: model_override, non model
     )
 
-    parsed = await self._parse_and_validate(response, SYSTEM_PROMPT)
-    variations = (parsed or {}).get("variations", [])
+    # Bug fix: NON usare _parse_and_validate — verifica obbligatoria "niches" key che qui
+    # non esiste. Usare _try_parse_json (parser generico, già disponibile in research.py).
+    raw = self._try_parse_json(response)
+    variations = (raw or {}).get("variations", [])
 
     # Enforce max 2 per type
     type_counts: dict[str, int] = {}
@@ -509,22 +609,51 @@ winner_niche = output_data.get("winner", {}).get("niche", "")
 winner_section = output_data.get("winner", {}).get("section_key", "")
 
 if winner_confidence >= 0.75 and winner_niche:
-    try:
-        cluster_items = await self._build_cluster(
-            winner_niche=winner_niche,
-            section_key=winner_section,
-            core_result=winner_result,
-        )
-        output_data["cluster"] = cluster_items
-        output_data["cluster_id"] = _compute_cluster_id(winner_niche)
-        await self._notify_telegram(
-            f"🔗 Cluster '{winner_niche}' creato\n"
-            f"📦 {len(cluster_items)} listing · cluster_id: {_compute_cluster_id(winner_niche)}\n"
-            f"🚦 Ordine: tripwire→core→3 variazioni→bundle"
-        )
-    except Exception as _cluster_err:
-        logger.warning("research: _build_cluster fallito per '%s': %s", winner_niche, _cluster_err)
-        # Non blocca il flow — cluster opzionale
+    # Bug fix: winner_result non esiste — recupera il dict niche direttamente da full_niche_data
+    winner_niche_data = next(
+        (n for n in full_niche_data
+         if n.get("name") == winner_niche or n.get("niche") == winner_niche),
+        None,
+    )
+    if winner_niche_data:
+        try:
+            cluster_items = await self._build_cluster(
+                winner_niche=winner_niche,
+                section_key=winner_section,
+                core_niche_data=winner_niche_data,  # Bug fix: era core_result=winner_result
+            )
+            output_data["cluster"] = cluster_items
+            output_data["cluster_id"] = _compute_cluster_id(winner_niche)
+            await self._notify_telegram(
+                f"🔗 Cluster '{winner_niche}' creato\n"
+                f"📦 {len(cluster_items)} listing · cluster_id: {_compute_cluster_id(winner_niche)}\n"
+                f"🚦 Ordine: tripwire→core→3 variazioni→bundle"
+            )
+        except Exception as _cluster_err:
+            logger.warning("research: _build_cluster fallito per '%s': %s", winner_niche, _cluster_err)
+            # Non blocca il flow — cluster opzionale
+```
+
+**Gap minor — `section_key` nel sub_task di `_autonomous_discovery`** (line ~454):
+Il sub_task costruito in `_analyze()` non include `section_key`. Va estratto dal campo `source` del candidate:
+
+```python
+# In _analyze(), nella costruzione sub_task.input_data:
+# Estrai section_key dal source del candidate (formato: "section:party_celebrations")
+_source = candidate.get("source", "")
+_section_key = _source.split(":", 1)[1] if ":" in _source else ""
+
+sub_task = AgentTask(
+    agent_name=self.name,
+    input_data={
+        "niches":            [candidate["niche"]],
+        "product_type_hint": candidate["product_type"],
+        "entry_score":       candidate.get("entry_score", 0.0),
+        "market_context":    candidate.get("market_context", ""),
+        "section_key":       _section_key,  # Gap fix: propagato per C.3
+    },
+    source=task.source,
+)
 ```
 
 **Section 0-viable handling:**
@@ -709,7 +838,12 @@ class _ShopAnalysisMixin:
                         cache_until = cache_until.replace(tzinfo=timezone.utc)
                     if datetime.now(timezone.utc) < cache_until:
                         logger.info("market_data: cache hit competitor_shop_analysis '%s'", niche)
-                        return cached[0].get("document_json")  # ritorna dict salvato
+                        # Bug fix: non esiste document_json — il JSON è serializzato in "document"
+                        import json as _json
+                        try:
+                            return _json.loads(cached[0].get("document", "{}"))
+                        except (ValueError, TypeError):
+                            pass  # cache corrotta, re-fetch
                 except (ValueError, TypeError):
                     pass
 
@@ -721,7 +855,12 @@ class _ShopAnalysisMixin:
         )
         shop_names: list[str] = []
         if research_cached:
-            doc = research_cached[0].get("document_json", {})
+            # Bug fix: nessun document_json — il doc è JSON serializzato in "document"
+            import json as _json
+            try:
+                doc = _json.loads(research_cached[0].get("document", "{}"))
+            except (ValueError, TypeError):
+                doc = {}
             niches_list = doc.get("niches", [])
             for n_data in niches_list:
                 for shop in n_data.get("competition", {}).get("top_sellers", []):
@@ -786,10 +925,13 @@ class _ShopAnalysisMixin:
         }
 
         # Step 5 — Salva in ChromaDB (cache 30gg)
+        # Bug fix: store_insight(text, metadata) — non esiste add_to_chromadb(document_json=...).
+        # Il JSON completo va serializzato come document string; retrieval lo deserializza.
         now = datetime.now(timezone.utc)
         cache_until = now + timedelta(days=30)
-        await self._memory.add_to_chromadb(
-            document=gap_to_exploit or f"Competitor shop analysis for {niche}",
+        import json as _json
+        await self._memory.store_insight(
+            _json.dumps(result),  # document = JSON serializzato come stringa
             metadata={
                 "type": "competitor_shop_analysis",
                 "niche": niche,
@@ -799,7 +941,6 @@ class _ShopAnalysisMixin:
                 "created_at": now.isoformat(),
                 "cache_until": cache_until.isoformat(),
             },
-            document_json=result,  # salva anche JSON completo se MemoryManager supporta
         )
 
         return result
@@ -929,7 +1070,12 @@ async def get_niche_competitor_analysis(
     )
     if not cached:
         return {"available": False, "niche": niche}
-    return {"available": True, "niche": niche, "analysis": cached[0].get("document_json")}
+    import json as _json
+    try:
+        analysis = _json.loads(cached[0].get("document", "{}"))
+    except (ValueError, TypeError):
+        analysis = {}
+    return {"available": True, "niche": niche, "analysis": analysis}
 ```
 
 ### C.3.5 — Frontend: NicheTable.tsx — colonna "Gap"

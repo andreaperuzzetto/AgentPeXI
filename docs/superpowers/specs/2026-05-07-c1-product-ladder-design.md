@@ -53,7 +53,7 @@ _single_niche_research(task, niche, product_tier="core", core_context=None)
 │               solo se ladder.bundle_blueprint presente
 │
 ├── Step 5   — Confidence scoring (pesi v3, vedi sotto)
-├── Step 5b  — expansion_potential gate: < 10 → completeness = 0.0 (silenzioso)
+├── Step 5b  — expansion_potential gate: < 10 → viable=False (silenzioso, non impatta altri niches)
 │
 ├── Step 6   — Confidence gate < 0.60 → _refine_low_confidence_research
 └── Step 7   — Confidence gate < 0.50 → FAILED
@@ -120,6 +120,9 @@ Aggiunge al blocco per-niche (dopo `failure_analysis_applied`):
 | **Totale massimo** | **0.50** | 0.50 | = |
 
 **Cap esistente mantenuto:** `audience_target` assente → `score = min(score, 0.40)`
+
+**Nota Bug #1 — `_call_llm` usa `model_override=`, non `model=`:**
+Tutti i `_call_llm(... model=MODEL_HAIKU)` vanno scritti come `model_override=MODEL_HAIKU` (vedi `_base/_llm_mixin.py:38`).
 
 ---
 
