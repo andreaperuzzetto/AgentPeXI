@@ -660,3 +660,24 @@ class ProductionQueueService:
         )
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    # ------------------------------------------------------------------
+    # C.4 — Cluster helpers
+    # ------------------------------------------------------------------
+
+    async def get_cluster_items(self, cluster_id: str) -> list["ProductionQueueItem"]:
+        """Tutti i listing appartenenti al cluster, ordinati per release_order."""
+        rows = await self._fetchall(
+            "SELECT * FROM production_queue WHERE cluster_id = ? ORDER BY release_order ASC",
+            (cluster_id,),
+        )
+        return [ProductionQueueItem.from_row(r) for r in rows]
+
+    async def set_etsy_listing_url(self, item_id: int, url: str) -> None:
+        """Scrive etsy_listing_url per un item già pubblicato."""
+        now = self._now()
+        async with self._db.execute(
+            "UPDATE production_queue SET etsy_listing_url = ?, updated_at = ? WHERE id = ?",
+            (url, now, item_id),
+        ):
+            await self._db.commit()

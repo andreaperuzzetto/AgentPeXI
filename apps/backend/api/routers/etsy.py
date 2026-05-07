@@ -573,3 +573,17 @@ async def get_niche_competitor_analysis(
     except (ValueError, TypeError):
         analysis = {}
     return {"available": True, "niche": niche, "analysis": analysis}
+
+
+# ---------------------------------------------------------------------------
+# C.4 · Cluster endpoints  (stubs — expanded in c4-api task)
+# ---------------------------------------------------------------------------
+
+async def get_clusters(memory: object = None) -> dict:
+    """Ritorna tutti i cluster attivi con il loro stato."""
+    raise NotImplementedError("c4-api not yet implemented")
+
+
+async def get_cluster_detail(cluster_id: str, memory: object = None) -> dict:
+    """Ritorna dettaglio di un cluster: tutti i listing con stato e cross-ref."""
+    raise NotImplementedError("c4-api not yet implemented")
