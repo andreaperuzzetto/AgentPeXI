@@ -544,3 +544,32 @@ async def etsy_analytics_sync(payload: EtsySyncPayload) -> dict:
 
     return {"ok": True, "listing_id": payload.listing_id}
 
+
+# ---------------------------------------------------------------------------
+# C.3 · Competitor shop analysis
+# ---------------------------------------------------------------------------
+
+def _get_state_memory():
+    return state.memory
+
+
+@router.get("/api/etsy/niches/{niche}/competitor-analysis")
+async def get_niche_competitor_analysis(
+    niche: str,
+    memory: Annotated[object, Depends(_get_state_memory)] = None,
+) -> dict:
+    """Ritorna l'analisi shop-level per una nicchia (da ChromaDB cache)."""
+    if not memory:
+        return {"available": False, "niche": niche}
+    cached = await memory.query_chromadb(
+        query=f"competitor shop analysis {niche}",
+        n_results=1,
+        where={"type": "competitor_shop_analysis", "niche": niche},
+    )
+    if not cached:
+        return {"available": False, "niche": niche}
+    try:
+        analysis = json.loads(cached[0].get("document", "{}"))
+    except (ValueError, TypeError):
+        analysis = {}
+    return {"available": True, "niche": niche, "analysis": analysis}
