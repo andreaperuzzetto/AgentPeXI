@@ -36,6 +36,17 @@ class _ResearchAnalysisMixin:
         schema_ok = meta.get("schema_version") == RESEARCH_SCHEMA_VERSION
         return age_ok and schema_ok
 
+    @staticmethod
+    def _apply_requires_human_review(output: dict) -> None:
+        """Flag niches that need human review (C.1).
+
+        Sets requires_human_review=True when ai_producibility.score == "low",
+        False otherwise. Mutates output in-place.
+        """
+        for niche in output.get("niches", []):
+            score = niche.get("ai_producibility", {}).get("score", "")
+            niche["requires_human_review"] = score == "low"
+
     async def _single_research(self, task: AgentTask, query: str) -> AgentResult:
         """Ricerca generica basata su query libera — allineata a _single_niche_research."""
         # Step 0 — Failure analysis da ChromaDB
