@@ -558,6 +558,10 @@ class MemoryBase:
             "UPDATE production_queue SET status='pending_design' WHERE status='planned'",
             # --- A.0: product_tier preparatory column (full ladder logic in C.1) ---
             "ALTER TABLE production_queue ADD COLUMN product_tier TEXT DEFAULT 'core'",
+            # --- C.2: cluster strategy columns ---
+            "ALTER TABLE production_queue ADD COLUMN cluster_id TEXT",
+            "ALTER TABLE production_queue ADD COLUMN release_order INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE production_queue ADD COLUMN etsy_listing_url TEXT",
         ]
         for migration_sql in _migrations:
             try:
@@ -595,6 +599,8 @@ class MemoryBase:
             # poll_listing_performance: listing published_at (filtra per status + data)
             "CREATE INDEX IF NOT EXISTS idx_pq_published ON production_queue(status, published_at)",
             "CREATE INDEX IF NOT EXISTS idx_pq_product_tier ON production_queue(product_tier)",
+            # --- C.2: cluster strategy indexes ---
+            "CREATE INDEX IF NOT EXISTS idx_pq_cluster_id ON production_queue(cluster_id, release_order) WHERE cluster_id IS NOT NULL",
             # --- B-01: pinterest_queue indexes ---
             "CREATE INDEX IF NOT EXISTS idx_pq_status_scheduled ON pinterest_queue(status, scheduled_at)",
             "CREATE INDEX IF NOT EXISTS idx_pq_board_id ON pinterest_queue(board_id, scheduled_at DESC)",
