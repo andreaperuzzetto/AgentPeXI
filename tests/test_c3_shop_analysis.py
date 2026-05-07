@@ -165,7 +165,7 @@ async def test_few_top_sellers_in_research_triggers_discovery_tavily():
         return {"results": []}
 
     with patch("apps.backend.agents._market_data._shop_analysis_mixin.tavily_tool") as mock_tavily:
-        mock_tavily.search = AsyncMock(side_effect=lambda **kw: fake_tavily_search(**kw))
+        mock_tavily.search = AsyncMock(side_effect=fake_tavily_search)
         await _ShopAnalysisMixin._get_competitor_shop_analysis(agent, niche, "")
 
     discovery_calls = [q for q in tavily_calls if "top sellers" in q]
@@ -189,7 +189,7 @@ async def test_many_top_sellers_in_research_skips_discovery_tavily():
         return {"results": []}
 
     with patch("apps.backend.agents._market_data._shop_analysis_mixin.tavily_tool") as mock_tavily:
-        mock_tavily.search = AsyncMock(side_effect=lambda **kw: fake_tavily_search(**kw))
+        mock_tavily.search = AsyncMock(side_effect=fake_tavily_search)
         await _ShopAnalysisMixin._get_competitor_shop_analysis(agent, niche, "")
 
     discovery_calls = [q for q in tavily_calls if "top sellers" in q]

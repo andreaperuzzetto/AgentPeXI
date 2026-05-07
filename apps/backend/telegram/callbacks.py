@@ -15,6 +15,8 @@ register(app, deps, chat_filter).
 
 from __future__ import annotations
 
+import re
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
@@ -72,3 +74,37 @@ def build_ads_keyboard(enabled: bool) -> InlineKeyboardMarkup:
         toggle_btn = InlineKeyboardButton("✅ Abilita Ads", callback_data="ads_confirm:on")
 
     return InlineKeyboardMarkup([[toggle_btn]])
+
+
+# ---------------------------------------------------------------------------
+# Bundle blueprint approval (C.1)
+# ---------------------------------------------------------------------------
+
+_BUNDLE_CB_RE = re.compile(r"^bundle_(approve|decline):([a-f0-9]{12})$")
+
+
+def build_bundle_keyboard(cluster_id: str) -> InlineKeyboardMarkup:
+    """[✅ Approva Bundle] [❌ Declina] per un bundle blueprint della cluster.
+
+    Callback data:
+      "bundle_approve:{cluster_id}"  → ChromaDB: type=bundle_approval, status=approved
+      "bundle_decline:{cluster_id}"  → ChromaDB: type=bundle_approval, status=declined
+    """
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Approva Bundle", callback_data=f"bundle_approve:{cluster_id}"),
+        InlineKeyboardButton("❌ Declina",        callback_data=f"bundle_decline:{cluster_id}"),
+    ]])
+
+
+def _parse_bundle_callback(data: str) -> tuple[str, str] | None:
+    """Parse bundle callback_data. Returns (action, cluster_id) or None if invalid.
+
+    Valid formats:
+      "bundle_approve:<12-hex-chars>"
+      "bundle_decline:<12-hex-chars>"
+    """
+    m = _BUNDLE_CB_RE.match(data)
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
