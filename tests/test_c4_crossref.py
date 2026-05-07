@@ -504,3 +504,86 @@ async def test_get_cluster_detail_404_when_not_found():
             await get_cluster_detail(cluster_id="nonexistent", memory=mock_memory)
 
     assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Test 12: PublisherAgent assembles _CrossrefMixin in MRO
+# ---------------------------------------------------------------------------
+
+def test_publisher_agent_assembles_crossref_mixin():
+    """PublisherAgent deve avere _CrossrefMixin nel suo MRO (c4-publisher task)."""
+    from apps.backend.agents.publisher import PublisherAgent
+
+    assert _CrossrefMixin in PublisherAgent.__mro__, (
+        "_CrossrefMixin non trovato nel MRO di PublisherAgent — "
+        "aggiungilo come primo mixin in publisher.py"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 13: _publish_single fires crossref trigger when cluster_id is set
+# ---------------------------------------------------------------------------
+
+def _make_publish_stub_for_crossref(tmp_path):
+    """Stub publisher minimo per testare il trigger C.4 in _publish_single."""
+    pub = MagicMock()
+    pub.etsy_api = MagicMock()
+    pub.etsy_api.mock_mode = True
+    pub.memory = MagicMock()
+    pub.memory.add_etsy_listing = AsyncMock()
+    pub.memory.get_db = AsyncMock(return_value=MagicMock())
+    pub._generate_mock_thumbnail = AsyncMock(return_value=(True, [str(tmp_path / "thumb.jpg")]))
+    pub._check_failure_history = AsyncMock(return_value={})
+    pub._generate_seo = AsyncMock(return_value={
+        "title": "Test Printable",
+        "description": "A lovely printable",
+        "tags": ["printable", "digital"],
+        "seo_validated": True,
+    })
+    pub._resolve_price = MagicMock(return_value=4.99)
+    pub._resolve_section_id = AsyncMock(return_value=None)
+    pub._dispatch_publish = AsyncMock(return_value=("listing_c4_test", 2))
+    pub._notify_telegram = AsyncMock()
+    pub._get_when_made = MagicMock(return_value="made_to_order")
+    pub._pinterest_agent = None
+    pub._update_cluster_crossrefs = AsyncMock()
+    return pub
+
+
+@pytest.mark.asyncio
+async def test_publish_single_fires_crossref_trigger_when_cluster_id_set(tmp_path):
+    """_publish_single deve chiamare _update_cluster_crossrefs quando pq_task_id è
+    impostato e l'item ha cluster_id non None."""
+    from apps.backend.agents._publisher._publish_mixin import _PublishMixin
+
+    pub = _make_publish_stub_for_crossref(tmp_path)
+
+    fake_item = MagicMock()
+    fake_item.cluster_id = "clusterA"
+
+    pdf = tmp_path / "test_product.pdf"
+    pdf.write_bytes(b"fake pdf content" * 100)
+
+    with patch(
+        "apps.backend.agents._publisher._publish_mixin._PQService",
+        create=True,
+    ) as MockPQ:
+        mock_pq = MagicMock()
+        mock_pq.get_item_by_task_id = AsyncMock(return_value=fake_item)
+        MockPQ.return_value = mock_pq
+
+        await _PublishMixin._publish_single(
+            pub,
+            file_path=str(pdf),
+            product_type="printable_pdf",
+            template="planner_basic",
+            niche="wellness_planner",
+            color_scheme="pastel_green",
+            keywords=["planner", "digital"],
+            size="A4",
+            ab_variant="A",
+            pq_task_id="task_abc",
+            research_data={},
+        )
+
+    pub._update_cluster_crossrefs.assert_awaited_once()

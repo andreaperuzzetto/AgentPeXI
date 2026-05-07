@@ -15,6 +15,7 @@ import aiohttp
 from apps.backend.agents._publisher.constants import TAXONOMY_IDS
 from apps.backend.core.config import settings
 from apps.backend.core.etsy_sections_service import EtsySectionsService
+from apps.backend.core.production_queue import ProductionQueueService as _PQService
 
 logger = logging.getLogger("agentpexi.publisher")
 
@@ -220,6 +221,21 @@ class _PublishMixin:
                     "description": description,
                 },
             )))
+
+        # C.4 — cross-reference update
+        if listing_id and pq_task_id:
+            try:
+                _pq = _PQService(await self.memory.get_db())
+                pq_item = await _pq.get_item_by_task_id(pq_task_id)
+                if pq_item and pq_item.cluster_id:
+                    await self._update_cluster_crossrefs(
+                        cluster_id=pq_item.cluster_id,
+                        new_listing_id=listing_id,
+                        new_listing_title=title,
+                        new_listing_url=f"etsy.com/listing/{listing_id}",
+                    )
+            except Exception as _xref_err:
+                logger.warning("publisher: cross-ref update fallito: %s", _xref_err)
 
         return result
 

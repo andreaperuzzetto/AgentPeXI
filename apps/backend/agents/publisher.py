@@ -8,6 +8,7 @@ from typing import Any, Callable, ClassVar, Coroutine
 
 import anthropic
 
+from apps.backend.agents._publisher._crossref_mixin import _CrossrefMixin
 from apps.backend.agents._publisher._publish_mixin import _PublishMixin
 from apps.backend.agents._publisher._resolve_mixin import _ResolveMixin
 from apps.backend.agents._publisher._seo_mixin import _SeoMixin
@@ -26,7 +27,7 @@ logger = logging.getLogger("agentpexi.publisher")
 __all__ = ["PublisherAgent", "TAXONOMY_IDS", "AB_PRICES"]
 
 
-class PublisherAgent(_PublishMixin, _ResolveMixin, _ThumbnailMixin, _SeoMixin, AgentBase):
+class PublisherAgent(_CrossrefMixin, _PublishMixin, _ResolveMixin, _ThumbnailMixin, _SeoMixin, AgentBase):
     """Pubblica file generati dal Design Agent su Etsy come draft listing."""
 
     card: ClassVar[AgentCard] = AgentCard(
