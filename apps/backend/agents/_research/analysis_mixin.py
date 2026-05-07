@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from apps.backend.agents._research.prompts import RESEARCH_SCHEMA_VERSION, SYSTEM_PROMPT
+from apps.backend.agents.market_data import MarketDataAgent
 from apps.backend.core.config import MODEL_SONNET
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.tools import tavily as tavily_tool
@@ -493,6 +494,28 @@ class _ResearchAnalysisMixin:
                     "etsy_tags_13": json.dumps(first_viable.get("etsy_tags_13", [])[:13]),
                 },
             )
+
+        # Step 6c — Competitor shop analysis (C.3) — enrichment opzionale
+        try:
+            section_key = (task.input_data or {}).get("section_key", "")
+            market_agent = MarketDataAgent(
+                memory=self.memory,
+                mock_mode=getattr(self.memory, "mock_mode", False),
+            )
+            shop_analysis = await market_agent._get_competitor_shop_analysis(niche, section_key)
+            if shop_analysis:
+                output["competitor_shop_analysis"] = shop_analysis
+                for n_data in output.get("niches", []):
+                    if n_data.get("viable"):
+                        shop_gap = shop_analysis.get("gap_summary", "")
+                        if shop_gap:
+                            existing_gap = n_data.get("competition", {}).get("gap_to_exploit", "")
+                            n_data.setdefault("competition", {})["gap_to_exploit"] = (
+                                f"{existing_gap} [shop-level: {shop_gap}]"
+                            ).strip()
+                        break
+        except Exception as _c3_err:
+            logger.warning("research[%s]: C.3 shop analysis fallita: %s", niche, _c3_err)
 
         return AgentResult(
             task_id=task.task_id,

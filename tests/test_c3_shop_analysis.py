@@ -340,6 +340,9 @@ async def test_single_niche_research_includes_competitor_shop_analysis():
         "data_quality_warning": "",
     })
 
+    import json as _json
+    FAKE_OUTPUT = _json.loads(FAKE_LLM_OUTPUT)
+
     agent = MagicMock()
     agent.name = "research"
     agent.model = "claude-haiku"
@@ -349,6 +352,8 @@ async def test_single_niche_research_includes_competitor_shop_analysis():
     agent.memory.store_insight = AsyncMock(return_value="fake-id")
     agent._task_id = "test"
     agent._call_llm = AsyncMock(return_value=FAKE_LLM_OUTPUT)
+    agent._parse_and_validate = AsyncMock(return_value=FAKE_OUTPUT)
+    agent._enforce_failure_constraints = MagicMock(return_value=(FAKE_OUTPUT, []))
     agent._log_step = AsyncMock()
     agent._call_tool = AsyncMock(return_value={})
     agent._read_finance_context = AsyncMock(return_value="")
