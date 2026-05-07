@@ -633,6 +633,13 @@ class _ResearchDiscoveryMixin:
             f"💡 {synthesis['winner'].get('why_winner', '')[:120]}"
         )
 
+        # C.2 — trigger cluster build when winner confidence is high enough
+        _winner_confidence = synthesis["winner"].get("confidence", 0.0)
+        if _winner_confidence >= 0.75:
+            _src = (original_entry or {}).get("_candidate_source", "") if original_entry else ""
+            _section_key = _src.split(":", 1)[1] if _src.startswith("section:") else ""
+            await self._build_cluster(synthesis["winner"]["niche"], _section_key)
+
         # Persisti la decisione in ChromaDB — il learning loop domenicale può
         # correlare questa scelta con i dati Analytics/Finance successivi e
         # restituire un feedback sulla qualità della decisione stessa.
@@ -738,6 +745,10 @@ class _ResearchDiscoveryMixin:
         All 6 items share the same cluster_id (sha256[:12] of niche).
         The bundle item triggers a Telegram notification via _notify_bundle_pending.
         """
+        if not getattr(self, "queue", None):
+            logger.warning("_build_cluster: queue non configurato — skip")
+            return
+
         from apps.backend.agents._research.utils import _compute_cluster_id
 
         cluster_id = _compute_cluster_id(winner_niche)
