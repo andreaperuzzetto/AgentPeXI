@@ -86,6 +86,9 @@ class ProductionQueueItem:
     ads_activated: int           # 🔴 [video] 1 se Etsy Ads attivate
     ads_paused: int              # [FE-0.1] 1 se campagna ads messa in pausa
 
+    # product ladder (C.1)
+    product_tier: str             # tripwire | core | core_premium | bundle
+
     # meta
     loop_run_id: str | None
     created_at: float
@@ -124,6 +127,7 @@ class ProductionQueueItem:
             listing_fee_usd=d.get("listing_fee_usd") or 0.20,
             ads_activated=d.get("ads_activated") or 0,
             ads_paused=d.get("ads_paused") or 0,
+            product_tier=d.get("product_tier", "core"),
             loop_run_id=d.get("loop_run_id"),
             created_at=_to_float(d.get("created_at")),
             updated_at=_to_float(d.get("updated_at")),
@@ -209,8 +213,12 @@ class ProductionQueueService:
         keywords: list[str],
         entry_score: float = 0.0,
         loop_run_id: str | None = None,
+        product_tier: str = "core",
     ) -> int:
         """Crea un nuovo item in pending_design. Restituisce l'id."""
+        _VALID_TIERS = {"tripwire", "core", "core_premium", "bundle"}
+        if product_tier not in _VALID_TIERS:
+            raise ValueError(f"Invalid product_tier '{product_tier}'. Must be one of {sorted(_VALID_TIERS)}")
         now = self._now()
         # task_id è UNIQUE NOT NULL nel vecchio schema — generiamo un UUID
         task_id = str(uuid.uuid4())
@@ -218,11 +226,11 @@ class ProductionQueueService:
             """
             INSERT INTO production_queue
                 (task_id, niche, product_type, keywords, entry_score,
-                 status, listing_fee_usd, loop_run_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'pending_design', 0.20, ?, ?, ?)
+                 status, listing_fee_usd, product_tier, loop_run_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'pending_design', 0.20, ?, ?, ?, ?)
             """,
             (task_id, niche, product_type, _dumps_list(keywords), entry_score,
-             loop_run_id, now, now),
+             product_tier, loop_run_id, now, now),
         )
         await self._db.commit()
         return cursor.lastrowid  # type: ignore[return-value]

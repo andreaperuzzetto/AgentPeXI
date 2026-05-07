@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS production_queue (
     loop_run_id TEXT,
     ab_price_variant TEXT,
     file_paths TEXT,
+    product_tier TEXT DEFAULT 'core',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
