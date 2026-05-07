@@ -116,7 +116,7 @@ Aggiunge al blocco per-niche (dopo `failure_analysis_applied`):
 | seasonality (peak_months + timing) | **0.02** | 0.05 | -0.03 |
 | audience_target presente (>10 chars) | **+0.08** | (solo cap) | nuovo |
 | expansion_potential ≥ 20 | **+0.05** | — | nuovo boost |
-| expansion_potential < 10 | → 0.0 | — | nuovo gate |
+| expansion_potential < 10 | → `viable=False` (discard) | — | nuovo gate |
 | **Totale massimo** | **0.50** | 0.50 | = |
 
 **Cap esistente mantenuto:** `audience_target` assente → `score = min(score, 0.40)`
@@ -214,7 +214,7 @@ if product_tier not in _VALID_PRODUCT_TIERS:
 test_c1_product_ladder.py — 15 test minimi:
 1.  RESEARCH_SCHEMA_VERSION == "3"
 2.  SYSTEM_PROMPT contiene "ladder", "tripwire", "bundle_blueprint", "ai_producibility"
-3.  expansion_potential < 10 → completeness = 0.0
+3.  expansion_potential < 10 → niche.viable = False (discard, no impact on other niches)
 4.  expansion_potential ≥ 20 → boost +0.05
 5.  expansion_potential = 15 → no boost, no scarto
 6.  expansion_potential = None → discard silenzioso
