@@ -10,6 +10,9 @@ Implementation split across apps/backend/agents/_market_data/:
                                         get_top_candidates)
   _collection_mixin.py — _CollectionMixin  (collect_tier1, collect_tier2,
                                             collect_full, _real_tier1, _real_tier2)
+  _shop_analysis_mixin.py — _ShopAnalysisMixin  (_get_competitor_shop_analysis,
+                                                  _call_haiku_shop_analysis,
+                                                  _synthesize_shop_gaps)
 """
 from __future__ import annotations
 
@@ -24,6 +27,7 @@ from apps.backend.agents._market_data import (
     _CollectionMixin,
     _CompetitiveMixin,
     _StyleGuideMixin,
+    _ShopAnalysisMixin,
     _MockMixin,
 )
 
@@ -37,6 +41,7 @@ class MarketDataAgent(
     _CollectionMixin,
     _CompetitiveMixin,
     _StyleGuideMixin,
+    _ShopAnalysisMixin,
     _MockMixin,
     object,
 ):

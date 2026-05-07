@@ -439,3 +439,21 @@ async def test_mock_mode_returns_none_without_tavily():
 
     assert result is None
     mock_tavily.search.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test 13 — c3-market-data: MarketDataAgent assembles _ShopAnalysisMixin
+# ---------------------------------------------------------------------------
+
+def test_market_data_agent_assembles_shop_analysis_mixin():
+    """MarketDataAgent deve includere _ShopAnalysisMixin nel suo MRO
+    ed esporre _get_competitor_shop_analysis come metodo di istanza."""
+    from apps.backend.agents.market_data import MarketDataAgent
+    from apps.backend.agents._market_data import _ShopAnalysisMixin
+
+    assert issubclass(MarketDataAgent, _ShopAnalysisMixin), (
+        "MarketDataAgent non include _ShopAnalysisMixin nel MRO"
+    )
+    assert hasattr(MarketDataAgent, "_get_competitor_shop_analysis"), (
+        "_get_competitor_shop_analysis non presente su MarketDataAgent"
+    )
