@@ -45,9 +45,10 @@ class ResearchAgent(
         pipeline_position=1,
     )
 
-    def __init__(self, *, telegram_broadcaster: Callable | None = None, **kwargs: Any) -> None:
+    def __init__(self, *, telegram_broadcaster: Callable | None = None, telegram_markup_sender: Callable | None = None, **kwargs: Any) -> None:
         super().__init__(name="research", model=MODEL_HAIKU, **kwargs)
         self._telegram_broadcast = telegram_broadcaster
+        self._telegram_markup_sender = telegram_markup_sender
         self._entry_scorer = None   # lazy init — EntryPointScoring (step 1.5)
 
     async def _notify_telegram(self, message: str) -> None:

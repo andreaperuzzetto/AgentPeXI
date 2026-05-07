@@ -47,6 +47,36 @@ class _ResearchAnalysisMixin:
             score = niche.get("ai_producibility", {}).get("score", "")
             niche["requires_human_review"] = score == "low"
 
+    async def _notify_bundle_pending(
+        self, niche_name: str, bundle: dict, cluster_id: str
+    ) -> None:
+        """Send Telegram message with bundle inline keyboard (C.1).
+
+        Gracefully no-ops when _telegram_markup_sender is not configured.
+        Swallows all sender exceptions to avoid crashing the research pipeline.
+        """
+        sender = getattr(self, "_telegram_markup_sender", None)
+        if sender is None:
+            return
+
+        from apps.backend.telegram.callbacks import build_bundle_keyboard
+
+        title = bundle.get("title", niche_name)
+        price = bundle.get("price_usd", "?")
+        items = bundle.get("items_included", [])
+        items_str = ", ".join(str(i) for i in items[:3]) if items else "—"
+        msg = (
+            f"📦 Bundle blueprint pronto: '{niche_name}'\n"
+            f"Bundle: {title} @ ${price}\n"
+            f"Items: {items_str}\n"
+            f"Approvare il bundle blueprint?"
+        )
+        keyboard = build_bundle_keyboard(cluster_id)
+        try:
+            await sender(msg, keyboard)
+        except Exception:
+            logger.warning("_notify_bundle_pending: invio fallito", exc_info=True)
+
     async def _single_research(self, task: AgentTask, query: str) -> AgentResult:
         """Ricerca generica basata su query libera — allineata a _single_niche_research."""
         # Step 0 — Failure analysis da ChromaDB
