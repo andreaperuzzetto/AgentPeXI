@@ -275,6 +275,7 @@ def _make_research_agent():
     agent._llm_call_count = 0
     agent._tool_call_count = 0
     agent._total_cost = 0.0
+    agent.queue = None  # not wired in unit tests — _build_cluster guards against None
     return agent
 
 

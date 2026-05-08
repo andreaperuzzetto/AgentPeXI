@@ -4,10 +4,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from apps.backend.core.config import MODEL_SONNET
+from apps.backend.core.config import MODEL_HAIKU, MODEL_SONNET
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.tools import tavily as tavily_tool
 from apps.backend.tools.trends import get_google_trends
@@ -632,6 +633,13 @@ class _ResearchDiscoveryMixin:
             f"💡 {synthesis['winner'].get('why_winner', '')[:120]}"
         )
 
+        # C.2 — trigger cluster build when winner confidence is high enough
+        _winner_confidence = synthesis["winner"].get("confidence", 0.0)
+        if _winner_confidence >= 0.75:
+            _src = (original_entry or {}).get("_candidate_source", "") if original_entry else ""
+            _section_key = _src.split(":", 1)[1] if _src.startswith("section:") else ""
+            await self._build_cluster(synthesis["winner"]["niche"], _section_key)
+
         # Persisti la decisione in ChromaDB — il learning loop domenicale può
         # correlare questa scelta con i dati Analytics/Finance successivi e
         # restituire un feedback sulla qualità della decisione stessa.
@@ -677,4 +685,125 @@ class _ResearchDiscoveryMixin:
                 "failed_candidates": failed,
             },
             reply_voice=f"Opportunità trovata: {synthesis['winner']['niche']}.",
+        )
+
+    # ------------------------------------------------------------------
+    # C.2 — Cluster strategy helpers
+    # ------------------------------------------------------------------
+
+    async def _generate_core_variations(
+        self, niche: str, core_spec: dict, n: int = 3
+    ) -> list[dict]:
+        """Generate n product variations for the core niche (C.2).
+
+        Calls the LLM and parses {"variations": [...]} response.
+        Uses a dedicated JSON parser — NOT _parse_and_validate —
+        because the schema is {"variations": [...]} not {"niches": [...]}.
+
+        Each variation dict must contain:
+            variation_type (STYLE|AUDIENCE|FORMAT), title_hint,
+            etsy_tags_13_delta, audience_target, design_direction
+        """
+        prompt = (
+            f"You are an Etsy product strategist. For the niche '{niche}', "
+            f"generate exactly {n} product variations based on this core research:\n\n"
+            f"{json.dumps(core_spec, indent=2, default=str)}\n\n"
+            f"Return ONLY a JSON object with this exact shape:\n"
+            f'{{"variations": [{{"variation_type": "STYLE|AUDIENCE|FORMAT", '
+            f'"title_hint": "...", "etsy_tags_13_delta": ["tag1","tag2"], '
+            f'"audience_target": "...", "design_direction": "..."}}]}}\n\n'
+            f"Rules:\n"
+            f"- Exactly {n} variations.\n"
+            f"- variation_type must be one of: STYLE, AUDIENCE, FORMAT.\n"
+            f"- No more than 2 variations of the same type.\n"
+            f"- etsy_tags_13_delta: 2-5 delta tags that differentiate this variant.\n"
+            f"- No markdown, no explanation — raw JSON only."
+        )
+        raw = await self._call_llm(
+            messages=[{"role": "user", "content": prompt}],
+            model_override=MODEL_HAIKU,
+        )
+        try:
+            parsed = json.loads(raw)
+            variations = parsed.get("variations", [])
+        except (json.JSONDecodeError, AttributeError):
+            logger.warning("_generate_core_variations: JSON parse failed for niche '%s'", niche)
+            variations = []
+        return variations[:n]
+
+    async def _build_cluster(self, winner_niche: str, section_key: str) -> None:
+        """Build a 6-item product cluster for a winning niche (C.2).
+
+        Cluster layout (release_order / product_tier / status):
+            1 tripwire       planned
+            2 core           planned
+            3 core           planned
+            4 core           planned
+            5 core_premium   planned
+            6 bundle         pending_approval  ← sent to Telegram for approval
+
+        All 6 items share the same cluster_id (sha256[:12] of niche).
+        The bundle item triggers a Telegram notification via _notify_bundle_pending.
+        """
+        if not getattr(self, "queue", None):
+            logger.warning("_build_cluster: queue non configurato — skip")
+            return
+
+        from apps.backend.agents._research.utils import _compute_cluster_id
+
+        cluster_id = _compute_cluster_id(winner_niche)
+
+        # --- 3 LLM research calls ---
+        _base_task = AgentTask(
+            agent_name=getattr(self, "name", "research"),
+            input_data={"niche": winner_niche, "section_key": section_key},
+        )
+        core_result = await self._single_niche_research(_base_task, winner_niche)
+        core_output = (core_result.output_data or {}) if core_result.status == TaskStatus.COMPLETED else {}
+        core_spec = core_output
+
+        _ctx_task = AgentTask(
+            agent_name=getattr(self, "name", "research"),
+            input_data={"niche": winner_niche, "core_context": core_spec, "section_key": section_key},
+        )
+        await self._single_niche_research(_ctx_task, winner_niche)  # tripwire context
+        await self._single_niche_research(_ctx_task, winner_niche)  # bundle context
+
+        # --- 3 core variations ---
+        variations = await self._generate_core_variations(winner_niche, core_spec, n=3)
+
+        # --- Extract metadata from core research ---
+        niches_list = core_spec.get("niches", [])
+        winner_data = niches_list[0] if niches_list else {}
+        keywords = winner_data.get("etsy_tags_13", [])
+        product_type = winner_data.get("product_type", "printable_pdf")
+        ladder = core_spec.get("ladder", {})
+        bundle_blueprint = ladder.get("bundle_blueprint", {})
+
+        # --- Insert 6 cluster items ---
+        _cluster_items = [
+            (1, "tripwire",     "planned"),
+            (2, "core",         "planned"),
+            (3, "core",         "planned"),
+            (4, "core",         "planned"),
+            (5, "core_premium", "planned"),
+            (6, "bundle",       "pending_approval"),
+        ]
+        for release_order, product_tier, status in _cluster_items:
+            await self.queue.create_item(
+                winner_niche,
+                product_type,
+                keywords,
+                product_tier=product_tier,
+                cluster_id=cluster_id,
+                release_order=release_order,
+                status=status,
+            )
+
+        # --- Notify bundle pending via Telegram ---
+        await self._notify_bundle_pending(winner_niche, bundle_blueprint, cluster_id)
+
+        logger.info(
+            "_build_cluster: inserted 6 items for niche='%s' cluster_id='%s'",
+            winner_niche, cluster_id,
         )

@@ -120,6 +120,8 @@ async def test_trigger_fires_when_agent_set_and_publish_succeeds(tmp_path):
         )
 
     mock_create_task.assert_called_once()
+    # Drain the coroutine passed to create_task to avoid "never awaited" leak
+    await mock_create_task.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -260,9 +262,13 @@ async def test_trigger_task_id_contains_listing_id(tmp_path):
 
     pdf = _make_pdf_file(tmp_path)
 
+    created_task = None
+
     def _capture_and_run(coro):
+        nonlocal created_task
         loop = asyncio.get_event_loop()
-        return loop.create_task(coro)
+        created_task = loop.create_task(coro)
+        return created_task
 
     with patch("asyncio.create_task", side_effect=_capture_and_run):
         await _PublishMixin._publish_single(
@@ -279,7 +285,9 @@ async def test_trigger_task_id_contains_listing_id(tmp_path):
             research_data={},
         )
 
-    await asyncio.sleep(0)
+    # Drain the fire-and-forget task to avoid leaked coroutine warning
+    if created_task is not None:
+        await created_task
 
     call_args = mock_pinterest_agent.run.call_args
     task_arg: AgentTask = call_args[0][0]

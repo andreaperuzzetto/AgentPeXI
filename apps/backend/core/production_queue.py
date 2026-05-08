@@ -86,6 +86,14 @@ class ProductionQueueItem:
     ads_activated: int           # 🔴 [video] 1 se Etsy Ads attivate
     ads_paused: int              # [FE-0.1] 1 se campagna ads messa in pausa
 
+    # product ladder (C.1)
+    product_tier: str             # tripwire | core | core_premium | bundle
+
+    # cluster strategy (C.2)
+    cluster_id: str | None        # sha256[:12] shared by all 6 items in a cluster
+    release_order: int            # 1-6 within cluster; 0 = standalone (pre-C.2)
+    etsy_listing_url: str | None  # filled post-publish
+
     # meta
     loop_run_id: str | None
     created_at: float
@@ -124,6 +132,10 @@ class ProductionQueueItem:
             listing_fee_usd=d.get("listing_fee_usd") or 0.20,
             ads_activated=d.get("ads_activated") or 0,
             ads_paused=d.get("ads_paused") or 0,
+            product_tier=d.get("product_tier", "core"),
+            cluster_id=d.get("cluster_id"),
+            release_order=d.get("release_order") or 0,
+            etsy_listing_url=d.get("etsy_listing_url"),
             loop_run_id=d.get("loop_run_id"),
             created_at=_to_float(d.get("created_at")),
             updated_at=_to_float(d.get("updated_at")),
@@ -209,19 +221,34 @@ class ProductionQueueService:
         keywords: list[str],
         entry_score: float = 0.0,
         loop_run_id: str | None = None,
+        product_tier: str = "core",
+        cluster_id: str | None = None,
+        release_order: int = 0,
+        status: str = "pending_design",
     ) -> int:
-        """Crea un nuovo item in pending_design. Restituisce l'id."""
+        """Crea un nuovo item. Restituisce l'id.
+
+        Per item standalone il status default è 'pending_design'.
+        Per cluster items (cluster_id set) passare status='planned' (5 items)
+        o status='pending_approval' (bundle, release_order=6).
+        """
+        _VALID_TIERS = {"tripwire", "core", "core_premium", "bundle"}
+        if product_tier not in _VALID_TIERS:
+            raise ValueError(f"Invalid product_tier '{product_tier}'. Must be one of {sorted(_VALID_TIERS)}")
         now = self._now()
-        # task_id è UNIQUE NOT NULL nel vecchio schema — generiamo un UUID
         task_id = str(uuid.uuid4())
         cursor = await self._db.execute(
             """
             INSERT INTO production_queue
                 (task_id, niche, product_type, keywords, entry_score,
-                 status, listing_fee_usd, loop_run_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'pending_design', 0.20, ?, ?, ?)
+                 status, listing_fee_usd, product_tier,
+                 cluster_id, release_order,
+                 loop_run_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0.20, ?, ?, ?, ?, ?, ?)
             """,
             (task_id, niche, product_type, _dumps_list(keywords), entry_score,
+             status, product_tier,
+             cluster_id, release_order,
              loop_run_id, now, now),
         )
         await self._db.commit()
@@ -633,3 +660,24 @@ class ProductionQueueService:
         )
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    # ------------------------------------------------------------------
+    # C.4 — Cluster helpers
+    # ------------------------------------------------------------------
+
+    async def get_cluster_items(self, cluster_id: str) -> list["ProductionQueueItem"]:
+        """Tutti i listing appartenenti al cluster, ordinati per release_order."""
+        rows = await self._fetchall(
+            "SELECT * FROM production_queue WHERE cluster_id = ? ORDER BY release_order ASC",
+            (cluster_id,),
+        )
+        return [ProductionQueueItem.from_row(r) for r in rows]
+
+    async def set_etsy_listing_url(self, item_id: int, url: str) -> None:
+        """Scrive etsy_listing_url per un item già pubblicato."""
+        now = self._now()
+        async with self._db.execute(
+            "UPDATE production_queue SET etsy_listing_url = ?, updated_at = ? WHERE id = ?",
+            (url, now, item_id),
+        ):
+            await self._db.commit()

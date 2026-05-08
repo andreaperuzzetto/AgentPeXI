@@ -262,6 +262,8 @@ export interface NicheItem {
   section_name:        string | null
   product_tier:        'tripwire' | 'core' | 'core_premium' | 'bundle' | null
   source_type:         'warmup_candidate' | null
+  /* C.3 competitor shop analysis */
+  gap_to_exploit:      string | null
 }
 
 /* ── Bundle status (from /api/etsy/bundles) ── */
@@ -321,6 +323,7 @@ export interface ProductionQueueItem {
   updated_at: string
   product_tier: 'tripwire' | 'core' | 'core_premium' | 'bundle' | null
   section_name: string | null
+  cluster_id: string | null
 }
 
 /* ── Shop Identity (from /api/etsy/shop-identity) ── */

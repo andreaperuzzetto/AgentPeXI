@@ -28,6 +28,8 @@ import { motion, AnimatePresence }                    from 'framer-motion'
 import { PipelineBar }                                from '../ui/PipelineBar'
 import type { ProductionQueueItem }                   from '../../types'
 import { useStore }                                   from '../../store'
+import { hasActiveCrossref, crossrefLabel }           from './ProductionPipeline.helpers'
+import type { ClusterStat }                           from './ProductionPipeline.helpers'
 
 /* ── Constants ─────────────────────────────────────────────────────────────── */
 
@@ -174,14 +176,19 @@ function SkeletonBar() {
 
 /* ── Table row ─────────────────────────────────────────────────────────────── */
 interface RowProps {
-  item:   ProductionQueueItem
-  index:  number
-  isLast: boolean
+  item:           ProductionQueueItem
+  index:          number
+  isLast:         boolean
+  clusters:       ClusterStat[]
+  relatedItems:   ProductionQueueItem[]
+  isExpanded:     boolean
+  onToggleExpand: () => void
 }
 
-function TableRow({ item, index, isLast }: RowProps) {
-  const meta       = statusMeta(item.status)
+function TableRow({ item, index, isLast, clusters, relatedItems, isExpanded, onToggleExpand }: RowProps) {
+  const meta        = statusMeta(item.status)
   const isPublished = item.status === 'published' || item.status === 'completed'
+  const showCrossref = hasActiveCrossref(item, clusters)
 
   return (
     <motion.div
@@ -191,22 +198,47 @@ function TableRow({ item, index, isLast }: RowProps) {
       exit={{ opacity: 0, transition: { duration: 0.12 } }}
       transition={{ type: 'spring', stiffness: 340, damping: 30, delay: index * 0.04 }}
       style={{
+        borderBottom: isLast && !isExpanded ? 'none' : '1px solid rgba(255,255,255,0.05)',
+        background:   index % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.008)',
+      }}
+    >
+    <div style={{
         display:             'grid',
         gridTemplateColumns: ROW_GRID,
         gap:                 8,
         padding:             '6px 0',
         alignItems:          'center',
-        borderBottom:        isLast ? 'none' : '1px solid rgba(255,255,255,0.05)',
-        background:          index % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.008)',
       }}
     >
-      {/* Name (niche) */}
-      <span className="mono-num" style={{
-        fontSize: 11, color: 'rgba(255,255,255,0.75)',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        letterSpacing: '0.01em',
-      }}>
-        {item.niche}
+      {/* Name (niche) + optional cross-ref icon */}
+      <span style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
+        <span className="mono-num" style={{
+          fontSize: 11, color: 'rgba(255,255,255,0.75)',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          letterSpacing: '0.01em', flex: 1,
+        }}>
+          {item.niche}
+        </span>
+        {showCrossref && (
+          <button
+            onClick={onToggleExpand}
+            title={crossrefLabel(relatedItems.length)}
+            style={{
+              background:   isExpanded ? 'rgba(27,255,94,0.15)' : 'transparent',
+              border:       'none',
+              cursor:       'pointer',
+              fontSize:     12,
+              lineHeight:   1,
+              padding:      '1px 3px',
+              borderRadius: 3,
+              color:        isExpanded ? '#1BFF5E' : 'rgba(255,255,255,0.35)',
+              flexShrink:   0,
+              transition:   'color 0.15s, background 0.15s',
+            }}
+          >
+            🔗
+          </button>
+        )}
       </span>
 
       {/* Status badge */}
@@ -281,14 +313,65 @@ function TableRow({ item, index, isLast }: RowProps) {
       }}>
         {isPublished ? fmtRelTime(item.updated_at) : '—'}
       </span>
+    </div>
+
+    {/* ── Cross-ref expand panel ── */}
+    <AnimatePresence initial={false}>
+      {isExpanded && relatedItems.length > 0 && (
+        <motion.div
+          key="crossref-panel"
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.18 }}
+          style={{ overflow: 'hidden' }}
+        >
+          <div style={{
+            padding:       '6px 8px 8px 16px',
+            borderTop:     '1px solid rgba(255,255,255,0.05)',
+            display:       'flex',
+            flexWrap:      'wrap',
+            gap:           6,
+          }}>
+            {relatedItems.map(rel => (
+              <a
+                key={rel.id}
+                href={`https://www.etsy.com/listing/${rel.etsy_listing_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display:       'inline-flex',
+                  alignItems:    'center',
+                  gap:           4,
+                  fontSize:      10,
+                  color:         '#1BFF5E',
+                  background:    'rgba(27,255,94,0.07)',
+                  border:        '1px solid rgba(27,255,94,0.18)',
+                  borderRadius:  4,
+                  padding:       '2px 7px',
+                  textDecoration:'none',
+                  fontFamily:    'var(--fmo)',
+                  letterSpacing: '0.02em',
+                  transition:    'background 0.15s',
+                }}
+              >
+                🔗 {rel.niche.length > 18 ? rel.niche.slice(0, 17) + '…' : rel.niche}
+              </a>
+            ))}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
     </motion.div>
   )
 }
 /* ── ProductionPipeline ────────────────────────────────────────────────────── */
 export function ProductionPipeline() {
-  const [items,   setItems]   = useState<ProductionQueueItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState<string | null>(null)
+  const [items,          setItems]          = useState<ProductionQueueItem[]>([])
+  const [clusters,       setClusters]       = useState<ClusterStat[]>([])
+  const [loading,        setLoading]        = useState(true)
+  const [error,          setError]          = useState<string | null>(null)
+  const [expandedItemId, setExpandedItemId] = useState<number | null>(null)
 
   /* Filters */
   const statusFilter    = useStore((s) => s.etsyView.statusFilter)
@@ -296,7 +379,7 @@ export function ProductionPipeline() {
   const nicheFilter     = useStore((s) => s.etsyView.pipelineNicheFilter)
   const setNicheFilter  = useStore((s) => s.setPipelineNicheFilter)
 
-  /* Fetch */
+  /* Fetch queue items */
   const fetchItems = useCallback(async (signal?: AbortSignal) => {
     try {
       const res = await fetch('/api/production-queue?limit=200', { signal })
@@ -312,12 +395,28 @@ export function ProductionPipeline() {
     }
   }, [])
 
+  /* Fetch cluster stats for cross-ref badges */
+  const fetchClusters = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const res = await fetch('/api/etsy/clusters', { signal })
+      if (!res.ok) return
+      const data = await res.json() as { clusters: ClusterStat[] }
+      setClusters(data.clusters ?? [])
+    } catch {
+      /* non-critical — 🔗 simply won't show if this fails */
+    }
+  }, [])
+
   useEffect(() => {
     const controller = new AbortController()
     void fetchItems(controller.signal)
-    const id = setInterval(() => { void fetchItems(controller.signal) }, 20_000)
+    void fetchClusters(controller.signal)
+    const id = setInterval(() => {
+      void fetchItems(controller.signal)
+      void fetchClusters(controller.signal)
+    }, 20_000)
     return () => { clearInterval(id); controller.abort() }
-  }, [fetchItems])
+  }, [fetchItems, fetchClusters])
 
   /* ── Pipeline bar segments ── */
   const barSegments = useMemo(() => {
@@ -342,6 +441,12 @@ export function ProductionPipeline() {
     if (nicheFilter.trim())     list = list.filter(i => i.niche.toLowerCase().includes(nicheFilter.trim().toLowerCase()))
     return list.slice(0, 20)
   }, [items, statusFilter, nicheFilter])
+
+  /* ── Related items per cluster (for cross-ref expand panel) ── */
+  const relatedItemsFor = useCallback((item: ProductionQueueItem): ProductionQueueItem[] => {
+    if (!item.cluster_id) return []
+    return items.filter(i => i.cluster_id === item.cluster_id && i.etsy_listing_id && i.id !== item.id)
+  }, [items])
 
   /* ── Input style ── */
   const inputStyle: React.CSSProperties = {
@@ -503,6 +608,10 @@ export function ProductionPipeline() {
               item={item}
               index={i}
               isLast={i === tableItems.length - 1}
+              clusters={clusters}
+              relatedItems={relatedItemsFor(item)}
+              isExpanded={expandedItemId === item.id}
+              onToggleExpand={() => setExpandedItemId(prev => prev === item.id ? null : item.id)}
             />
           ))}
         </AnimatePresence>

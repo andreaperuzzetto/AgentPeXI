@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS production_queue (
     loop_run_id TEXT,
     ab_price_variant TEXT,
     file_paths TEXT,
+    product_tier TEXT DEFAULT 'core',
+    cluster_id TEXT,
+    release_order INTEGER NOT NULL DEFAULT 0,
+    etsy_listing_url TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );

@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 
 def test_research_schema_version_constant():
     from apps.backend.agents._research.prompts import RESEARCH_SCHEMA_VERSION
-    assert RESEARCH_SCHEMA_VERSION == "2"
+    assert RESEARCH_SCHEMA_VERSION == "3"
 
 
 def test_prompt_contains_audience_target():
@@ -90,7 +90,7 @@ from apps.backend.agents._research.analysis_mixin import _ResearchAnalysisMixin
 def test_is_cache_valid_current_schema_fresh():
     meta = {
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "schema_version": "2",
+        "schema_version": "3",
     }
     assert _ResearchAnalysisMixin._is_cache_valid(meta) is True
 

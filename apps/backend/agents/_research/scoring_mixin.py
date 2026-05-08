@@ -68,6 +68,17 @@ class _ResearchScoringMixin:
         # === PARTE 2: Completezza output selling-critical (45% del totale) ===
 
         niches = output.get("niches", [])
+
+        # C.1: expansion_potential gate — mark inviable BEFORE viable_niches filter.
+        # Only fires when the key is explicitly present (schema v3 LLM output).
+        # Absent key (legacy/old-schema fixtures) is silently skipped so pre-existing
+        # behaviour (audience_target cap etc.) is not disturbed.
+        for n in niches:
+            if "expansion_potential" in n:
+                exp = n["expansion_potential"]
+                if exp is None or (isinstance(exp, (int, float)) and exp < 10):
+                    n["viable"] = False
+
         viable_niches = [n for n in niches if n.get("viable", True)]
 
         if not viable_niches:
@@ -102,9 +113,9 @@ class _ResearchScoringMixin:
                 selling.get("first_listing_recommendation"),
             ])
             if selling_complete:
-                completeness += 0.15
+                completeness += 0.10
             elif selling:
-                completeness += 0.07
+                completeness += 0.05
                 sample_missing.append("selling signals incompleti (thumbnail style o conversion triggers mancanti)")
             else:
                 completeness += 0.01
@@ -121,17 +132,25 @@ class _ResearchScoringMixin:
                 completeness += 0.01
                 sample_missing.append("pricing strategico assente")
 
-            # Seasonal timing (peso 0.05)
+            # Seasonal timing (peso 0.02)
             if sample.get("demand", {}).get("peak_months") and sample.get("demand", {}).get("publish_timing_advice"):
-                completeness += 0.05
+                completeness += 0.02
             else:
                 completeness += 0.01
                 sample_missing.append("timing stagionale non specificato")
 
-            # audience_target mandatory (schema v2)
-            audience_capped = not sample.get("audience_target", "").strip()
+            # audience_target (C.1): present and > 10 chars → +0.08 contribution
+            audience = sample.get("audience_target", "").strip()
+            if len(audience) > 10:
+                completeness += 0.08
+            audience_capped = len(audience) == 0
             if audience_capped:
                 sample_missing.append("audience_target assente — cap confidence a 0.4")
+
+            # expansion_potential boost (C.1): numeric and ≥ 20 → +0.05
+            exp = sample.get("expansion_potential")
+            if isinstance(exp, (int, float)) and exp >= 20:
+                completeness += 0.05
 
             if best_completeness is None or completeness < best_completeness:
                 best_completeness = completeness

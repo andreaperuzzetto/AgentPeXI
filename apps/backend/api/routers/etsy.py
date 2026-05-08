@@ -1,12 +1,15 @@
 import json
 import logging
 import time as _time
+from dataclasses import fields as _dc_fields
 from typing import Annotated, Literal
 
 import apps.backend.api.state as state
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
+
+from apps.backend.core.production_queue import ProductionQueueService
 
 
 class NicheItemResponse(BaseModel):
@@ -544,3 +547,79 @@ async def etsy_analytics_sync(payload: EtsySyncPayload) -> dict:
 
     return {"ok": True, "listing_id": payload.listing_id}
 
+
+# ---------------------------------------------------------------------------
+# C.3 · Competitor shop analysis
+# ---------------------------------------------------------------------------
+
+def _get_state_memory():
+    return state.memory
+
+
+@router.get("/api/etsy/niches/{niche}/competitor-analysis")
+async def get_niche_competitor_analysis(
+    niche: str,
+    memory: Annotated[object, Depends(_get_state_memory)] = None,
+) -> dict:
+    """Ritorna l'analisi shop-level per una nicchia (da ChromaDB cache)."""
+    if not memory:
+        return {"available": False, "niche": niche}
+    cached = await memory.query_chromadb(
+        query=f"competitor shop analysis {niche}",
+        n_results=1,
+        where={"type": "competitor_shop_analysis", "niche": niche},
+    )
+    if not cached:
+        return {"available": False, "niche": niche}
+    try:
+        analysis = json.loads(cached[0].get("document", "{}"))
+    except (ValueError, TypeError):
+        analysis = {}
+    return {"available": True, "niche": niche, "analysis": analysis}
+
+
+# ---------------------------------------------------------------------------
+# C.4 · Cluster endpoints
+# ---------------------------------------------------------------------------
+
+_CLUSTERS_SQL = """
+    SELECT cluster_id,
+           MAX(niche)  AS niche,
+           COUNT(*)    AS total,
+           SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) AS completed
+    FROM   production_queue
+    WHERE  cluster_id IS NOT NULL
+    GROUP  BY cluster_id
+    ORDER  BY MAX(created_at) DESC
+"""
+
+
+@router.get("/api/etsy/clusters")
+async def get_clusters(
+    memory: Annotated[object, Depends(_get_state_memory)] = None,
+) -> dict:
+    """Lista tutti i cluster attivi con conteggio totale e completati."""
+    if not memory:
+        return {"clusters": []}
+    pq = ProductionQueueService(await memory.get_db())
+    rows = await pq._fetchall(_CLUSTERS_SQL)
+    return {"clusters": [dict(r) for r in rows]}
+
+
+@router.get("/api/etsy/clusters/{cluster_id}")
+async def get_cluster_detail(
+    cluster_id: str,
+    memory: Annotated[object, Depends(_get_state_memory)] = None,
+) -> dict:
+    """Dettaglio di un cluster: tutti i listing con stato e cross-ref."""
+    if not memory:
+        raise HTTPException(status_code=404, detail="Cluster non trovato")
+    pq = ProductionQueueService(await memory.get_db())
+    items = await pq.get_cluster_items(cluster_id)
+    if not items:
+        raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' non trovato")
+    _fields = [f.name for f in _dc_fields(items[0].__class__)]
+    return {
+        "cluster_id": cluster_id,
+        "items": [{f: getattr(item, f, None) for f in _fields} for item in items],
+    }

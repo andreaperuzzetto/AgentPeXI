@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from apps.backend.agents._research.prompts import RESEARCH_SCHEMA_VERSION, SYSTEM_PROMPT
+from apps.backend.agents.market_data import MarketDataAgent
 from apps.backend.core.config import MODEL_SONNET
 from apps.backend.core.models import AgentResult, AgentTask, TaskStatus
 from apps.backend.tools import tavily as tavily_tool
@@ -35,6 +36,47 @@ class _ResearchAnalysisMixin:
             return False
         schema_ok = meta.get("schema_version") == RESEARCH_SCHEMA_VERSION
         return age_ok and schema_ok
+
+    @staticmethod
+    def _apply_requires_human_review(output: dict) -> None:
+        """Flag niches that need human review (C.1).
+
+        Sets requires_human_review=True when ai_producibility.score == "low",
+        False otherwise. Mutates output in-place.
+        """
+        for niche in output.get("niches", []):
+            score = niche.get("ai_producibility", {}).get("score", "")
+            niche["requires_human_review"] = score == "low"
+
+    async def _notify_bundle_pending(
+        self, niche_name: str, bundle: dict, cluster_id: str
+    ) -> None:
+        """Send Telegram message with bundle inline keyboard (C.1).
+
+        Gracefully no-ops when _telegram_markup_sender is not configured.
+        Swallows all sender exceptions to avoid crashing the research pipeline.
+        """
+        sender = getattr(self, "_telegram_markup_sender", None)
+        if sender is None:
+            return
+
+        from apps.backend.telegram.callbacks import build_bundle_keyboard
+
+        title = bundle.get("title", niche_name)
+        price = bundle.get("price_usd", "?")
+        items = bundle.get("items_included", [])
+        items_str = ", ".join(str(i) for i in items[:3]) if items else "—"
+        msg = (
+            f"📦 Bundle blueprint pronto: '{niche_name}'\n"
+            f"Bundle: {title} @ ${price}\n"
+            f"Items: {items_str}\n"
+            f"Approvare il bundle blueprint?"
+        )
+        keyboard = build_bundle_keyboard(cluster_id)
+        try:
+            await sender(msg, keyboard)
+        except Exception:
+            logger.warning("_notify_bundle_pending: invio fallito", exc_info=True)
 
     async def _single_research(self, task: AgentTask, query: str) -> AgentResult:
         """Ricerca generica basata su query libera — allineata a _single_niche_research."""
@@ -452,6 +494,28 @@ class _ResearchAnalysisMixin:
                     "etsy_tags_13": json.dumps(first_viable.get("etsy_tags_13", [])[:13]),
                 },
             )
+
+        # Step 6c — Competitor shop analysis (C.3) — enrichment opzionale
+        try:
+            section_key = (task.input_data or {}).get("section_key", "")
+            market_agent = MarketDataAgent(
+                memory=self.memory,
+                mock_mode=getattr(self.memory, "mock_mode", False),
+            )
+            shop_analysis = await market_agent._get_competitor_shop_analysis(niche, section_key)
+            if shop_analysis:
+                output["competitor_shop_analysis"] = shop_analysis
+                for n_data in output.get("niches", []):
+                    if n_data.get("viable"):
+                        shop_gap = shop_analysis.get("gap_summary", "")
+                        if shop_gap:
+                            existing_gap = n_data.get("competition", {}).get("gap_to_exploit", "")
+                            n_data.setdefault("competition", {})["gap_to_exploit"] = (
+                                f"{existing_gap} [shop-level: {shop_gap}]"
+                            ).strip()
+                        break
+        except Exception as _c3_err:
+            logger.warning("research[%s]: C.3 shop analysis fallita: %s", niche, _c3_err)
 
         return AgentResult(
             task_id=task.task_id,

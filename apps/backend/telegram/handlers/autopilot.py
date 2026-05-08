@@ -1,7 +1,8 @@
-"""Handler Telegram — AutopilotLoop (Blocco 2).
+"""Handler Telegram — AutopilotLoop (Blocco 2) + Bundle approval (C.1).
 
 Comandi: /run, /stop
 Callback: approve:{id} / skip:{id} dalla inline keyboard di approvazione.
+Callback: bundle_approve:{cluster_id} / bundle_decline:{cluster_id} dal bundle blueprint.
 
 Il keyboard builder vive in telegram/callbacks.py (B3/step 3.5).
 """
@@ -15,6 +16,7 @@ from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from apps.backend.telegram.callbacks import build_approval_keyboard  # noqa: F401 (re-export)
+from apps.backend.telegram.callbacks import _parse_bundle_callback
 from apps.backend.telegram.middleware import is_authorized
 
 if TYPE_CHECKING:
@@ -165,9 +167,58 @@ async def handle_approval_callback(
             await query.message.reply_text(f"⏭ Skip registrato per item {item_id}.")
         except Exception:
             logger.exception("Unexpected error")
+
+
 # ---------------------------------------------------------------------------
-# Registration
+# Bundle callback handler (C.1)
 # ---------------------------------------------------------------------------
+
+async def handle_bundle_callback(
+    deps: "BotDependencies",
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """CallbackQueryHandler — gestisce bundle_approve/bundle_decline dal blueprint."""
+    query = update.callback_query
+    if query is None:
+        return
+
+    if not is_authorized(query.from_user.id):
+        await query.answer("Non autorizzato.")
+        return
+
+    await query.answer()
+
+    parsed = _parse_bundle_callback(query.data or "")
+    if parsed is None:
+        return
+
+    action, cluster_id = parsed
+    status = "approved" if action == "approve" else "declined"
+    emoji = "✅" if action == "approve" else "❌"
+
+    # Store decision in ChromaDB for downstream retrieval (C.3)
+    memory = getattr(deps, "memory", None)
+    if memory is not None:
+        try:
+            await memory.store_insight(
+                text=f"Bundle {status}: cluster_id={cluster_id}",
+                metadata={
+                    "type": "bundle_approval",
+                    "cluster_id": cluster_id,
+                    "status": status,
+                },
+            )
+        except Exception:
+            logger.exception("Errore store_insight bundle_approval cluster=%s", cluster_id)
+
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text(f"{emoji} Bundle {status}: cluster {cluster_id}.")
+    except Exception:
+        logger.exception("Unexpected error bundle callback")
+
+
 
 def register(
     app: Application,
@@ -185,3 +236,7 @@ def register(
     add(CommandHandler("queue",   partial(cmd_queue,   deps), filters=chat_filter))
     # CallbackQueryHandler non usa chat_filter — auth via is_authorized nel handler
     add(CallbackQueryHandler(partial(handle_approval_callback, deps)))
+    add(CallbackQueryHandler(
+        partial(handle_bundle_callback, deps),
+        pattern=r"^bundle_(approve|decline):[a-f0-9]{12}$",
+    ))

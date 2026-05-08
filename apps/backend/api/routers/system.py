@@ -28,6 +28,9 @@ class ProductionQueueItemResponse(BaseModel):
     ads_activated: int | None
     created_at: str
     updated_at: str
+    product_tier: str | None = None
+    section_name: str | None = None
+    cluster_id: str | None = None
 
 
 class ProductionQueueResponse(BaseModel):
