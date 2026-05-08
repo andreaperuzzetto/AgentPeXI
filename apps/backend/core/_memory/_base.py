@@ -665,9 +665,6 @@ class MemoryBase:
             await self._db.commit()
         except Exception as exc:
             logger.warning("MemoryManager.init: cleanup agent_logs 'running' fallito: %s", exc)
-        if self._db:
-            await self._db.close()
-            self._db = None
 
     async def get_db(self):
         """
