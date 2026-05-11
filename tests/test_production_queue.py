@@ -10,6 +10,7 @@ from freezegun import freeze_time
 from apps.backend.core.production_queue import (
     ProductionQueueService,
     ProductionQueueItem,
+    ProductTier,
     _loads_list,
     _dumps_list,
     _to_float,
@@ -170,6 +171,23 @@ async def test_create_item_with_loop_run_id(queue, db):
 async def test_create_item_invalid_product_tier_raises(queue):
     with pytest.raises(ValueError):
         await queue.create_item(niche="test", product_type="printable_pdf", keywords=[], product_tier="invalid_value")
+
+
+def test_product_tier_literal_matches_f4_specification():
+    """ProductTier Literal enforces exactly the four tiers introduced in F4.
+
+    ProductionQueueItem is a @dataclass — the constructor performs no runtime
+    validation (Literal is nominal only). Enforcement lives in
+    ProductionQueueService.create_item(), which raises ValueError for unknown tiers
+    (tested in test_create_item_invalid_product_tier_raises above).
+
+    This test verifies the Literal definition itself stays in sync with the
+    allowed values so that type-checkers catch call sites that pass wrong tiers.
+    """
+    import typing
+    allowed = set(typing.get_args(ProductTier))
+    assert allowed == {"tripwire", "core", "core_premium", "bundle"}
+    assert "invalid_value" not in allowed
 
 
 # ---------------------------------------------------------------------------
