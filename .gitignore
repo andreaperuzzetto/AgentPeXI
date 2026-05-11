@@ -56,3 +56,5 @@ apps/backend/assets/fonts/*.ttf
 # Vite cache
 .vite/
 .worktrees/
+.coverage
+cov_annotate/
