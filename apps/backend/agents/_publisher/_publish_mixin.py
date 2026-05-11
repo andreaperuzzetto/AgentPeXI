@@ -377,7 +377,10 @@ class _PublishMixin:
         create_listing_kwargs: dict,
         file_path: str,
         thumbnail_paths: list[Path],
-        method = settings.PUBLISHER_DELIVERY_METHOD
+        niche: str,
+        product_type: str,
+        method: str = settings.PUBLISHER_DELIVERY_METHOD,
+    ):
         if method == "make_webhook":
             listing_id = await self._publish_via_make_webhook(
                 create_listing_kwargs, file_path, niche, product_type

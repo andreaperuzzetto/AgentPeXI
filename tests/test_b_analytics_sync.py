@@ -24,7 +24,7 @@ def app():
     _app.dependency_overrides.clear()
 
 
-async def _make_db_with_listing(tmp_path, listing_id: str = "listing_123"):
+async def _make_db_with_listing(tmp_path, listing_id: int = 123):
     """Crea MemoryBase reale con una riga in etsy_listings.
 
     MemoryBase.init() crea lo schema poi chiude la connessione (self._db = None).
@@ -60,7 +60,7 @@ async def _make_db_with_listing(tmp_path, listing_id: str = "listing_123"):
 
 
 _VALID_PAYLOAD = {
-    "listing_id": "listing_123",
+    "listing_id": 123,
     "views": 42,
     "favorites": 7,
     "num_orders": 2,
@@ -93,7 +93,7 @@ async def test_etsy_sync_returns_200_and_ok(tmp_path, app):
     assert resp.status_code == 200
     data = resp.json()
     assert data["ok"] is True
-    assert data["listing_id"] == "listing_123"
+    assert data["listing_id"] == 123
 
 
 @pytest.mark.asyncio
@@ -119,7 +119,7 @@ async def test_etsy_sync_inserts_row_in_listing_performance(tmp_path, app):
     async with aiosqlite.connect(mem._db_path) as db:
         cur = await db.execute(
             "SELECT views, favorites, orders, revenue_eur, niche FROM listing_performance WHERE etsy_listing_id = ?",
-            ("listing_123",),
+            (123,),
         )
         row = await cur.fetchone()
 
@@ -198,7 +198,7 @@ async def test_etsy_sync_503_when_memory_none(app):
 @pytest.mark.asyncio
 async def test_etsy_sync_404_when_listing_not_found(tmp_path, app):
     """POST /api/analytics/etsy-sync ritorna 404 se listing_id non è in etsy_listings."""
-    mem = await _make_db_with_listing(tmp_path, listing_id="other_listing")
+    mem = await _make_db_with_listing(tmp_path)
     original_memory = state_mod.memory
     original_ll = state_mod.learning_loop
     state_mod.memory = mem
@@ -211,7 +211,7 @@ async def test_etsy_sync_404_when_listing_not_found(tmp_path, app):
             # Posting a listing_id that doesn't exist in etsy_listings
             resp = await client.post(
                 "/api/analytics/etsy-sync",
-                json={**_VALID_PAYLOAD, "listing_id": "nonexistent_999"},
+                json={**_VALID_PAYLOAD, "listing_id": 888},
             )
     finally:
         state_mod.memory = original_memory

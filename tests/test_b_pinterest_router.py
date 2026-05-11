@@ -95,7 +95,7 @@ async def test_status_503_when_memory_none(app):
             resp = await client.get("/api/pinterest/status")
 
     assert resp.status_code == 503
-    assert "error" in resp.json()
+    assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------------------

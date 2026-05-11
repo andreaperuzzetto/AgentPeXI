@@ -134,7 +134,7 @@ async def test_make_webhook_raises_if_url_not_set(monkeypatch):
 @pytest.mark.asyncio
 async def test_make_webhook_posts_to_url_and_returns_make_id(monkeypatch):
     """make_webhook POSTa al webhook URL e ritorna listing_id con prefisso 'make_'."""
-    monkeypatch.setenv("MAKE_WEBHOOK_URL", "http://hook.make.com/test123")
+    from apps.backend.agents._publisher import _publish_mixin as _mixin_mod
 
     from apps.backend.agents._publisher._publish_mixin import _PublishMixin
 
@@ -151,7 +151,8 @@ async def test_make_webhook_posts_to_url_and_returns_make_id(monkeypatch):
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("aiohttp.ClientSession", return_value=mock_session):
+    with patch.object(_mixin_mod.settings, "MAKE_WEBHOOK_URL", "http://hook.make.com/test123"), \
+            patch("aiohttp.ClientSession", return_value=mock_session):
         listing_id = await _PublishMixin._publish_via_make_webhook(
             publisher, _listing_kwargs(), "/tmp/party.pdf", "party_printable", "printable_pdf"
         )
@@ -212,7 +213,8 @@ async def test_dispatch_make_webhook_returns_make_id(monkeypatch):
     publisher._publish_via_make_webhook = AsyncMock(return_value="make_1234567890")
 
     listing_id, uploaded = await _PublishMixin._dispatch_publish(
-        publisher, _listing_kwargs(), "/tmp/party.pdf", [], "party_printable", "printable_pdf"
+        publisher, _listing_kwargs(), "/tmp/party.pdf", [], "party_printable", "printable_pdf",
+        method="make_webhook",
     )
 
     assert listing_id.startswith("make_")
@@ -230,7 +232,8 @@ async def test_dispatch_etsy_api_calls_publish_via_etsy(monkeypatch):
     publisher._publish_via_etsy_api = AsyncMock(return_value=("etsy_9999", 2))
 
     listing_id, uploaded = await _PublishMixin._dispatch_publish(
-        publisher, _listing_kwargs(), "/tmp/party.pdf", [], "party_printable", "printable_pdf"
+        publisher, _listing_kwargs(), "/tmp/party.pdf", [], "party_printable", "printable_pdf",
+        method="etsy_api",
     )
 
     assert listing_id == "etsy_9999"

@@ -13,6 +13,7 @@ import aiosqlite
 from unittest.mock import AsyncMock, MagicMock
 
 # Pre-import these so block1's setdefault() is a no-op for them:
+import chromadb  # noqa: F401 — prevents test_block1_integration's sys.modules.setdefault() from stubbing chromadb
 import apps.backend.tools.file_gen  # noqa: F401 — ensures apps.backend.tools is a real package
 import apps.backend.core.budget_manager  # noqa: F401 — imports real aiosqlite too
 import apps.backend.agents._design.colors  # noqa: F401
@@ -23,6 +24,37 @@ import apps.backend.core._pepe._llm  # noqa: F401
 import apps.backend.agents.base  # noqa: F401
 import apps.backend.core._pepe._pipeline  # noqa: F401
 import apps.backend.api.state as state_mod
+import apps.backend.core.config as _real_config_mod  # noqa: F401 — guard against test_block1_integration unconditional sys.modules replacement
+
+
+@pytest.fixture(autouse=True)
+def _restore_config_module():
+    """Restore the real apps.backend.core.config module before each test.
+
+    test_block1_integration.py unconditionally replaces sys.modules["apps.backend.core.config"]
+    with a fake stub (MODEL_HAIKU="claude-haiku") at collection time. This fixture restores the
+    real module reference so that in-test imports (e.g. from apps.backend.core.config import
+    MODEL_HAIKU) always get the production values.
+    """
+    import sys
+    sys.modules["apps.backend.core.config"] = _real_config_mod
+    yield
+    sys.modules["apps.backend.core.config"] = _real_config_mod
+
+
+@pytest.fixture(autouse=True)
+def _use_ephemeral_chromadb():
+    """Replace chromadb.PersistentClient with EphemeralClient in all tests.
+
+    PersistentClient makes synchronous blocking filesystem calls that hang
+    the asyncio event loop. EphemeralClient is functionally equivalent for
+    tests and avoids all disk I/O.
+    """
+    import chromadb
+    original = chromadb.PersistentClient
+    chromadb.PersistentClient = lambda path=None, **_kw: chromadb.EphemeralClient()
+    yield
+    chromadb.PersistentClient = original
 
 
 @pytest.fixture

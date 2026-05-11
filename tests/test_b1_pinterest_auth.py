@@ -32,12 +32,14 @@ def app():
 
 def _make_api(memory):
     """PinterestAPI minimal instance con memory mockato."""
+    import asyncio
     from apps.backend.tools.pinterest_api import PinterestAPI
 
     api = PinterestAPI.__new__(PinterestAPI)
     api.memory = memory
     api.pepe = None
     api._client = None
+    api._token_lock = asyncio.Lock()
     return api
 
 

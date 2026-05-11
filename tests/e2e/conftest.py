@@ -2,34 +2,14 @@
 
 All tests call _make_memory_base(tmp_path) directly (mirrors test_c2 pattern).
 No async fixtures — avoids event-loop scoping issues with pytest-asyncio.
+
+ChromaDB isolation (PersistentClient → EphemeralClient) is handled globally
+by the root tests/conftest.py autouse fixture.
 """
 from __future__ import annotations
 
-import pytest
-
 from apps.backend.core._memory._base import MemoryBase
 from apps.backend.core.memory import MemoryManager
-
-
-# ---------------------------------------------------------------------------
-# ChromaDB isolation — prevent disk writes in CI
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def _use_ephemeral_chromadb(monkeypatch):
-    """Replace chromadb.PersistentClient with EphemeralClient in all e2e tests.
-
-    Prevents test pollution across runs and eliminates disk writes in CI.
-    """
-    try:
-        import chromadb
-        monkeypatch.setattr(
-            chromadb,
-            "PersistentClient",
-            lambda path=None, **kw: chromadb.EphemeralClient(),
-        )
-    except ImportError:
-        pass
 
 
 def _make_memory_base(tmp_path, mock_mode: bool = False):

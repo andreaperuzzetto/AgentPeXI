@@ -87,16 +87,35 @@ async def unauth_client(unauth_app):
 
 
 async def test_health_check(client):
-    r = await client.get("/api/health")
+    from unittest.mock import AsyncMock, MagicMock
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock()
+    mock_memory = MagicMock()
+    mock_memory.get_db = AsyncMock(return_value=mock_db)
+    prev = _state.memory
+    _state.memory = mock_memory
+    try:
+        r = await client.get("/api/health")
+    finally:
+        _state.memory = prev
     assert r.status_code == 200
     data = r.json()
-    assert data["status"] == "ok"
-    assert "timestamp" in data
+    assert data["db"] == "ok"
 
 
 async def test_health_no_auth_required(unauth_client):
     """/api/health è pubblico — non richiede X-Personal-Key."""
-    r = await unauth_client.get("/api/health")
+    from unittest.mock import AsyncMock, MagicMock
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock()
+    mock_memory = MagicMock()
+    mock_memory.get_db = AsyncMock(return_value=mock_db)
+    prev = _state.memory
+    _state.memory = mock_memory
+    try:
+        r = await unauth_client.get("/api/health")
+    finally:
+        _state.memory = prev
     assert r.status_code == 200
 
 
@@ -183,7 +202,7 @@ async def test_autopilot_status_no_loop(client):
 async def test_autopilot_start_no_loop(client):
     r = await client.post("/api/autopilot/start")
     assert r.status_code == 503
-    assert "error" in r.json()
+    assert "detail" in r.json()
 
 
 async def test_autopilot_pause_no_loop(client):
@@ -313,7 +332,7 @@ async def test_etsy_requires_auth(unauth_client):
 async def test_finance_summary_no_tracker(client):
     r = await client.get("/api/finance/summary")
     assert r.status_code == 503
-    assert "error" in r.json()
+    assert "detail" in r.json()
 
 
 async def test_finance_summary_invalid_month(client):
