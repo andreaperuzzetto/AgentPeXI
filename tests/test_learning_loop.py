@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 import pytest
+from freezegun import freeze_time
 
 from apps.backend.core.learning_loop import LearningLoop
 
@@ -131,7 +132,7 @@ async def test_get_top_niches_empty(loop):
     result = await loop.get_top_niches()
     assert result == []
 
-
+@freeze_time("2026-01-01")
 async def test_get_top_niches_returns_sorted(loop, db):
     await db.executemany(
         "INSERT INTO niche_intelligence (niche, product_type, performance_score, confidence_level, last_updated_at) VALUES (?,?,?,?,?)",
@@ -156,6 +157,7 @@ async def test_get_intel_missing_returns_none(loop):
     assert result is None
 
 
+@freeze_time("2026-01-01")
 async def test_get_intel_returns_dict(loop, db):
     await db.execute(
         "INSERT INTO niche_intelligence (niche, product_type, performance_score, confidence_level, last_updated_at) VALUES (?,?,?,?,?)",

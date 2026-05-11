@@ -5,6 +5,7 @@ import time
 
 import aiosqlite
 import pytest
+from freezegun import freeze_time
 
 from apps.backend.core.production_queue import (
     ProductionQueueService,
@@ -116,6 +117,7 @@ def test_dumps_list_values():
     assert "journal" in result
 
 
+@freeze_time("2026-01-01")
 def test_to_float_none_returns_recent_timestamp():
     result = _to_float(None)
     assert abs(result - time.time()) < 2
@@ -135,6 +137,7 @@ def test_to_float_iso_string():
     assert result > 0
 
 
+@freeze_time("2026-01-01")
 def test_to_float_invalid_string_returns_recent():
     result = _to_float("not-a-date")
     assert abs(result - time.time()) < 2
@@ -162,6 +165,11 @@ async def test_create_item_with_loop_run_id(queue, db):
     row = await db.execute("SELECT loop_run_id FROM production_queue WHERE id=?", (item_id,))
     r = await row.fetchone()
     assert r["loop_run_id"] == "run-123"
+
+
+async def test_create_item_invalid_product_tier_raises(queue):
+    with pytest.raises(ValueError):
+        await queue.create_item(niche="test", product_type="printable_pdf", keywords=[], product_tier="invalid_value")
 
 
 # ---------------------------------------------------------------------------
