@@ -9,6 +9,7 @@ Il keyboard builder vive in telegram/callbacks.py (B3/step 3.5).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,10 @@ if TYPE_CHECKING:
     from apps.backend.telegram.dependencies import BotDependencies
 
 logger = logging.getLogger("agentpexi.telegram.autopilot")
+
+# Deduplication for double-tap / re-delivery of callback queries (CNC-027)
+_processed_approvals: set[str] = set()
+_approval_cb_lock = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +139,14 @@ async def handle_approval_callback(
         await query.answer("Non autorizzato.")
         return
 
+    # Deduplication: ignore double-tap / re-delivered callbacks (CNC-027)
+    cb_id = query.id
+    async with _approval_cb_lock:
+        if cb_id in _processed_approvals:
+            await query.answer("Già registrato")
+            return
+        _processed_approvals.add(cb_id)
+
     await query.answer()
 
     data = query.data or ""
@@ -218,6 +231,18 @@ async def handle_bundle_callback(
 
 
 
+async def cb_unknown(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Catch-all handler for unrecognised callback queries (MEDIUM-D2)."""
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer("Azione non riconosciuta")
+    logger.warning("Unknown callback: %s", query.data)
+
+
 def register(
     app: Application,
     deps: "BotDependencies",
@@ -233,8 +258,13 @@ def register(
     add(CommandHandler("skip",    partial(cmd_skip,    deps), filters=chat_filter))
     add(CommandHandler("queue",   partial(cmd_queue,   deps), filters=chat_filter))
     # CallbackQueryHandler non usa chat_filter — auth via is_authorized nel handler
-    add(CallbackQueryHandler(partial(handle_approval_callback, deps)))
+    add(CallbackQueryHandler(
+        partial(handle_approval_callback, deps),
+        pattern=r"^(approve|skip):\d+$",
+    ))
     add(CallbackQueryHandler(
         partial(handle_bundle_callback, deps),
         pattern=r"^bundle_(approve|decline):[a-f0-9]{12}$",
     ))
+    # Catch-all must be registered last in the group
+    add(CallbackQueryHandler(cb_unknown))

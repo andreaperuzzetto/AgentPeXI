@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger("agentpexi.pinterest_api")
 
@@ -53,6 +54,7 @@ class _AuthMixin:
 
             return tokens["access_token"]
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
     async def _refresh_token(self, tokens: dict) -> None:
         """Refresh access_token usando refresh_token Pinterest."""
         from apps.backend.core.config import settings
@@ -109,6 +111,7 @@ class _AuthMixin:
     # HTTP request
     # ------------------------------------------------------------------
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
     async def _request(
         self,
         method: str,

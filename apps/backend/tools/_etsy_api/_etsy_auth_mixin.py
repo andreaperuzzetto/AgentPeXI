@@ -97,6 +97,7 @@ class _AuthMixin:
 
             return tokens["access_token"]
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
     async def _refresh_token(self, tokens: dict) -> None:
         """Refresh access_token usando refresh_token."""
         refresh_token = tokens["refresh_token"]

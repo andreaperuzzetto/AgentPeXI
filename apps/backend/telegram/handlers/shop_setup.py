@@ -17,6 +17,7 @@ Implementazione completa ShopProfileOptimizer in step 5.1:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,10 @@ if TYPE_CHECKING:
     from apps.backend.telegram.dependencies import BotDependencies
 
 logger = logging.getLogger("agentpexi.telegram.shop_setup")
+
+# Deduplication for double-tap / re-delivery of setup callbacks (CNC-032)
+_processed_setup_approvals: set[str] = set()
+_setup_approval_lock = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +245,15 @@ async def cb_approve_setup(
 ) -> None:
     """Callback 'approve_setup' — applica il profilo shop dopo il preview inline."""
     query = update.callback_query
+
+    # Deduplication: ignore double-tap / re-delivered callbacks (CNC-032)
+    cb_id = query.id
+    async with _setup_approval_lock:
+        if cb_id in _processed_setup_approvals:
+            await query.answer("Già registrato")
+            return
+        _processed_setup_approvals.add(cb_id)
+
     await query.answer()
 
     optimizer = deps.shop_optimizer

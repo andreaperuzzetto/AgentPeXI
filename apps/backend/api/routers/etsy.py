@@ -1,13 +1,14 @@
+import asyncio
 import json
 import logging
 import time as _time
 from dataclasses import fields as _dc_fields
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from apps.backend.core.production_queue import ProductionQueueService
 
@@ -84,7 +85,7 @@ class ShopIdentityResponse(BaseModel):
 
 
 class EtsySyncPayload(BaseModel):
-    listing_id: str
+    listing_id: int = Field(ge=0)
     views: int
     favorites: int
     num_orders: int
@@ -96,37 +97,38 @@ router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 _bundles_cache: dict = {"data": None, "cached_at": 0.0}
 _BUNDLES_CACHE_TTL = 600
+_bundles_cache_lock = asyncio.Lock()
 
 
 @router.post("/api/etsy/auth/status")
-async def etsy_auth_status() -> dict:
+async def etsy_auth_status() -> dict[str, Any]:
     """Verifica se i token Etsy sono validi."""
     if not state.etsy_api:
-        return JSONResponse(status_code=503, content={"error": "EtsyAPI non inizializzato"})
+        raise HTTPException(status_code=503, detail="EtsyAPI non inizializzato")
     return await state.etsy_api.check_auth_status()
 
 
 @router.get("/api/etsy/shop")
-async def etsy_shop_info() -> dict:
+async def etsy_shop_info() -> dict[str, Any]:
     """Info shop Etsy (test connessione)."""
     if not state.etsy_api:
-        return JSONResponse(status_code=503, content={"error": "EtsyAPI non inizializzato"})
+        raise HTTPException(status_code=503, detail="EtsyAPI non inizializzato")
     try:
         shop = await state.etsy_api.get_shop()
         return {"shop": shop}
     except RuntimeError as exc:
         logger.warning("etsy shop auth error: %s", exc)
-        return JSONResponse(status_code=401, content={"error": "Token Etsy non valido o scaduto"})
+        raise HTTPException(status_code=401, detail="Token Etsy non valido o scaduto")
     except Exception as exc:
         logger.exception("etsy shop error")
-        return JSONResponse(status_code=502, content={"error": "Errore comunicazione Etsy"})
+        raise HTTPException(status_code=502, detail="Errore comunicazione Etsy")
 
 
 @router.get("/api/etsy/listings")
 async def get_etsy_listings(
     status: Annotated[Literal["all", "draft", "active", "inactive", "sold_out", "expired"], Query()] = "all",
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
-) -> dict:
+) -> dict[str, Any]:
     """Lista listing Etsy con filtro status (draft|active|all)."""
     if not state.memory:
         return {"listings": []}
@@ -157,7 +159,7 @@ async def get_etsy_niches(
     if not state.memory:
         return NichesResponse(niches=[])
     if confidence is not None and confidence not in {"low", "medium", "high"}:
-        return JSONResponse(status_code=422, content={"error": "confidence must be low|medium|high"})
+        raise HTTPException(status_code=422, detail="confidence must be low|medium|high")
     try:
         db = await state.memory.get_db()
         conditions: list[str] = []
@@ -264,7 +266,7 @@ async def get_etsy_niches(
         return NichesResponse(niches=niches)
     except Exception:
         logger.exception("get_etsy_niches error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/api/etsy/sections")
@@ -276,7 +278,7 @@ async def get_etsy_sections() -> SectionsResponse:
     last_listing_at: timestamp ISO dell'ultimo listing pubblicato in questa sezione.
     """
     if not state.memory:
-        return JSONResponse(status_code=503, content={"error": "MemoryManager non inizializzato"})
+        raise HTTPException(status_code=503, detail="MemoryManager non inizializzato")
     try:
         from apps.backend.core.etsy_sections_service import EtsySectionsService
         db = await state.memory.get_db()
@@ -284,35 +286,38 @@ async def get_etsy_sections() -> SectionsResponse:
         raw = await ess.get_sections_with_uncategorized_counts()
         sections = [SectionItemResponse(**s) for s in raw]
         return SectionsResponse(sections=sections)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("get_etsy_sections error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/api/etsy/bundles")
-async def get_etsy_bundles() -> dict:
+async def get_etsy_bundles() -> dict[str, Any]:
     """
     Ritorna niches bundle-ready via BundleStrategy.check_all_niches().
     Cache 10 minuti — non riesegue la scan ad ogni request.
     """
-    now = _time.time()
-    if _bundles_cache["data"] is not None and (now - _bundles_cache["cached_at"]) < _BUNDLES_CACHE_TTL:
-        return {"bundles": _bundles_cache["data"], "cached_at": _bundles_cache["cached_at"]}
+    async with _bundles_cache_lock:
+        now = _time.time()
+        if _bundles_cache["data"] is not None and (now - _bundles_cache["cached_at"]) < _BUNDLES_CACHE_TTL:
+            return {"bundles": _bundles_cache["data"], "cached_at": _bundles_cache["cached_at"]}
 
-    if not state.bundle_strategy:
-        return {"bundles": [], "cached_at": None}
-    try:
-        results = await state.bundle_strategy.check_all_niches()
-        _bundles_cache["data"]      = results
-        _bundles_cache["cached_at"] = now
-        return {"bundles": results, "cached_at": now}
-    except Exception:
-        logger.exception("get_etsy_bundles error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        if not state.bundle_strategy:
+            return {"bundles": [], "cached_at": None}
+        try:
+            results = await state.bundle_strategy.check_all_niches()
+            _bundles_cache["data"]      = results
+            _bundles_cache["cached_at"] = now
+            return {"bundles": results, "cached_at": now}
+        except Exception:
+            logger.exception("get_etsy_bundles error")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/api/etsy/ads-status")
-async def get_etsy_ads_status() -> dict:
+async def get_etsy_ads_status() -> dict[str, Any]:
     """
     Riassunto stato Etsy Ads.
 
@@ -367,11 +372,11 @@ async def get_etsy_ads_status() -> dict:
         }
     except Exception:
         logger.exception("get_etsy_ads_status error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/api/etsy/shop-optimizer")
-async def get_etsy_shop_optimizer() -> dict:
+async def get_etsy_shop_optimizer() -> dict[str, Any]:
     """
     Stato corrente ShopProfileOptimizer — ultimo titolo e niches applicati.
     Legge dalla tabella config (non chiama LLM né Etsy API).
@@ -411,11 +416,15 @@ async def get_etsy_shop_optimizer() -> dict:
         }
     except Exception:
         logger.exception("get_etsy_shop_optimizer error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+class OptimizerPreviewRequest(BaseModel):
+    focus_niche: str | None = None
 
 
 @router.post("/api/etsy/shop-optimizer/preview")
-async def etsy_shop_optimizer_preview(body: dict | None = None) -> dict:
+async def etsy_shop_optimizer_preview(body: OptimizerPreviewRequest | None = None) -> dict[str, Any]:
     """
     Genera anteprima titolo + about senza applicare su Etsy.
     Chiama ShopProfileOptimizer.preview() — usa LLM ma non Etsy API.
@@ -423,9 +432,9 @@ async def etsy_shop_optimizer_preview(body: dict | None = None) -> dict:
     Body opzionale: { "focus_niche": "wedding planner" }
     """
     if not state.shop_optimizer:
-        return JSONResponse(status_code=503, content={"error": "ShopProfileOptimizer non inizializzato"})
+        raise HTTPException(status_code=503, detail="ShopProfileOptimizer non inizializzato")
     try:
-        focus_niche = (body or {}).get("focus_niche")
+        focus_niche = body.focus_niche if body else None
         result = await state.shop_optimizer.preview(focus_niche=focus_niche)
         return {
             "title":   result.get("title"),
@@ -436,7 +445,7 @@ async def etsy_shop_optimizer_preview(body: dict | None = None) -> dict:
         }
     except Exception:
         logger.exception("etsy_shop_optimizer_preview error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/api/etsy/style-guide-options")
@@ -506,10 +515,10 @@ async def get_shop_identity() -> ShopIdentityResponse:
 # ---------------------------------------------------------------------------
 
 @router.post("/api/analytics/etsy-sync")
-async def etsy_analytics_sync(payload: EtsySyncPayload) -> dict:
+async def etsy_analytics_sync(payload: EtsySyncPayload) -> dict[str, Any]:
     """Riceve snapshot analytics da Make.com e li persiste in listing_performance."""
     if not state.memory:
-        return JSONResponse(status_code=503, content={"error": "Memory non inizializzata"})
+        raise HTTPException(status_code=503, detail="Memory non inizializzata")
 
     db = await state.memory.get_db()
 
@@ -519,9 +528,9 @@ async def etsy_analytics_sync(payload: EtsySyncPayload) -> dict:
     )
     row = await cur.fetchone()
     if row is None:
-        return JSONResponse(
+        raise HTTPException(
             status_code=404,
-            content={"error": f"listing_id {payload.listing_id!r} non trovato in etsy_listings"},
+            detail=f"listing_id {payload.listing_id!r} non trovato in etsy_listings",
         )
 
     niche, product_type, template, color_scheme = row
@@ -560,7 +569,7 @@ def _get_state_memory():
 async def get_niche_competitor_analysis(
     niche: str,
     memory: Annotated[object, Depends(_get_state_memory)] = None,
-) -> dict:
+) -> dict[str, Any]:
     """Ritorna l'analisi shop-level per una nicchia (da ChromaDB cache)."""
     if not memory:
         return {"available": False, "niche": niche}
@@ -597,7 +606,7 @@ _CLUSTERS_SQL = """
 @router.get("/api/etsy/clusters")
 async def get_clusters(
     memory: Annotated[object, Depends(_get_state_memory)] = None,
-) -> dict:
+) -> dict[str, Any]:
     """Lista tutti i cluster attivi con conteggio totale e completati."""
     if not memory:
         return {"clusters": []}
@@ -610,7 +619,7 @@ async def get_clusters(
 async def get_cluster_detail(
     cluster_id: str,
     memory: Annotated[object, Depends(_get_state_memory)] = None,
-) -> dict:
+) -> dict[str, Any]:
     """Dettaglio di un cluster: tutti i listing con stato e cross-ref."""
     if not memory:
         raise HTTPException(status_code=404, detail="Cluster non trovato")

@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from apps.backend.core.shop_optimizer import ShopProfileOptimizer
     from apps.backend.core.etsy_ads import EtsyAdsManager
     from apps.backend.core.finance_tracker import FinanceTracker
+    from apps.backend.core.task_registry import TaskRegistry
     from apps.backend.tools.etsy_api import EtsyAPI
     from apps.backend.telegram.bot import TelegramBot
     from apps.backend.screen.watcher import ScreenWatcher
@@ -119,3 +120,6 @@ finance_tracker:    "FinanceTracker | None" = None
 # Blocco B — Pinterest Machine
 learning_loop:      "LearningLoop | None" = None
 pinterest_agent:    "PinterestAgent | None" = None
+
+# Task tracking (CNC-033 + CNC-034)
+task_registry:      "TaskRegistry | None" = None

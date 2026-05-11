@@ -4,8 +4,9 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 import apps.backend.api.state as state
@@ -15,16 +16,13 @@ router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 
 @router.get("/api/pinterest/auth-status")
-async def pinterest_auth_status() -> dict:
+async def pinterest_auth_status() -> dict[str, Any]:
     """Ritorna lo stato della connessione OAuth Pinterest.
 
     Risposta: { connected: bool, expires_at: str | null, last_refresh: str | null }
     """
     if not state.memory:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Memory non inizializzata"},
-        )
+        raise HTTPException(status_code=503, detail="Memory non inizializzata")
 
     tokens = await state.memory.get_oauth_tokens("pinterest")
     if not tokens:
@@ -44,7 +42,7 @@ async def pinterest_auth_status() -> dict:
 
 
 @router.get("/api/pinterest/status")
-async def pinterest_status() -> dict:
+async def pinterest_status() -> dict[str, Any]:
     """Stato operativo completo della Pinterest Machine.
 
     Risposta: {
@@ -54,10 +52,7 @@ async def pinterest_status() -> dict:
     }
     """
     if not state.memory:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Memory non inizializzata"},
-        )
+        raise HTTPException(status_code=503, detail="Memory non inizializzata")
 
     delivery_method = os.getenv("PINTEREST_DELIVERY_METHOD", "tailwind")
 

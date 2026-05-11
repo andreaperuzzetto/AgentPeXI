@@ -1,10 +1,10 @@
 import logging
 import uuid
 from datetime import datetime, timezone as _tz
-from typing import Annotated
+from typing import Annotated, Any
 
 import apps.backend.api.state as state
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -18,7 +18,7 @@ router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 async def get_finance_summary(
     year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
     month: Annotated[int | None, Query(ge=1, le=12)] = None,
-) -> dict:
+) -> dict[str, Any]:
     """
     P&L mensile aggregato + breakdown per niche (FE-Blocco 0.2).
 
@@ -31,7 +31,7 @@ async def get_finance_summary(
                 by_niche: [{ niche, gross_eur, net_eur, total_fees_eur, sales_count }] }
     """
     if not state.finance_tracker:
-        return JSONResponse(status_code=503, content={"error": "FinanceTracker non inizializzato"})
+        raise HTTPException(status_code=503, detail="FinanceTracker non inizializzato")
     try:
         summary = await state.finance_tracker.monthly_summary(year=year, month=month)
 
@@ -79,11 +79,11 @@ async def get_finance_summary(
         return {**summary, "by_niche": by_niche, "pinterest_costs_eur": pinterest_costs_eur}
     except Exception as exc:
         logger.exception("get_finance_summary error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/api/finance/report")
-async def get_finance_report(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
+async def get_finance_report(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict[str, Any]:
     """Ultimo report finance da ChromaDB + trigger run se mai eseguito."""
     if not state.memory:
         return {"report": None}
@@ -100,10 +100,10 @@ class _FinanceRunBody(BaseModel):
 
 
 @router.post("/api/finance/run")
-async def run_finance_agent(body: _FinanceRunBody | None = None) -> dict:
+async def run_finance_agent(body: _FinanceRunBody | None = None) -> dict[str, Any]:
     """Esegue il FinanceAgent manualmente (period_days dal body, default 30)."""
     if not state.pepe:
-        return JSONResponse(status_code=503, content={"error": "Pepe non inizializzato"})
+        raise HTTPException(status_code=503, detail="Pepe non inizializzato")
     period_days = (body.period_days if body else 30)
     task_id = str(uuid.uuid4())
     task = AgentTask(
@@ -117,7 +117,7 @@ async def run_finance_agent(body: _FinanceRunBody | None = None) -> dict:
 
 
 @router.get("/api/analytics/latest")
-async def get_analytics_latest() -> dict:
+async def get_analytics_latest() -> dict[str, Any]:
     """Ultimo report analytics da ChromaDB."""
     if not state.memory:
         return {"report": None}
@@ -130,7 +130,7 @@ async def get_analytics_latest() -> dict:
 
 
 @router.get("/api/analytics/failures")
-async def get_analytics_failures(limit: Annotated[int, Query(ge=1, le=500)] = 20) -> dict:
+async def get_analytics_failures(limit: Annotated[int, Query(ge=1, le=500)] = 20) -> dict[str, Any]:
     """Ultime failure analysis dai listing."""
     if not state.memory:
         return {"failures": []}
@@ -139,7 +139,7 @@ async def get_analytics_failures(limit: Annotated[int, Query(ge=1, le=500)] = 20
 
 
 @router.get("/api/analytics/ctr-ab")
-async def get_analytics_ctr_ab(limit: Annotated[int, Query(ge=1, le=100)] = 50) -> dict:
+async def get_analytics_ctr_ab(limit: Annotated[int, Query(ge=1, le=100)] = 50) -> dict[str, Any]:
     """
     Ultimi risultati A/B thumbnail da ChromaDB (FE-Blocco 0.3).
 
@@ -178,11 +178,11 @@ async def get_analytics_ctr_ab(limit: Annotated[int, Query(ge=1, le=100)] = 50) 
         return {"results": results}
     except Exception as exc:
         logger.exception("get_analytics_ctr_ab error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/api/analytics/ladder")
-async def get_analytics_ladder() -> dict:
+async def get_analytics_ladder() -> dict[str, Any]:
     """
     Distribuzione listing per ladder_level (FE-Blocco 0.3).
 
@@ -235,4 +235,4 @@ async def get_analytics_ladder() -> dict:
         }
     except Exception as exc:
         logger.exception("get_analytics_ladder error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        raise HTTPException(status_code=500, detail="Internal server error")

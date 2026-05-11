@@ -1,9 +1,9 @@
 import logging
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any
 
 import apps.backend.api.state as state
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -38,13 +38,24 @@ class ProductionQueueResponse(BaseModel):
 
 
 @router.get("/api/health")
-async def health_check() -> dict:
-    """Lightweight liveness probe — risponde anche prima del lifespan completo."""
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+async def health_check() -> JSONResponse:
+    """Readiness probe — verifica salute dei componenti principali e restituisce 503 se down."""
+    checks: dict[str, str] = {}
+    try:
+        if state.memory is None:
+            checks["db"] = "error: MemoryManager not initialized"
+        else:
+            db = await state.memory.get_db()
+            await db.execute("SELECT 1")
+            checks["db"] = "ok"
+    except Exception as e:
+        checks["db"] = f"error: {e}"
+    status_code = 200 if all(v == "ok" for v in checks.values()) else 503
+    return JSONResponse(content=checks, status_code=status_code)
 
 
 @router.get("/api/status", dependencies=[Depends(state.verify_personal_key)])
-async def get_status() -> dict:
+async def get_status() -> dict[str, Any]:
     """Stato generale del sistema."""
     agent_statuses = state.pepe.get_agent_statuses() if state.pepe else {}
     return {
@@ -58,13 +69,13 @@ async def get_status() -> dict:
 
 
 @router.get("/api/mock/status", dependencies=[Depends(state.verify_personal_key)])
-async def get_mock_status() -> dict:
+async def get_mock_status() -> dict[str, Any]:
     """Stato corrente del mock mode."""
     return {"mock_mode": state.pepe.mock_mode if state.pepe else False}
 
 
 @router.get("/api/agents", dependencies=[Depends(state.verify_personal_key)])
-async def get_agents() -> dict:
+async def get_agents() -> dict[str, Any]:
     """Stato dettagliato degli agenti registrati."""
     if not state.pepe:
         return {"agents": {}}
@@ -72,7 +83,7 @@ async def get_agents() -> dict:
 
 
 @router.get("/api/domains/config", dependencies=[Depends(state.verify_personal_key)])
-async def get_domains_config() -> dict:
+async def get_domains_config() -> dict[str, Any]:
     """Configurazione domini: lista agenti per dominio, dalla source of truth in domains.py."""
     from apps.backend.core.domains import DOMAIN_ETSY, PERSONAL_LAYER
     return {
@@ -88,7 +99,7 @@ async def get_domains_config() -> dict:
 
 
 @router.get("/api/listings", dependencies=[Depends(state.verify_personal_key)])
-async def get_listings() -> dict:
+async def get_listings() -> dict[str, Any]:
     """Lista dei listing Etsy dal DB locale."""
     if not state.memory:
         return {"listings": []}
@@ -97,7 +108,7 @@ async def get_listings() -> dict:
 
 
 @router.get("/api/scheduler", dependencies=[Depends(state.verify_personal_key)])
-async def get_scheduler() -> dict:
+async def get_scheduler() -> dict[str, Any]:
     """Task schedulati: job APScheduler attivi + task da DB."""
     db_tasks: list[dict] = []
     if state.memory:
@@ -111,7 +122,7 @@ async def get_scheduler() -> dict:
 
 
 @router.get("/api/scheduler/jobs", dependencies=[Depends(state.verify_personal_key)])
-async def get_scheduler_jobs() -> dict:
+async def get_scheduler_jobs() -> dict[str, Any]:
     """
     Job APScheduler attivi (FE-Blocco 0.4).
 
@@ -124,7 +135,7 @@ async def get_scheduler_jobs() -> dict:
         return {"jobs": state.scheduler.get_jobs()}
     except Exception:
         logger.exception("get_scheduler_jobs error")
-        return JSONResponse(status_code=500, content={"error": "Internal server error"})
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/api/production-queue", dependencies=[Depends(state.verify_personal_key)])
@@ -142,7 +153,7 @@ async def get_production_queue(status: str | None = None, limit: Annotated[int, 
         "discarded",
     }
     if status is not None and status not in _VALID_STATUSES:
-        return JSONResponse(status_code=422, content={"error": f"status non valido: {status}"})
+        raise HTTPException(status_code=422, detail=f"status non valido: {status}")
     if not state.memory:
         return ProductionQueueResponse(items=[])
     filter_status = None if status == "all" else status
@@ -152,7 +163,7 @@ async def get_production_queue(status: str | None = None, limit: Annotated[int, 
 
 
 @router.get("/api/tasks/{task_id}/timeline", dependencies=[Depends(state.verify_personal_key)])
-async def get_task_timeline(task_id: str) -> dict:
+async def get_task_timeline(task_id: str) -> dict[str, Any]:
     """Timeline completa step/llm/tool per un task (Task Detail View)."""
     if not state.memory:
         return {"timeline": []}
@@ -161,7 +172,7 @@ async def get_task_timeline(task_id: str) -> dict:
 
 
 @router.get("/api/tasks/pending-input", dependencies=[Depends(state.verify_personal_key)])
-async def get_pending_input_tasks() -> dict:
+async def get_pending_input_tasks() -> dict[str, Any]:
     """Lista task in stato INPUT_REQUIRED — sospesi in attesa di risposta utente."""
     if not state.memory:
         return {"tasks": []}
@@ -170,14 +181,14 @@ async def get_pending_input_tasks() -> dict:
         return {"tasks": tasks}
     except Exception:
         logger.exception("pending-input error")
-        return JSONResponse(status_code=500, content={"error": "Errore interno"})
+        raise HTTPException(status_code=500, detail="Errore interno")
 
 
 @router.get("/api/agents/steps/recent", dependencies=[Depends(state.verify_personal_key)])
 async def get_recent_agent_steps(
     limit:      Annotated[int, Query(ge=1, le=500)] = 50,
     agent_name: Annotated[str | None, Query()] = None,
-) -> dict:
+) -> dict[str, Any]:
     """Ultimi N step — opzionale filtro per agent_name.
     Usato per reidratare ReasoningPanel e AgentDetailPanel."""
     if not state.memory:
@@ -187,7 +198,7 @@ async def get_recent_agent_steps(
 
 
 @router.get("/api/costs", dependencies=[Depends(state.verify_personal_key)])
-async def get_costs(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
+async def get_costs(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict[str, Any]:
     """Cost breakdown per periodo."""
     if not state.memory:
         return {"breakdown": {}}
@@ -198,7 +209,7 @@ async def get_costs(days: Annotated[int, Query(ge=1, le=365)] = 30) -> dict:
 
 
 @router.get("/api/analytics/summary", dependencies=[Depends(state.verify_personal_key)])
-async def get_analytics_summary_endpoint(days: Annotated[int, Query(ge=1, le=365)] = 14) -> dict:
+async def get_analytics_summary_endpoint(days: Annotated[int, Query(ge=1, le=365)] = 14) -> dict[str, Any]:
     """Aggregati task (agent_logs + production_queue) per il pannello Analytics.
 
     Ritorna: total/completed/failed/running per periodo, per-day breakdown,

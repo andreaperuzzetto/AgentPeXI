@@ -11,6 +11,7 @@ Callbacks (InlineKeyboard):
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from functools import partial
@@ -21,6 +22,9 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from apps.backend.telegram.dependencies import BotDependencies
 
 logger = logging.getLogger("agentpexi.telegram.warmup")
+
+# Module-level lock to prevent TOCTOU race on queue deduplication (CNC-028)
+_warmup_queue_lock = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +98,7 @@ async def cmd_warmup(
     for c in recommended:
         niche = c.get("niche", "N/A")
         product_type = c.get("product_type", "")
-        _hash = hashlib.md5(f"{niche}:{product_type}".encode()).hexdigest()[:16]
+        _hash = hashlib.sha256(f"{niche}:{product_type}".encode(), usedforsecurity=False).hexdigest()[:16]
         doc_id = c.get("doc_id") or _hash
         buttons.append([
             InlineKeyboardButton(f"✅ {niche[:30]}", callback_data=f"approve_warmup:{doc_id}"),
@@ -139,34 +143,36 @@ async def cb_approve_warmup_batch(
         pending = [d for d in warmup_docs if d.get("metadata", {}).get("status") == "pending"]
         pending.sort(key=_safe_score, reverse=True)
         
-        # Check existing queue items to prevent duplicates
-        existing_items = await deps.production_queue.get_items_by_status("pending_design")
-        existing_pairs = {(item.niche.lower(), item.product_type.lower()) for item in existing_items}
-        
-        approved_count = 0
-        for doc in pending[:8]:
-            meta = doc.get("metadata", {})
-            niche = (meta.get("niche") or "").strip()
-            product_type = meta.get("product_type") or "printable_pdf"
-            if not niche:
-                continue
-            
-            # Skip if already queued
-            if (niche.lower(), product_type.lower()) in existing_pairs:
-                continue
-            
-            try:
-                score = float(meta.get("score") or 0.0)
-            except (TypeError, ValueError):
-                score = 0.0
-            await deps.production_queue.create_item(
-                niche=niche,
-                product_type=product_type,
-                keywords=[],
-                entry_score=score,
-            )
-            approved_count += 1
-            existing_pairs.add((niche.lower(), product_type.lower()))
+        # Wrap check+insert atomically to prevent TOCTOU race (CNC-028)
+        async with _warmup_queue_lock:
+            # Check existing queue items to prevent duplicates
+            existing_items = await deps.production_queue.get_items_by_status("pending_design")
+            existing_pairs = {(item.niche.lower(), item.product_type.lower()) for item in existing_items}
+
+            approved_count = 0
+            for doc in pending[:8]:
+                meta = doc.get("metadata", {})
+                niche = (meta.get("niche") or "").strip()
+                product_type = meta.get("product_type") or "printable_pdf"
+                if not niche:
+                    continue
+
+                # Skip if already queued
+                if (niche.lower(), product_type.lower()) in existing_pairs:
+                    continue
+
+                try:
+                    score = float(meta.get("score") or 0.0)
+                except (TypeError, ValueError):
+                    score = 0.0
+                await deps.production_queue.create_item(
+                    niche=niche,
+                    product_type=product_type,
+                    keywords=[],
+                    entry_score=score,
+                )
+                approved_count += 1
+                existing_pairs.add((niche.lower(), product_type.lower()))
 
         await context.bot.send_message(
             chat_id=chat_id,
@@ -226,24 +232,26 @@ async def cb_approve_warmup_niche(
         except (TypeError, ValueError):
             score = 0.0
 
-        # Check if already queued to prevent duplicates
-        existing_items = await deps.production_queue.get_items_by_status("pending_design")
-        existing_pairs = {(item.niche.lower(), item.product_type.lower()) for item in existing_items}
-        
-        if (niche.lower(), product_type.lower()) in existing_pairs:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"⚠️ *{_esc(niche)}* è già in coda\\.",
-                parse_mode="MarkdownV2",
-            )
-            return
+        # Wrap check+insert atomically to prevent TOCTOU race (CNC-028)
+        async with _warmup_queue_lock:
+            # Check if already queued to prevent duplicates
+            existing_items = await deps.production_queue.get_items_by_status("pending_design")
+            existing_pairs = {(item.niche.lower(), item.product_type.lower()) for item in existing_items}
 
-        await deps.production_queue.create_item(
-            niche=niche,
-            product_type=product_type,
-            keywords=[],
-            entry_score=score,
-        )
+            if (niche.lower(), product_type.lower()) in existing_pairs:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ *{_esc(niche)}* è già in coda\\.",
+                    parse_mode="MarkdownV2",
+                )
+                return
+
+            await deps.production_queue.create_item(
+                niche=niche,
+                product_type=product_type,
+                keywords=[],
+                entry_score=score,
+            )
         await context.bot.send_message(
             chat_id=chat_id,
             text=f"✅ *{_esc(niche)}* aggiunta alla production queue\\.",
@@ -371,7 +379,7 @@ def _safe_score(d: dict) -> float:
 
 def _niche_hash(niche: str, product_type: str) -> str:
     """Generate a stable hash for niche + product_type."""
-    return hashlib.md5(f"{niche}:{product_type}".encode()).hexdigest()[:16]
+    return hashlib.sha256(f"{niche}:{product_type}".encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 def _fmt_section(key: str) -> str:

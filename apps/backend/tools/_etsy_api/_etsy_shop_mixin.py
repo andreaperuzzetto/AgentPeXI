@@ -80,7 +80,7 @@ class _ShopMixin:
         return await self._request(
             "PATCH",
             f"/application/shops/{sid}",
-            json=body,
+            json_data=body,
         )
 
     async def get_shop_receipts(

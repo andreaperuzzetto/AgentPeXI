@@ -118,8 +118,8 @@ async def cmd_mock(
             logger.warning("cmd_mock: persist config fallita: %s", exc)
 
     if arg == "on":
-        deps.pepe.set_mock_mode(True)
         await _persist_mock_mode(True)
+        deps.pepe.set_mock_mode(True)
         if deps.pepe._ws_broadcast:
             await deps.pepe._ws_broadcast({
                 "type": "system_status",
@@ -135,8 +135,8 @@ async def cmd_mock(
         )
 
     elif arg == "off":
-        deps.pepe.set_mock_mode(False)
         await _persist_mock_mode(False)
+        deps.pepe.set_mock_mode(False)
         if deps.pepe._ws_broadcast:
             await deps.pepe._ws_broadcast({
                 "type": "system_status",
@@ -356,9 +356,10 @@ async def cb_ads_confirm(
     new_value = "true" if action == "on" else "false"
     await pp.set_config("policy.etsy_ads_on_publish", new_value)
 
+    # Use the value we just wrote directly — avoids stale WAL snapshot read (CNC-030)
+    enabled = action == "on"
     try:
-        enabled = await pp.ads_enabled()
-        budget  = await pp.ads_daily_budget()
+        budget = await pp.ads_daily_budget()
     except Exception as exc:
         await query.edit_message_text(f"⚠️ Errore aggiornamento ads: {exc}")
         return

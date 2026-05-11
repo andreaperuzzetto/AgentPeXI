@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import apps.backend.api.state as state
 from fastapi import APIRouter, Depends
@@ -8,7 +9,7 @@ router = APIRouter(dependencies=[Depends(state.verify_personal_key)])
 
 
 @router.get("/api/screen/status")
-async def get_screen_status() -> dict:
+async def get_screen_status() -> dict[str, Any]:
     """Stato corrente del ScreenWatcher — usato per idratazione al WS connect."""
     if state.screen_watcher is None:
         return {
@@ -27,7 +28,7 @@ async def get_screen_status() -> dict:
 
 
 @router.post("/api/screen/toggle")
-async def toggle_screen_watcher() -> dict:
+async def toggle_screen_watcher() -> dict[str, Any]:
     """Attiva o mette in pausa ScreenWatcher.
 
     - Se attivo (running e non in pausa) → pausa

@@ -18,9 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from apps.backend.core.config import settings
 from apps.backend.core.memory import MemoryManager  # noqa: F401 — used by routes via state
+from apps.backend.core.task_registry import TaskRegistry
 from apps.backend.core.startup import (
     init_memory,
     init_tools,
@@ -91,6 +93,9 @@ logger = logging.getLogger("agentpexi.api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: MemoryManager, Pepe, workers, Telegram bot. Shutdown: graceful stop."""
+
+    # ── Phase 0: Task registry ────────────────────────────────────────────────
+    state.task_registry = TaskRegistry()
 
     # ── Phase 1: Memory + tools + storage ──────────────────────────────────
     state.memory = await init_memory(settings, state.ws_manager.broadcast)
@@ -244,6 +249,9 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Shutdown (reverse order) ─────────────────────────────────────────────
+    if state.task_registry is not None:
+        await state.task_registry.shutdown()
+        logger.info("TaskRegistry fermato")
     await state.telegram_bot.stop()
     if state.autopilot_loop is not None:
         await state.autopilot_loop.stop()
@@ -270,6 +278,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AgentPeXI", version="0.1.0", lifespan=lifespan)
 app.state.limiter = state.limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 _cors_origins = [o.strip() for o in settings.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
