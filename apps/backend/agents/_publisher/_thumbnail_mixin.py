@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import aiofiles
+
 logger = logging.getLogger("agentpexi.publisher")
 
 
@@ -55,8 +57,8 @@ class _ThumbnailMixin:
             img.save(str(thumb_path), "PNG", optimize=False)
             if thumb_path.stat().st_size < MIN_SIZE:
                 # Aggiungi padding se il PNG è troppo piccolo
-                with open(thumb_path, "ab") as f:
-                    f.write(b"\x00" * (MIN_SIZE - thumb_path.stat().st_size + 1))
+                async with aiofiles.open(thumb_path, "ab") as f:
+                    await f.write(b"\x00" * (MIN_SIZE - thumb_path.stat().st_size + 1))
             logger.info("Mock thumbnail Pillow creato: %s (%d B)", thumb_path, thumb_path.stat().st_size)
             return True, [thumb_path]
         except Exception as pillow_err:

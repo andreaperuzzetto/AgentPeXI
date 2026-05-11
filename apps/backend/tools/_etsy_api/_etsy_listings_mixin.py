@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import aiofiles
+
 from apps.backend.core.config import settings
 
 logger = logging.getLogger("agentpexi.etsy_api")
@@ -53,14 +55,15 @@ class _ListingsMixin:
         if self.mock_mode:
             return await self._mock_upload_file(listing_id, file_path, name)
         shop_id = settings.ETSY_SHOP_ID
-        with open(file_path, "rb") as f:
-            files = {"file": (name, f, "application/octet-stream")}
-            return await self._request(
-                "POST",
-                f"/application/shops/{shop_id}/listings/{listing_id}/files",
-                files=files,
-                data={"name": name},
-            )
+        async with aiofiles.open(file_path, "rb") as f:
+            content = await f.read()
+        files = {"file": (name, content, "application/octet-stream")}
+        return await self._request(
+            "POST",
+            f"/application/shops/{shop_id}/listings/{listing_id}/files",
+            files=files,
+            data={"name": name},
+        )
 
     async def upload_image(self, listing_id: int | str, file_path: str) -> dict:
         """Carica un'immagine thumbnail su Etsy per il listing."""
@@ -69,13 +72,14 @@ class _ListingsMixin:
         import os as _os
         shop_id = settings.ETSY_SHOP_ID
         name = _os.path.basename(file_path)
-        with open(file_path, "rb") as f:
-            files = {"image": (name, f, "image/png")}
-            return await self._request(
-                "POST",
-                f"/application/shops/{shop_id}/listings/{listing_id}/images",
-                files=files,
-            )
+        async with aiofiles.open(file_path, "rb") as f:
+            content = await f.read()
+        files = {"image": (name, content, "image/png")}
+        return await self._request(
+            "POST",
+            f"/application/shops/{shop_id}/listings/{listing_id}/images",
+            files=files,
+        )
 
     async def get_listing(self, listing_id: int) -> dict:
         if self.mock_mode:

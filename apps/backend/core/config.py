@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     PINTEREST_CLIENT_SECRET: str = ""
     PINTEREST_DELIVERY_METHOD: str = "tailwind"  # tailwind | direct
 
+    # Publisher delivery (B-02)
+    PUBLISHER_DELIVERY_METHOD: str = "api"  # csv_export | make_webhook | etsy_api | api
+    MAKE_WEBHOOK_URL: str = ""             # webhook URL for make_webhook delivery method
+
     # POD — Print on Demand (Printify) — B5/5.5 scaffolding
     # Disabilitato di default. Attivare solo quando Printify è configurato (Blocco 6+).
     POD_ENABLED: bool = False
@@ -105,6 +109,9 @@ class Settings(BaseSettings):
     # Storage & Security
     STORAGE_PATH: str = "~/.agentpexi-storage"  # sovrascrivibile via STORAGE_PATH nel .env
     SECRET_KEY: str = ""
+    # Required: 32-byte random hex salt for KDF. Generate once:
+    # python -c "import secrets; print(secrets.token_hex(32))"
+    CRYPTO_SALT: str = ""
 
     # CORS — origini consentite (CSV). Default: solo localhost dev (Vite 5173 + produzione 8000)
     CORS_ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:8000,http://127.0.0.1:5173,http://127.0.0.1:8000"
@@ -143,17 +150,39 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("CRYPTO_SALT")
+    @classmethod
+    def crypto_salt_must_be_set(cls, v: str) -> str:
+        if not v:
+            raise ValueError(
+                "CRYPTO_SALT non configurata — generare con: "
+                "`python -c 'import secrets; print(secrets.token_hex(32))'` "
+                "e aggiungere al .env"
+            )
+        try:
+            bytes.fromhex(v)
+        except ValueError:
+            raise ValueError("CRYPTO_SALT deve essere una stringa esadecimale valida")
+        return v
+
     @model_validator(mode="after")
-    def warn_missing_api_keys(self) -> "Settings":
-        """Logga warning per API key critiche non configurate."""
-        _CRITICAL: list[tuple[str, str]] = [
+    def fail_fast_critical_keys(self) -> "Settings":
+        """Fail-fast al boot per le API key critiche; warning per i servizi opzionali."""
+        _FAIL_FAST: list[tuple[str, str]] = [
             ("ANTHROPIC_API_KEY", "LLM Anthropic (Etsy domain)"),
-            ("TAVILY_API_KEY", "ricerca web Tavily"),
             ("TELEGRAM_BOT_TOKEN", "bot Telegram"),
             ("TELEGRAM_CHAT_ID", "notifiche Telegram"),
             ("ETSY_API_KEY", "API Etsy"),
         ]
-        for attr, label in _CRITICAL:
+        _WARN: list[tuple[str, str]] = [
+            ("TAVILY_API_KEY", "ricerca web Tavily"),
+        ]
+        for attr, label in _FAIL_FAST:
+            if not getattr(self, attr, ""):
+                raise ValueError(
+                    f"{attr} non configurata ({label}) — aggiungere al .env"
+                )
+        for attr, label in _WARN:
             if not getattr(self, attr, ""):
                 logger.warning(
                     "[config] %s non configurata (%s) — aggiungere al .env",

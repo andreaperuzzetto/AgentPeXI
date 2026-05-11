@@ -4,12 +4,13 @@ from __future__ import annotations
 import asyncio
 import csv
 import datetime
+import io
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
 
+import aiofiles
 import aiohttp
 
 from apps.backend.agents._publisher.constants import TAXONOMY_IDS
@@ -161,7 +162,7 @@ class _PublishMixin:
         result["listing_id"] = listing_id
         result["section_id"] = section_id
         # Section count update solo per etsy_api (ha listing reale su Etsy)
-        if section_id and os.getenv("PUBLISHER_DELIVERY_METHOD", "csv_export") == "etsy_api":
+        if section_id and settings.PUBLISHER_DELIVERY_METHOD == "etsy_api":
             try:
                 db = await self.memory.get_db()
                 ess = EtsySectionsService(db)
@@ -375,12 +376,8 @@ class _PublishMixin:
         self,
         create_listing_kwargs: dict,
         file_path: str,
-        thumbnail_paths: list,
-        niche: str,
-        product_type: str,
-    ) -> tuple[str, int]:
-        """Routes to csv_export | make_webhook | etsy_api. Returns (listing_id, images_uploaded)."""
-        method = os.getenv("PUBLISHER_DELIVERY_METHOD", "csv_export")
+        thumbnail_paths: list[Path],
+        method = settings.PUBLISHER_DELIVERY_METHOD
         if method == "make_webhook":
             listing_id = await self._publish_via_make_webhook(
                 create_listing_kwargs, file_path, niche, product_type
@@ -422,11 +419,13 @@ class _PublishMixin:
         }
 
         file_exists = csv_path.exists()
-        with open(csv_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=row.keys())
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow(row)
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=row.keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+        async with aiofiles.open(csv_path, "a", newline="", encoding="utf-8") as f:
+            await f.write(buf.getvalue())
 
         logger.info("CSV export: %s → %s", niche, csv_path)
         return listing_id
@@ -439,7 +438,7 @@ class _PublishMixin:
         product_type: str,
     ) -> str:
         """POSTa il payload al webhook Make.com e ritorna listing_id con prefisso 'make_'."""
-        webhook_url = os.getenv("MAKE_WEBHOOK_URL", "")
+        webhook_url = settings.MAKE_WEBHOOK_URL
         if not webhook_url:
             raise RuntimeError(
                 "MAKE_WEBHOOK_URL env var non configurata per make_webhook delivery"
@@ -465,7 +464,7 @@ class _PublishMixin:
         self,
         create_listing_kwargs: dict,
         file_path: str,
-        thumbnail_paths: list,
+        thumbnail_paths: list[Path],
     ) -> tuple[str, int]:
         """Crea listing + upload file + upload thumbnail via Etsy API (path originale)."""
         title = create_listing_kwargs.get("title", "")

@@ -25,6 +25,8 @@
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <key>STORAGE_PATH</key>
+        <string>$HOME/.agentpexi-storage</string>
     </dict>
 
     <key>StandardOutPath</key>
