@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -34,7 +35,7 @@ class _SystemMixin:
         if not self.storage:
             # Fallback senza StorageManager
             storage = settings.STORAGE_PATH
-            ok = os.path.isdir(storage)
+            ok = await asyncio.to_thread(os.path.isdir, storage)
             if not ok:
                 msg = f"⚠️ STORAGE_PATH non accessibile: {storage}"
                 logger.error(msg)
@@ -42,7 +43,7 @@ class _SystemMixin:
                     await self.pepe.notify_telegram(msg, priority=True)
             return
 
-        health = self.storage.health_check()
+        health = await asyncio.to_thread(self.storage.health_check)
 
         if not health["available"]:
             msg = f"⚠️ STORAGE_PATH non accessibile: {settings.STORAGE_PATH}"

@@ -115,6 +115,8 @@ class _CoreMixin:
 
     async def start(self) -> None:
         """Avvia lo scheduler, registra job predefiniti e carica job da DB."""
+        if self._scheduler.running:
+            return
         self._register_builtin_jobs()
         await self._load_db_jobs()
         # Listen for job lifecycle events
@@ -163,6 +165,8 @@ class _CoreMixin:
             trigger=IntervalTrigger(minutes=15),
             id="publish_checker",
             name="Publish checker (B2)",
+            coalesce=True,
+            max_instances=1,
             replace_existing=True,
         )
 
@@ -300,6 +304,8 @@ class _CoreMixin:
             trigger=IntervalTrigger(minutes=15),
             id="pinterest_publisher",
             name="Pinterest publisher (B-07)",
+            coalesce=True,
+            max_instances=1,
             replace_existing=True,
         )
         logger.info("Job pinterest_publisher registrato (ogni 15min)")
@@ -373,13 +379,17 @@ class _CoreMixin:
 
     def get_jobs(self) -> list[dict[str, Any]]:
         """Lista dei job attivi nello scheduler."""
+        snapshot = dict(self._job_status)
+        try:
+            job_snapshot = list(self._scheduler.get_jobs())
+        except Exception:
+            return []
         jobs = []
-        for job in self._scheduler.get_jobs():
+        for job in job_snapshot:
             jid = job.id
             if jid in self._internal_jobs:
                 continue
-            with self._job_status_lock:
-                info = self._job_status.get(jid, {})
+            info = snapshot.get(jid, {})
             jobs.append({
                 "id": jid,
                 "name": job.name,
@@ -395,7 +405,7 @@ class _CoreMixin:
     # ------------------------------------------------------------------
 
     async def _broadcast(self, event: dict[str, Any]) -> None:
-        if self._ws_broadcast:
+        if callable(self._ws_broadcast):
             try:
                 await self._ws_broadcast(event)
             except Exception:
