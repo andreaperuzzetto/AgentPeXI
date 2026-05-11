@@ -1,6 +1,7 @@
 """PinterestAPI — auth lifecycle, token management e HTTP request."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -31,25 +32,26 @@ class _AuthMixin:
 
     async def _get_valid_token(self) -> str:
         """Legge token Pinterest da oauth_tokens, refresh se scaduto. Ritorna access_token."""
-        tokens = await self.memory.get_oauth_tokens("pinterest")
-        if not tokens:
-            raise RuntimeError("Token Pinterest non trovati. Eseguire pinterest_auth_setup.")
+        async with self._token_lock:
+            tokens = await self.memory.get_oauth_tokens("pinterest")
+            if not tokens:
+                raise RuntimeError("Token Pinterest non trovati. Eseguire pinterest_auth_setup.")
 
-        expires_at = datetime.fromisoformat(tokens["expires_at"])
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expires_at = datetime.fromisoformat(tokens["expires_at"])
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
 
-        now = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)
 
-        if now >= expires_at - timedelta(minutes=5):
-            try:
-                await self._refresh_token(tokens)
-                tokens = await self.memory.get_oauth_tokens("pinterest")
-            except Exception as exc:
-                logger.error("Refresh token Pinterest fallito: %s", exc)
-                raise
+            if now >= expires_at - timedelta(minutes=5):
+                try:
+                    await self._refresh_token(tokens)
+                    tokens = await self.memory.get_oauth_tokens("pinterest")
+                except Exception as exc:
+                    logger.error("Refresh token Pinterest fallito: %s", exc)
+                    raise
 
-        return tokens["access_token"]
+            return tokens["access_token"]
 
     async def _refresh_token(self, tokens: dict) -> None:
         """Refresh access_token usando refresh_token Pinterest."""

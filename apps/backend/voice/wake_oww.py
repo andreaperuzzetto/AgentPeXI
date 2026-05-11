@@ -17,6 +17,7 @@ Flusso:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import pickle
@@ -107,8 +108,22 @@ def _get_model():
         )
         return None
     try:
-        with open(MODEL_PATH, "rb") as f:
-            _model = pickle.load(f)
+        # Read raw bytes first so we can verify integrity before executing
+        # the pickle stream (pickle.load executes arbitrary Python code).
+        #
+        # To generate the .sha256 sidecar on first run after training:
+        #   python -c "
+        #     import hashlib, pathlib
+        #     p = pathlib.Path('apps/backend/voice/wake_model.pkl')
+        #     p.with_suffix('.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest())
+        #   "
+        data = MODEL_PATH.read_bytes()
+        checksum_path = MODEL_PATH.with_suffix('.sha256')
+        if checksum_path.exists():
+            expected = checksum_path.read_text().strip()
+            if hashlib.sha256(data).hexdigest() != expected:
+                raise ValueError(f"Integrity check failed: {MODEL_PATH}")
+        _model = pickle.loads(data)
         logger.info("wake_oww: modello caricato da %s", MODEL_PATH)
     except Exception as exc:
         logger.error("wake_oww: errore caricamento modello: %s", exc)

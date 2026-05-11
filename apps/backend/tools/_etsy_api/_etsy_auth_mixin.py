@@ -70,31 +70,32 @@ class _AuthMixin:
 
     async def _get_valid_token(self) -> str:
         """Decripta token, refresh se scaduto. Ritorna access_token."""
-        tokens = await self.memory.get_oauth_tokens("etsy")
-        if not tokens:
-            raise RuntimeError("Token Etsy non trovati. Eseguire etsy_auth_setup.")
+        async with self._token_lock:
+            tokens = await self.memory.get_oauth_tokens("etsy")
+            if not tokens:
+                raise RuntimeError("Token Etsy non trovati. Eseguire etsy_auth_setup.")
 
-        expires_at = datetime.fromisoformat(tokens["expires_at"])
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expires_at = datetime.fromisoformat(tokens["expires_at"])
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
 
-        now = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)
 
-        # Refresh con 5 minuti di margine
-        if now >= expires_at - timedelta(minutes=5):
-            try:
-                await self._refresh_token(tokens)
-                tokens = await self.memory.get_oauth_tokens("etsy")
-            except Exception as exc:
-                logger.error("Refresh token fallito: %s", exc)
-                if self.pepe and hasattr(self.pepe, "notify_telegram"):
-                    await self.pepe.notify_telegram(
-                        "⚠️ Token Etsy scaduto, riesegui auth setup",
-                        priority=True,
-                    )
-                raise
+            # Refresh con 5 minuti di margine
+            if now >= expires_at - timedelta(minutes=5):
+                try:
+                    await self._refresh_token(tokens)
+                    tokens = await self.memory.get_oauth_tokens("etsy")
+                except Exception as exc:
+                    logger.error("Refresh token fallito: %s", exc)
+                    if self.pepe and hasattr(self.pepe, "notify_telegram"):
+                        await self.pepe.notify_telegram(
+                            "⚠️ Token Etsy scaduto, riesegui auth setup",
+                            priority=True,
+                        )
+                    raise
 
-        return tokens["access_token"]
+            return tokens["access_token"]
 
     async def _refresh_token(self, tokens: dict) -> None:
         """Refresh access_token usando refresh_token."""

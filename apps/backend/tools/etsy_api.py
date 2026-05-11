@@ -24,6 +24,10 @@ class EtsyAPI(_ShopMixin, _SectionsMixin, _ListingsMixin, _AuthMixin, _MockMixin
         self.memory = memory
         self.pepe = pepe
 
+        # Token refresh lock — prevents TOCTOU race when multiple coroutines
+        # simultaneously detect an expired token and attempt refresh.
+        self._token_lock = asyncio.Lock()
+
         # Rate limiting: max 10 req/sec
         self._semaphore = asyncio.Semaphore(10)
         self._last_request_time: float = 0.0

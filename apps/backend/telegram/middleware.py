@@ -6,6 +6,8 @@ in modo che handler modules (step 3.3+) non debbano reimplementarla.
 
 from __future__ import annotations
 
+import hmac
+
 from telegram.ext import filters
 
 from apps.backend.core.config import settings
@@ -48,4 +50,4 @@ def is_authorized(user_id: int | str) -> bool:
     """
     if not settings.TELEGRAM_CHAT_ID:
         return False
-    return str(user_id) == str(settings.TELEGRAM_CHAT_ID)
+    return hmac.compare_digest(str(user_id), str(settings.TELEGRAM_CHAT_ID))

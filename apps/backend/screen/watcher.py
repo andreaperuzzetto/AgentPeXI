@@ -213,8 +213,9 @@ class ScreenWatcher:
         if screenshot_data is None:
             return
 
-        # Calcola hash frame per pixel diff
-        frame_hash = hashlib.md5(screenshot_data).hexdigest()
+        # sha256 for frame deduplication (usedforsecurity=False silences scanner warnings
+        # since this is not used for cryptographic purposes)
+        frame_hash = hashlib.sha256(screenshot_data, usedforsecurity=False).hexdigest()
         app_changed = bundle_id != self._last_app_bundle
         frame_changed = frame_hash != self._last_frame_hash
 
