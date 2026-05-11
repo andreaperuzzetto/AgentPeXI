@@ -21,6 +21,4 @@ class PinterestAPI(_BoardsMixin, _PinsMixin, _AuthMixin, object):
         self.memory = memory
         self.pepe = pepe
         self._client = None  # httpx.AsyncClient (lazy init in _request)
-        # Token refresh lock — prevents TOCTOU race when multiple coroutines
-        # simultaneously detect an expired token and attempt refresh.
-        self._token_lock = asyncio.Lock()
+        super().__init__()  # triggers _AuthMixin.__init__ → sets _token_lock

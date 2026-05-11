@@ -39,6 +39,8 @@ def _make_api(memory):
     api.memory = memory
     api.pepe = None
     api._client = None
+    # __new__ bypasses all __init__ methods (including _AuthMixin.__init__)
+    # so _token_lock must be set manually here.
     api._token_lock = asyncio.Lock()
     return api
 

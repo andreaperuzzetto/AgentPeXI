@@ -27,6 +27,17 @@ ETSY_TOKEN_URL = "https://api.etsy.com/v3/public/oauth/token"
 class _AuthMixin:
 
     # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def __init__(self, *args, **kwargs) -> None:
+        # Token refresh lock — prevents TOCTOU race when multiple coroutines
+        # simultaneously detect an expired token and attempt refresh.
+        # Initialized here so any subclass calling super().__init__() gets it.
+        self._token_lock = asyncio.Lock()
+        super().__init__(*args, **kwargs)
+
+    # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
 

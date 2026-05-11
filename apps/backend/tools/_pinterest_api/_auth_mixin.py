@@ -21,6 +21,14 @@ class _AuthMixin:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def __init__(self, *args, **kwargs) -> None:
+        # Token refresh lock — prevents TOCTOU race when multiple coroutines
+        # simultaneously detect an expired token and attempt refresh.
+        # Initialized here (not in the concrete assembler) so any subclass
+        # that calls super().__init__() gets the lock automatically.
+        self._token_lock = asyncio.Lock()
+        super().__init__(*args, **kwargs)
+
     async def close(self) -> None:
         client = getattr(self, "_client", None)
         if client and not client.is_closed:
