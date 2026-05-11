@@ -10,10 +10,15 @@ from tavily import AsyncTavilyClient
 
 from apps.backend.core.config import settings
 
+_TAVILY_CLIENT: AsyncTavilyClient | None = None
+
 
 def _get_client() -> AsyncTavilyClient:
-    """Crea client Tavily con API key da config."""
-    return AsyncTavilyClient(api_key=settings.TAVILY_API_KEY)
+    """Return the module-level Tavily client, creating it on first use."""
+    global _TAVILY_CLIENT
+    if _TAVILY_CLIENT is None:
+        _TAVILY_CLIENT = AsyncTavilyClient(api_key=settings.TAVILY_API_KEY)
+    return _TAVILY_CLIENT
 
 
 async def search(

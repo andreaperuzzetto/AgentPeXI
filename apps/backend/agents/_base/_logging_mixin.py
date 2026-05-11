@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -10,6 +11,7 @@ from apps.backend.core.config import settings
 from apps.backend.core.models import AgentResult, TaskStatus
 
 if TYPE_CHECKING:
+    from apps.backend.agents._base._protocols import AgentCoreProtocol
     from apps.backend.core.models import AgentTask
 
 
@@ -17,125 +19,127 @@ class _LoggingMixin:
     """Mixin: step logging, WebSocket broadcasting, task lifecycle, static helpers."""
 
     async def _log_step(
-        self,
+        self: AgentCoreProtocol,
         step_type: str,
         description: str | None,
         input_data: Any = None,
         output_data: Any = None,
         duration_ms: int = 0,
     ) -> int:
-        self._step_counter += 1  # type: ignore[attr-defined]
-        step_id = await self.memory.log_step(  # type: ignore[attr-defined]
-            task_id=self._task_id,  # type: ignore[attr-defined]
-            agent_name=self.name,  # type: ignore[attr-defined]
-            step_number=self._step_counter,  # type: ignore[attr-defined]
+        async with self._counters_lock:
+            self._step_counter += 1
+            step_num = self._step_counter
+        step_id = await self.memory.log_step(
+            task_id=self._task_id,
+            agent_name=self.name,
+            step_number=step_num,
             step_type=step_type,
             description=description,
             input_data=input_data,
             output_data=output_data,
             duration_ms=duration_ms,
         )
-        await self._broadcast({  # type: ignore[attr-defined]
+        await self._broadcast({
             "type": "agent_step",
-            "agent": self.name,  # type: ignore[attr-defined]
-            "task_id": self._task_id,  # type: ignore[attr-defined]
+            "agent": self.name,
+            "task_id": self._task_id,
             "step_id": step_id,
-            "step_number": self._step_counter,  # type: ignore[attr-defined]
+            "step_number": step_num,
             "step_type": step_type,
             "description": description,
             "duration_ms": duration_ms,
         })
         return step_id
 
-    async def _broadcast(self, event: dict) -> None:
+    async def _broadcast(self: AgentCoreProtocol, event: dict[str, Any]) -> None:
         """Invia evento WebSocket se broadcaster disponibile."""
-        if self._ws_broadcast is not None:  # type: ignore[attr-defined]
+        if self._ws_broadcast is not None:
             try:
-                await self._ws_broadcast(event)  # type: ignore[attr-defined]
+                await self._ws_broadcast(event)
             except Exception:
                 pass  # Non bloccare l'agente per errori WS
 
-    async def execute(self, task: AgentTask) -> AgentResult:
+    async def execute(self: AgentCoreProtocol, task: AgentTask) -> AgentResult:
         """Wrapper che gestisce logging, contatori e finalizzazione."""
-        self._task_id = task.task_id  # type: ignore[attr-defined]
-        self._step_counter = 0  # type: ignore[attr-defined]
-        self._llm_call_count = 0  # type: ignore[attr-defined]
-        self._tool_call_count = 0  # type: ignore[attr-defined]
-        self._total_cost = 0.0  # type: ignore[attr-defined]
-        self._total_tokens = 0  # type: ignore[attr-defined]
+        self._task_id = task.task_id
+        self._step_counter = 0
+        self._llm_call_count = 0
+        self._tool_call_count = 0
+        self._total_cost = 0.0
+        self._total_tokens = 0
 
         t0 = time.monotonic()
 
-        await self.memory.log_agent_task(  # type: ignore[attr-defined]
-            agent_name=self.name,  # type: ignore[attr-defined]
+        await self.memory.log_agent_task(
+            agent_name=self.name,
             task_id=task.task_id,
             status="running",
             input_data=task.input_data,
         )
         _desc = self._task_description(task)
-        await self._broadcast({  # type: ignore[attr-defined]
+        await self._broadcast({
             "type": "agent_started",
-            "agent": self.name,  # type: ignore[attr-defined]
+            "agent": self.name,
             "task_id": task.task_id,
             "description": _desc,
         })
 
         try:
-            result = await self.run(task)  # type: ignore[attr-defined]
+            result = await self.run(task)
         except Exception as exc:
             duration_ms = int((time.monotonic() - t0) * 1000)
-            await self.memory.log_error(  # type: ignore[attr-defined]
-                self.name, type(exc).__name__, str(exc), task_id=task.task_id  # type: ignore[attr-defined]
+            await self.memory.log_error(
+                self.name, type(exc).__name__, str(exc), task_id=task.task_id
             )
-            await self.memory.finalize_agent_task(  # type: ignore[attr-defined]
+            await self.memory.finalize_agent_task(
                 task_id=task.task_id,
                 status="failed",
                 output_data={"error": str(exc)},
-                tokens_used=self._total_tokens,  # type: ignore[attr-defined]
-                cost_usd=self._total_cost,  # type: ignore[attr-defined]
-                total_llm_calls=self._llm_call_count,  # type: ignore[attr-defined]
-                total_tool_calls=self._tool_call_count,  # type: ignore[attr-defined]
-                total_steps=self._step_counter,  # type: ignore[attr-defined]
-                total_cost_usd=self._total_cost,  # type: ignore[attr-defined]
+                tokens_used=self._total_tokens,
+                cost_usd=self._total_cost,
+                total_llm_calls=self._llm_call_count,
+                total_tool_calls=self._tool_call_count,
+                total_steps=self._step_counter,
+                total_cost_usd=self._total_cost,
             )
-            await self._broadcast({  # type: ignore[attr-defined]
+            await self._broadcast({
                 "type": "agent_error",
-                "agent": self.name,  # type: ignore[attr-defined]
+                "agent": self.name,
                 "task_id": task.task_id,
                 "error": str(exc),
             })
             return AgentResult(
                 task_id=task.task_id,
-                agent_name=self.name,  # type: ignore[attr-defined]
+                agent_name=self.name,
                 status=TaskStatus.FAILED,
                 output_data={"error": str(exc)},
-                tokens_used=self._total_tokens,  # type: ignore[attr-defined]
-                cost_usd=self._total_cost,  # type: ignore[attr-defined]
+                tokens_used=self._total_tokens,
+                cost_usd=self._total_cost,
                 duration_ms=duration_ms,
             )
 
         duration_ms = int((time.monotonic() - t0) * 1000)
 
-        await self.memory.finalize_agent_task(  # type: ignore[attr-defined]
+        await self.memory.finalize_agent_task(
             task_id=task.task_id,
             status="completed",
             output_data=result.output_data,
-            tokens_used=self._total_tokens,  # type: ignore[attr-defined]
-            cost_usd=self._total_cost,  # type: ignore[attr-defined]
-            total_llm_calls=self._llm_call_count,  # type: ignore[attr-defined]
-            total_tool_calls=self._tool_call_count,  # type: ignore[attr-defined]
-            total_steps=self._step_counter,  # type: ignore[attr-defined]
-            total_cost_usd=self._total_cost,  # type: ignore[attr-defined]
+            tokens_used=self._total_tokens,
+            cost_usd=self._total_cost,
+            total_llm_calls=self._llm_call_count,
+            total_tool_calls=self._tool_call_count,
+            total_steps=self._step_counter,
+            total_cost_usd=self._total_cost,
         )
-        await self._broadcast({  # type: ignore[attr-defined]
+        await self._broadcast({
             "type": "agent_completed",
-            "agent": self.name,  # type: ignore[attr-defined]
+            "agent": self.name,
             "task_id": task.task_id,
         })
 
         result.duration_ms = duration_ms
-        result.tokens_used = self._total_tokens  # type: ignore[attr-defined]
-        result.cost_usd = self._total_cost  # type: ignore[attr-defined]
+        result.tokens_used = self._total_tokens
+        result.cost_usd = self._total_cost
         return result
 
     @staticmethod

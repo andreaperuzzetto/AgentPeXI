@@ -9,6 +9,7 @@ Implementation is split across sub-modules in ``apps/backend/agents/_base/``:
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Callable, ClassVar, Coroutine
 
@@ -49,6 +50,7 @@ class AgentBase(_LoggingMixin, _ToolsMixin, _LlmMixin, ABC):
         self._tool_call_count: int = 0
         self._total_cost: float = 0.0
         self._total_tokens: int = 0
+        self._counters_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Metodo astratto — ogni agente lo implementa

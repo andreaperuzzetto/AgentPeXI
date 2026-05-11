@@ -29,6 +29,7 @@ class WebSearchTool:
 
     def __init__(self) -> None:
         self._last_ddgs_call: float = 0.0
+        self._ddgs_lock = asyncio.Lock()
 
     async def search(
         self,
@@ -53,32 +54,31 @@ class WebSearchTool:
     # ------------------------------------------------------------------
 
     async def _search_ddgs(self, query: str, max_results: int) -> list[dict]:
-        """Ricerca DuckDuckGo con rate limiting e retry."""
-        # Rate limiting: aspetta se necessario
-        loop = asyncio.get_running_loop()
-        now = loop.time()
-        elapsed = now - self._last_ddgs_call
-        if elapsed < _DDGS_MIN_INTERVAL:
-            await asyncio.sleep(_DDGS_MIN_INTERVAL - elapsed)
+        """Ricerca DuckDuckGo con rate limiting serializzato e retry."""
+        async with self._ddgs_lock:
+            loop = asyncio.get_running_loop()
+            elapsed = loop.time() - self._last_ddgs_call
+            if elapsed < _DDGS_MIN_INTERVAL:
+                await asyncio.sleep(_DDGS_MIN_INTERVAL - elapsed)
 
-        for attempt in range(_DDGS_MAX_RETRIES):
-            try:
-                results = await loop.run_in_executor(
-                    None,
-                    self._ddgs_sync,
-                    query,
-                    max_results,
-                )
-                self._last_ddgs_call = loop.time()
-                return results
-            except Exception as exc:
-                exc_name = type(exc).__name__
-                logger.warning(
-                    "DuckDuckGo tentativo %d/%d fallito (%s): %s",
-                    attempt + 1, _DDGS_MAX_RETRIES, exc_name, exc,
-                )
-                if attempt < _DDGS_MAX_RETRIES - 1:
-                    await asyncio.sleep(getattr(settings, "DDGS_RETRY_WAIT_SECS", 3))
+            for attempt in range(_DDGS_MAX_RETRIES):
+                try:
+                    results = await loop.run_in_executor(
+                        None,
+                        self._ddgs_sync,
+                        query,
+                        max_results,
+                    )
+                    self._last_ddgs_call = loop.time()
+                    return results
+                except Exception as exc:
+                    exc_name = type(exc).__name__
+                    logger.warning(
+                        "DuckDuckGo tentativo %d/%d fallito (%s): %s",
+                        attempt + 1, _DDGS_MAX_RETRIES, exc_name, exc,
+                    )
+                    if attempt < _DDGS_MAX_RETRIES - 1:
+                        await asyncio.sleep(getattr(settings, "DDGS_RETRY_WAIT_SECS", 3))
 
         logger.warning("DuckDuckGo: tutti i tentativi falliti per query '%s'", query[:60])
         return []

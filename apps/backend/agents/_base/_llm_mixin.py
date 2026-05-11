@@ -11,29 +11,35 @@ import anthropic
 import openai
 
 from apps.backend.core.config import MODEL_HAIKU, settings
+from apps.backend.core.type_aliases import LLMMessage
 
 if TYPE_CHECKING:
-    pass
+    from apps.backend.agents._base._protocols import AgentCoreProtocol
+
+# ── Ollama module-level singleton (CNC-024) ───────────────────────────────────
+
+_OLLAMA_CLIENT: openai.AsyncOpenAI | None = None
+_OLLAMA_CLIENT_LOCK = asyncio.Lock()
+
+
+async def _get_ollama_client() -> openai.AsyncOpenAI:
+    """Return the module-level Ollama-compatible client, creating it on first use."""
+    global _OLLAMA_CLIENT
+    async with _OLLAMA_CLIENT_LOCK:
+        if _OLLAMA_CLIENT is None:
+            _OLLAMA_CLIENT = openai.AsyncOpenAI(
+                base_url=settings.OLLAMA_BASE_URL,
+                api_key="ollama",
+            )
+    return _OLLAMA_CLIENT
 
 
 class _LlmMixin:
     """Mixin: LLM calls via Anthropic (Sonnet/Haiku) with retry."""
 
-    # Shared Ollama-compatible client — created on first use.
-    _ollama_client: openai.AsyncOpenAI | None = None
-
-    @classmethod
-    def _get_ollama_client(cls) -> openai.AsyncOpenAI:
-        if cls._ollama_client is None:
-            cls._ollama_client = openai.AsyncOpenAI(
-                base_url=settings.OLLAMA_BASE_URL,
-                api_key="ollama",  # Ollama non richiede API key reale
-            )
-        return cls._ollama_client
-
     async def _call_llm(
-        self,
-        messages: list[dict],
+        self: AgentCoreProtocol,
+        messages: list[LLMMessage],
         system_prompt: str | None = None,
         model_override: str | None = None,
         max_tokens: int = 4096,
@@ -47,7 +53,7 @@ class _LlmMixin:
                          Altrimenti → Anthropic Sonnet (comportamento invariato).
         """
         # Mock mode — ritorna stub immediato, zero costi LLM
-        if getattr(self.memory, "mock_mode", False):  # type: ignore[attr-defined]
+        if getattr(self.memory, "mock_mode", False):
             stub = json.dumps({
                 "mock": True,
                 "viability": 0.75,
@@ -77,7 +83,7 @@ class _LlmMixin:
             )
 
         # --- Path Anthropic (comportamento originale) ---
-        model = model_override or self.model  # type: ignore[attr-defined]
+        model = model_override or self.model
         t0 = time.monotonic()
 
         response = await self._llm_with_retry(
@@ -95,11 +101,11 @@ class _LlmMixin:
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
 
-        cost_usd = self._estimate_cost(model, input_tokens, output_tokens, cache_read, cache_write)  # type: ignore[attr-defined]
+        cost_usd = self._estimate_cost(model, input_tokens, output_tokens, cache_read, cache_write)
 
         response_text = response.content[0].text if response.content else ""
 
-        step_id = await self._log_step(  # type: ignore[attr-defined]
+        step_id = await self._log_step(
             step_type="llm_call",
             description=f"LLM {model} ({input_tokens}+{output_tokens} tok)",
             input_data={"system_prompt": system_prompt, "messages": messages},
@@ -107,10 +113,10 @@ class _LlmMixin:
             duration_ms=duration_ms,
         )
 
-        await self.memory.log_llm_call(  # type: ignore[attr-defined]
-            task_id=self._task_id,  # type: ignore[attr-defined]
+        await self.memory.log_llm_call(
+            task_id=self._task_id,
             step_id=step_id,
-            agent_name=self.name,  # type: ignore[attr-defined]
+            agent_name=self.name,
             model=model,
             system_prompt=system_prompt,
             messages=messages,
@@ -124,10 +130,10 @@ class _LlmMixin:
             provider="anthropic",
         )
 
-        await self._broadcast({  # type: ignore[attr-defined]
+        await self._broadcast({
             "type": "llm_call",
-            "agent": self.name,  # type: ignore[attr-defined]
-            "task_id": self._task_id,  # type: ignore[attr-defined]
+            "agent": self.name,
+            "task_id": self._task_id,
             "step_id": step_id,
             "model": model,
             "provider": "anthropic",
@@ -137,15 +143,16 @@ class _LlmMixin:
             "duration_ms": duration_ms,
         })
 
-        self._llm_call_count += 1  # type: ignore[attr-defined]
-        self._total_cost += cost_usd  # type: ignore[attr-defined]
-        self._total_tokens += input_tokens + output_tokens  # type: ignore[attr-defined]
+        async with self._counters_lock:
+            self._llm_call_count += 1
+            self._total_cost += cost_usd
+            self._total_tokens += input_tokens + output_tokens
 
         return response_text
 
     async def _call_llm_ollama(
-        self,
-        messages: list[dict] | None = None,
+        self: AgentCoreProtocol,
+        messages: list[LLMMessage] | None = None,
         system_prompt: str | None = None,
         max_tokens: int = 4096,
         *,
@@ -165,12 +172,10 @@ class _LlmMixin:
         """
         # Risolve i parametri convenience (system/user) in messages/system_prompt
         effective_system = system_prompt or system
-        if messages is None:
-            effective_messages: list[dict] = (
-                [{"role": "user", "content": user}] if user else []
-            )
-        else:
-            effective_messages = messages
+        effective_messages: list[LLMMessage] = (
+            messages if messages is not None
+            else ([{"role": "user", "content": user}] if user else [])
+        )
 
         t0 = time.monotonic()
         model = MODEL_HAIKU
@@ -188,11 +193,11 @@ class _LlmMixin:
         output_tokens = usage.output_tokens
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
-        cost_usd = self._estimate_cost(model, input_tokens, output_tokens, cache_read, cache_write)  # type: ignore[attr-defined]
+        cost_usd = self._estimate_cost(model, input_tokens, output_tokens, cache_read, cache_write)
 
         response_text = response.content[0].text if response.content else ""
 
-        step_id = await self._log_step(  # type: ignore[attr-defined]
+        step_id = await self._log_step(
             step_type="llm_call",
             description=f"Haiku {model} ({input_tokens}+{output_tokens} tok)",
             input_data={"system_prompt": effective_system, "messages": effective_messages},
@@ -200,10 +205,10 @@ class _LlmMixin:
             duration_ms=duration_ms,
         )
 
-        await self.memory.log_llm_call(  # type: ignore[attr-defined]
-            task_id=self._task_id,  # type: ignore[attr-defined]
+        await self.memory.log_llm_call(
+            task_id=self._task_id,
             step_id=step_id,
-            agent_name=self.name,  # type: ignore[attr-defined]
+            agent_name=self.name,
             model=model,
             system_prompt=effective_system,
             messages=effective_messages,
@@ -217,10 +222,10 @@ class _LlmMixin:
             provider="haiku",
         )
 
-        await self._broadcast({  # type: ignore[attr-defined]
+        await self._broadcast({
             "type": "llm_call",
-            "agent": self.name,  # type: ignore[attr-defined]
-            "task_id": self._task_id,  # type: ignore[attr-defined]
+            "agent": self.name,
+            "task_id": self._task_id,
             "step_id": step_id,
             "model": model,
             "provider": "haiku",
@@ -230,20 +235,21 @@ class _LlmMixin:
             "duration_ms": duration_ms,
         })
 
-        self._llm_call_count += 1  # type: ignore[attr-defined]
-        self._total_cost += cost_usd  # type: ignore[attr-defined]
-        self._total_tokens += input_tokens + output_tokens  # type: ignore[attr-defined]
+        async with self._counters_lock:
+            self._llm_call_count += 1
+            self._total_cost += cost_usd
+            self._total_tokens += input_tokens + output_tokens
 
         return response_text
 
     async def _llm_with_retry(
-        self,
+        self: AgentCoreProtocol,
         model: str,
-        messages: list[dict],
+        messages: list[LLMMessage],
         system_prompt: str | None,
         max_tokens: int,
         max_retries: int = 3,
-    ) -> Any:
+    ) -> anthropic.types.Message:
         """Chiama Anthropic con retry esponenziale su 429/529."""
         kwargs: dict[str, Any] = {
             "model": model,
@@ -262,7 +268,7 @@ class _LlmMixin:
         last_exc: Exception | None = None
         for attempt in range(max_retries):
             try:
-                return await self.client.messages.create(**kwargs)  # type: ignore[attr-defined]
+                return await self.client.messages.create(**kwargs)  # type: ignore[arg-type]
             except anthropic.RateLimitError as exc:
                 last_exc = exc
                 wait = 2 ** attempt
@@ -275,3 +281,4 @@ class _LlmMixin:
                 else:
                     raise
         raise last_exc  # type: ignore[misc]
+
