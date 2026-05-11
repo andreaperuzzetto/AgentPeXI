@@ -42,7 +42,9 @@ logs/
 *.log
 
 # Skills / agent config
+.agents/
 .claude/
+claude-code-skills-master/
 
 # Notes private
 docs/

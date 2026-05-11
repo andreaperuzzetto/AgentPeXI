@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "skills": {
+    "async-python-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/async-python-patterns/SKILL.md",
+      "computedHash": "e2c6c594828cbbf4f0c181eedcf2bd39a2a49b4f087942b295faf36cdc88c423"
+    },
+    "audit-context-building": {
+      "source": "trailofbits/skills",
+      "sourceType": "github",
+      "skillPath": "plugins/audit-context-building/skills/audit-context-building/SKILL.md",
+      "computedHash": "3f18904093acbd6c42bc8770f3ca5b02f98de8d6ba5cf7b1f45b5383921e757d"
+    },
+    "code-security": {
+      "source": "semgrep/skills",
+      "sourceType": "github",
+      "skillPath": "skills/code-security/SKILL.md",
+      "computedHash": "56cbeeac5ccf346461e60f08fde411aa1f6e97ffed94fc83d871c2e4ce2ee4a6"
+    },
+    "executing-plans": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/executing-plans/SKILL.md",
+      "computedHash": "b41c919caf1bb07fbacb0e29899ac513f9eb11cd4dd695975ad352c2c03cc4d7"
+    },
+    "fastapi-async-patterns": {
+      "source": "thebushidocollective/han",
+      "sourceType": "github",
+      "skillPath": "plugins/frameworks/fastapi/skills/fastapi-async-patterns/SKILL.md",
+      "computedHash": "cd39488c82cb6f9db2a91489a57eb1f99f8333072fb4db5386a45d343fd07908"
+    },
+    "full-output-enforcement": {
+      "source": "leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/output-skill/SKILL.md",
+      "computedHash": "26bd29ce4c5e02c7666b2d503609bf466bd32290822e91f0e984147048dbb924"
+    },
+    "ln-620-codebase-auditor": {
+      "source": "levnikolaevich/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/codebase-audit-suite/skills/ln-620-codebase-auditor/SKILL.md",
+      "computedHash": "be8dd15539c169abc63a9cf7d566b33bb22ee310b54f7d16189b0baed268fb34"
+    },
+    "ln-621-security-auditor": {
+      "source": "levnikolaevich/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/codebase-audit-suite/skills/ln-621-security-auditor/SKILL.md",
+      "computedHash": "e00581821080004a7caa58891a90018efcff0b4ab7f89e66ee7e46b1c07d339f"
+    },
+    "ln-628-concurrency-auditor": {
+      "source": "levnikolaevich/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/codebase-audit-suite/skills/ln-628-concurrency-auditor/SKILL.md",
+      "computedHash": "7a1995f4109dc3362a695015f3f529ae24d9165ff10e63db108c10048845db86"
+    },
+    "ln-643-api-contract-auditor": {
+      "source": "levnikolaevich/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/codebase-audit-suite/skills/ln-643-api-contract-auditor/SKILL.md",
+      "computedHash": "26deab97b2a932c57f17f76af392d6ed44c33e5d0ccfc9118aef5582ea1e584f"
+    },
+    "ln-647-env-config-auditor": {
+      "source": "levnikolaevich/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/codebase-audit-suite/skills/ln-647-env-config-auditor/SKILL.md",
+      "computedHash": "3981b4ec60dc88ab6b204ae0583e33b4e6d2b8ee482a663bce4ed5a70ef4d6f4"
+    },
+    "ln-650-persistence-performance-auditor": {
+      "source": "levnikolaevich/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/codebase-audit-suite/skills/ln-650-persistence-performance-auditor/SKILL.md",
+      "computedHash": "4caf01a8755509ccef9d871a5ed6373c9d0129dbe7e5aff288ac7cb4331764f9"
+    },
+    "ln-651-query-efficiency-auditor": {
+      "source": "levnikolaevich/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/codebase-audit-suite/skills/ln-651-query-efficiency-auditor/SKILL.md",
+      "computedHash": "57f81cd3ddcc2ca982ab3f822ddff5d4953ee82d6cd40dd929c359d61dd8aabc"
+    },
+    "ln-652-transaction-correctness-auditor": {
+      "source": "levnikolaevich/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/codebase-audit-suite/skills/ln-652-transaction-correctness-auditor/SKILL.md",
+      "computedHash": "179a7ad8ea3ae37ff7a4d463048ab6e9fdf68080e3df631de44327a5303379e2"
+    },
+    "python-type-safety": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-type-safety/SKILL.md",
+      "computedHash": "85d67e5a633eb8fa7f34db9afa7e45ffbc254a4af19171572e7f319e6099a40e"
+    },
+    "tdd": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/tdd/SKILL.md",
+      "computedHash": "15a7b5e36383ebadb2dec5e586679e55e9663d292da418926b8da6fc0ef27d84"
+    },
+    "using-git-worktrees": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/using-git-worktrees/SKILL.md",
+      "computedHash": "bd10bc57c23040630b17c877a9bc7b4be40c35161a2e2f110d770d78e3b0a4ff"
+    },
+    "verification-before-completion": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/verification-before-completion/SKILL.md",
+      "computedHash": "9b446f0c7fe1cfb560b1d34439523b1a76d5f177290007b2c053a1c749a4a8ba"
+    }
+  }
+}

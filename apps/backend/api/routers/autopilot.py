@@ -88,9 +88,7 @@ async def autopilot_stop() -> dict[str, Any]:
     if not state.autopilot_loop:
         raise HTTPException(status_code=503, detail="AutopilotLoop non inizializzato")
     try:
-        await state.autopilot_loop.stop()
-        await state.autopilot_loop._set_status("idle")
-        await state.autopilot_loop._state_set("loop.current_niche", "")
+        await state.autopilot_loop.stop(final=True)   # atomico: idle + clear niche sotto _cmd_lock
         return {"status": "stopped"}
     except Exception:
         logger.exception("autopilot_stop error")

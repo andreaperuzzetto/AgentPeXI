@@ -55,9 +55,10 @@ class _CommandsMixin:
                 (time.time(),),
             )
             await self._db.commit()
-            # Pulisce anche gli event in memoria
-            self._approval_events.clear()
-            self._approval_results.clear()
+            # Pulisce anche gli event in memoria (sotto lock — disciplina CNC-001)
+            async with self._approval_lock:
+                self._approval_events.clear()
+                self._approval_results.clear()
             return "🗑 Coda svuotata — tutti gli item pending_approval/pending_design sono ora discarded.\nRiavvia con /run per ripartire da zero."
 
         # Conta item per stato

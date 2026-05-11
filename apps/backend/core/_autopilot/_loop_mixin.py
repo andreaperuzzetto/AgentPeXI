@@ -80,11 +80,20 @@ class _LoopMixin:
         self._loop_task = asyncio.create_task(self.run_loop(), name="autopilot_loop")
         logger.info("AutopilotLoop avviato")
 
-    async def stop(self) -> None:
-        """Mette in pausa manuale e cancella tutti i task in volo."""
+    async def stop(self, *, final: bool = False) -> None:
+        """Mette in pausa manuale e cancella tutti i task in volo.
+
+        final=True  → imposta status=idle e azzera current_niche (usato da
+                       POST /api/autopilot/stop). Tutto avviene sotto _cmd_lock
+                       così da evitare la race con una resume() concorrente
+                       (NEW-002).
+        final=False → imposta status=paused_manual (comportamento storico).
+        """
         async with self._cmd_lock:
             self._running = False
-            await self._set_status("paused_manual")
+            await self._set_status("idle" if final else "paused_manual")
+            if final:
+                await self._state_set("loop.current_niche", "")
             if self._loop_task:
                 self._loop_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -93,7 +102,7 @@ class _LoopMixin:
                 t.cancel()
             await asyncio.gather(*self._bg_tasks, return_exceptions=True)
             self._bg_tasks.clear()
-        logger.info("AutopilotLoop fermato (paused_manual)")
+        logger.info("AutopilotLoop %s", "fermato (idle)" if final else "fermato (paused_manual)")
 
     async def resume(self) -> None:
         """Riprende da qualsiasi stato paused, cancellando l'eventuale task orfano."""

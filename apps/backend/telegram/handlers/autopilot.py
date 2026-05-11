@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 from telegram import Update
@@ -25,8 +26,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agentpexi.telegram.autopilot")
 
-# Deduplication for double-tap / re-delivery of callback queries (CNC-027)
-_processed_approvals: set[str] = set()
+# Deduplication for double-tap / re-delivery of callback queries (CNC-027).
+# Capped at _PROCESSED_APPROVALS_MAX entries (FIFO eviction) to prevent
+# unbounded memory growth in long-running deployments (NEW-003).
+_PROCESSED_APPROVALS_MAX = 1000
+_processed_approvals: OrderedDict[str, None] = OrderedDict()
 _approval_cb_lock = asyncio.Lock()
 
 
@@ -145,7 +149,9 @@ async def handle_approval_callback(
         if cb_id in _processed_approvals:
             await query.answer("Già registrato")
             return
-        _processed_approvals.add(cb_id)
+        _processed_approvals[cb_id] = None
+        if len(_processed_approvals) > _PROCESSED_APPROVALS_MAX:
+            _processed_approvals.popitem(last=False)   # evict oldest (FIFO)
 
     await query.answer()
 
