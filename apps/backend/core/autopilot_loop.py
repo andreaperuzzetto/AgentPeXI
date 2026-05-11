@@ -94,3 +94,8 @@ class AutopilotLoop(_CommandsMixin, _LoopMixin, _DecisionMixin, _ApprovalMixin, 
         self._approval_events:  dict[int, asyncio.Event] = {}
         # item_id → str  ("approved" | "skipped_user" | ...)
         self._approval_results: dict[int, str]           = {}
+
+        # Serialises all reads/writes to _approval_events and _approval_results
+        self._approval_lock = asyncio.Lock()
+        # Serialises concurrent start/stop/resume calls from API routes or Telegram
+        self._cmd_lock = asyncio.Lock()

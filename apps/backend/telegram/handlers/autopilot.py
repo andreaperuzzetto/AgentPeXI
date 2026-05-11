@@ -76,10 +76,8 @@ async def cmd_approve(
     except ValueError:
         await update.message.reply_text("❌ item_id deve essere un numero intero.")
         return
-    loop.register_approval(item_id, "approved")
+    await loop.register_approval(item_id, "approved")
     await update.message.reply_text(f"✅ Approvazione registrata per item {item_id}.")
-
-
 async def cmd_queue(
     deps: "BotDependencies",
     update: Update,
@@ -114,7 +112,7 @@ async def cmd_skip(
     except ValueError:
         await update.message.reply_text("❌ item_id deve essere un numero intero.")
         return
-    loop.register_approval(item_id, "skipped_user")
+    await loop.register_approval(item_id, "skipped_user")
     await update.message.reply_text(f"⏭ Skip registrato per item {item_id}.")
 
 
@@ -154,14 +152,14 @@ async def handle_approval_callback(
         return
 
     if action == "approve":
-        loop.register_approval(item_id, "approved")
+        await loop.register_approval(item_id, "approved")
         try:
             await query.edit_message_reply_markup(reply_markup=None)
             await query.message.reply_text(f"✅ Approvazione registrata per item {item_id}.")
         except Exception:
             logger.exception("Unexpected error")
     elif action == "skip":
-        loop.register_approval(item_id, "skipped_user")
+        await loop.register_approval(item_id, "skipped_user")
         try:
             await query.edit_message_reply_markup(reply_markup=None)
             await query.message.reply_text(f"⏭ Skip registrato per item {item_id}.")

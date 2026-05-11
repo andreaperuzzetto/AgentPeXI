@@ -21,14 +21,16 @@ class _ApprovalMixin:
     # Called by Telegram CallbackQueryHandler
     # ------------------------------------------------------------------
 
-    def register_approval(self, item_id: int, result: str) -> None:
+    async def register_approval(self, item_id: int, result: str) -> None:
         """Chiamato dal bot quando l'utente preme Approva/Salta.
 
         result: "approved" | "skipped_user"
         """
-        self._approval_results[item_id] = result
-        if item_id in self._approval_events:
-            self._approval_events[item_id].set()
+        async with self._approval_lock:
+            self._approval_results[item_id] = result
+            event = self._approval_events.get(item_id)
+        if event is not None:
+            event.set()
 
     # ------------------------------------------------------------------
     # Approval notification
@@ -39,7 +41,8 @@ class _ApprovalMixin:
         if not item:
             return
 
-        self._approval_events.setdefault(item_id, asyncio.Event())
+        async with self._approval_lock:
+            self._approval_events.setdefault(item_id, asyncio.Event())
 
         kw_preview = ", ".join(item.keywords[:5]) if item.keywords else "—"
         caption = (
@@ -83,18 +86,17 @@ class _ApprovalMixin:
         deadline = time.time() + APPROVAL_TIMEOUT
 
         while time.time() < deadline:
-            event = self._approval_events.get(item_id)
+            async with self._approval_lock:
+                event = self._approval_events.get(item_id)
             if event:
                 try:
-                    await asyncio.wait_for(
-                        asyncio.shield(event.wait()),
-                        timeout=APPROVAL_POLL,
-                    )
-                    result = self._approval_results.get(item_id)
-                    if result:
-                        return result
+                    await asyncio.wait_for(event.wait(), timeout=APPROVAL_POLL)
                 except asyncio.TimeoutError:
                     pass
+                async with self._approval_lock:
+                    result = self._approval_results.get(item_id)
+                if result:
+                    return result
             else:
                 # Event non ancora registrato — sleep breve per evitare busy-wait
                 await asyncio.sleep(APPROVAL_POLL)
@@ -106,6 +108,8 @@ class _ApprovalMixin:
                     return "approved"
                 if item.status == "skipped":
                     return f"skipped_{item.skip_reason or 'user'}"
+                if item.status == "discarded":
+                    return "discarded"
 
             # Budget esaurito durante attesa
             if await self.budget.check_budget() == BudgetStatus.EXCEEDED:

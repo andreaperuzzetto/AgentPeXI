@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -36,6 +37,17 @@ class _LoopMixin:
     async def _noop_design(self, item_id: int, niche_data: dict) -> None:
         logger.warning("design_pipeline non iniettata — item %s non processato", item_id)
 
+    # ------------------------------------------------------------------
+    # Background task helper (CNC-005)
+    # ------------------------------------------------------------------
+
+    def _add_bg_task(self, coro) -> asyncio.Task:
+        """Create a task, register it in _bg_tasks, and auto-discard on completion."""
+        t = asyncio.create_task(coro)
+        self._bg_tasks.add(t)
+        t.add_done_callback(self._bg_tasks.discard)
+        return t
+
     async def _default_niche_picker(self) -> dict | None:
         """Fallback: prima niche per performance_score in niche_intelligence."""
         try:
@@ -69,15 +81,28 @@ class _LoopMixin:
         logger.info("AutopilotLoop avviato")
 
     async def stop(self) -> None:
-        """Mette in pausa manuale."""
-        self._running = False
-        await self._set_status("paused_manual")
+        """Mette in pausa manuale e cancella tutti i task in volo."""
+        async with self._cmd_lock:
+            self._running = False
+            await self._set_status("paused_manual")
+            if self._loop_task:
+                self._loop_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._loop_task
+            for t in list(self._bg_tasks):
+                t.cancel()
+            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+            self._bg_tasks.clear()
         logger.info("AutopilotLoop fermato (paused_manual)")
 
     async def resume(self) -> None:
-        """Riprende da qualsiasi stato paused."""
-        await self._set_status("running")
-        if not self._running:
+        """Riprende da qualsiasi stato paused, cancellando l'eventuale task orfano."""
+        async with self._cmd_lock:
+            if self._loop_task and not self._loop_task.done():
+                self._loop_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._loop_task
+            await self._set_status("running")
             self._running = True
             self._loop_task = asyncio.create_task(self.run_loop(), name="autopilot_loop")
         logger.info("AutopilotLoop ripreso")
@@ -158,31 +183,34 @@ class _LoopMixin:
             # Questo gestisce item che passano da pending_design a pending_approval
             # DOPO che _on_startup_recovery ha già girato (race condition al restart).
             for item in pending:
-                if item.id not in self._approval_events:
+                async with self._approval_lock:
+                    if item.id in self._approval_events:
+                        continue
                     evt = asyncio.Event()
                     self._approval_events[item.id] = evt
-                    logger.info("Queue depth: item %d senza event — avvio recovery + notifica", item.id)
-                    if item.id in self._approval_results:
-                        evt.set()
-                    else:
-                        try:
-                            await self._send_approval_notification(item.id)
-                        except Exception as exc:
-                            logger.warning("Queue depth notifica item %d: %s", item.id, exc)
+                    already_approved = item.id in self._approval_results
 
-                    async def _recover_queued(iid: int = item.id) -> None:
-                        try:
-                            decision = await self._wait_for_approval(iid)
-                            await self._handle_decision(iid, decision)
-                        except Exception as exc:
-                            logger.warning("Queue depth recovery item %d: %s", iid, exc)
-                        finally:
+                logger.info("Queue depth: item %d senza event — avvio recovery + notifica", item.id)
+                if already_approved:
+                    evt.set()
+                else:
+                    try:
+                        await self._send_approval_notification(item.id)
+                    except Exception as exc:
+                        logger.warning("Queue depth notifica item %d: %s", item.id, exc)
+
+                async def _recover_queued(iid: int = item.id) -> None:
+                    try:
+                        decision = await self._wait_for_approval(iid)
+                        await self._handle_decision(iid, decision)
+                    except Exception as exc:
+                        logger.warning("Queue depth recovery item %d: %s", iid, exc)
+                    finally:
+                        async with self._approval_lock:
                             self._approval_events.pop(iid, None)
                             self._approval_results.pop(iid, None)
 
-                    _t = asyncio.create_task(_recover_queued(), name=f"recovery_queued_{item.id}")
-                    self._bg_tasks.add(_t)
-                    _t.add_done_callback(self._bg_tasks.discard)
+                self._add_bg_task(_recover_queued())
 
             ids = [str(i.id) for i in pending + in_design]
             logger.info(
@@ -229,8 +257,9 @@ class _LoopMixin:
         await self._handle_decision(item_id, decision)
 
         # Cleanup eventi e stato niche corrente [FE-0.5]
-        self._approval_events.pop(item_id, None)
-        self._approval_results.pop(item_id, None)
+        async with self._approval_lock:
+            self._approval_events.pop(item_id, None)
+            self._approval_results.pop(item_id, None)
         await self._state_set("loop.current_niche", "")
 
         await asyncio.sleep(LOOP_SLEEP_NORMAL)
@@ -269,13 +298,14 @@ class _LoopMixin:
 
         # ── 2. Notifica + task per ogni item ─────────────────────────────────
         for item in pending:
-            if item.id in self._approval_events:
-                continue
+            async with self._approval_lock:
+                if item.id in self._approval_events:
+                    continue
+                evt = asyncio.Event()
+                self._approval_events[item.id] = evt
+                already_approved = item.id in self._approval_results
 
-            evt = asyncio.Event()
-            self._approval_events[item.id] = evt
-
-            if item.id in self._approval_results:
+            if already_approved:
                 # Approvazione già registrata prima di /run → processo immediato
                 evt.set()
                 logger.info("Recovery: approvazione pre-esistente item %d", item.id)
@@ -293,9 +323,8 @@ class _LoopMixin:
                 except Exception as exc:
                     logger.warning("Recovery _handle_decision item %d: %s", iid, exc)
                 finally:
-                    self._approval_events.pop(iid, None)
-                    self._approval_results.pop(iid, None)
+                    async with self._approval_lock:
+                        self._approval_events.pop(iid, None)
+                        self._approval_results.pop(iid, None)
 
-            _t = asyncio.create_task(_recover_item(), name=f"recovery_item_{item.id}")
-            self._bg_tasks.add(_t)
-            _t.add_done_callback(self._bg_tasks.discard)
+            self._add_bg_task(_recover_item())

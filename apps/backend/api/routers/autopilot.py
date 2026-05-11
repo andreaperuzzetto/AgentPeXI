@@ -61,9 +61,6 @@ async def autopilot_start() -> dict:
     if not state.autopilot_loop:
         return JSONResponse(status_code=503, content={"error": "AutopilotLoop non inizializzato"})
     try:
-        raw = await state.autopilot_loop._get_status()
-        if raw == "running" and state.autopilot_loop._running:
-            return {"status": "running", "message": "Loop già in esecuzione"}
         await state.autopilot_loop.resume()
         return {"status": "running"}
     except Exception:
@@ -90,7 +87,7 @@ async def autopilot_stop() -> dict:
     if not state.autopilot_loop:
         return JSONResponse(status_code=503, content={"error": "AutopilotLoop non inizializzato"})
     try:
-        state.autopilot_loop._running = False
+        await state.autopilot_loop.stop()
         await state.autopilot_loop._set_status("idle")
         await state.autopilot_loop._state_set("loop.current_niche", "")
         return {"status": "stopped"}

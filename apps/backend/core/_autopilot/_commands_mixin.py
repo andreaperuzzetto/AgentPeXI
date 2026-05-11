@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
@@ -39,6 +40,11 @@ class _CommandsMixin:
     async def cmd_queue(self, action: str = "") -> str:
         """Mostra lo stato della coda. /queue clear per scartare tutto."""
         if action.strip().lower() == "clear":
+            # Cancel all in-flight recovery tasks before clearing state
+            for t in list(self._bg_tasks):
+                t.cancel()
+            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+            self._bg_tasks.clear()
             # Manda tutto in pending_approval e pending_design a discarded
             await self._db.execute(
                 """
