@@ -201,17 +201,69 @@ class BudgetManager:
         await self._db.commit()
 
     # ------------------------------------------------------------------
+    # Helpers aggregati (1 query ciascuno — evitano N query sequenziali)
+    # ------------------------------------------------------------------
+
+    async def _load_limits_fast(self) -> dict[str, float]:
+        """Legge tutti e 4 i config budget in 1 query anziché 4 SELECT sequenziali."""
+        _keys = (
+            "budget.daily_llm_usd",
+            "budget.daily_image_usd",
+            "budget.daily_listing_fee_usd",
+            "budget.warn_threshold",
+        )
+        _defaults = {
+            "budget.daily_llm_usd":         0.50,
+            "budget.daily_image_usd":        1.00,
+            "budget.daily_listing_fee_usd":  1.00,
+            "budget.warn_threshold":         0.75,
+        }
+        cursor = await self._db.execute(
+            "SELECT key, value FROM config WHERE key IN (?,?,?,?)", _keys
+        )
+        rows = await cursor.fetchall()
+        found = {row[0]: row[1] for row in rows}
+        result: dict[str, float] = {}
+        for key, default in _defaults.items():
+            raw = found.get(key)
+            short = key.split(".", 1)[1]  # strip "budget." prefix
+            try:
+                result[short] = float(raw) if raw is not None else default
+            except (ValueError, TypeError):
+                result[short] = default
+        return result
+
+    async def _load_today_costs(self) -> tuple[float, float, float]:
+        """Restituisce (llm_today, image_today, fee_today) con 1 query aggregata."""
+        today = self._today_start()
+        cursor = await self._db.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN created_at  >= ? THEN llm_cost_usd   ELSE 0.0 END), 0.0),
+                COALESCE(SUM(CASE WHEN created_at  >= ? THEN image_cost_usd ELSE 0.0 END), 0.0),
+                COALESCE(SUM(
+                    CASE WHEN status = 'published' AND published_at >= ?
+                         THEN listing_fee_usd ELSE 0.0 END
+                ), 0.0)
+            FROM production_queue
+            """,
+            (today, today, today),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return float(row[0]), float(row[1]), float(row[2])
+        return 0.0, 0.0, 0.0
+
+    # ------------------------------------------------------------------
     # Check
     # ------------------------------------------------------------------
 
     async def check_budget(self) -> BudgetStatus:
         """Controlla tutte e 3 le voci; restituisce lo stato peggiore."""
-        limits = await self.get_limits()
+        limits = await self._load_limits_fast()
         warn   = limits["warn_threshold"]
 
-        llm_today   = await self.today_llm_cost()
-        image_today = await self.today_image_cost()
-        fee_today   = await self.today_listing_fee_cost()
+        llm_today, image_today, fee_today = await self._load_today_costs()
 
         ratios = [
             llm_today   / limits["daily_llm_usd"]         if limits["daily_llm_usd"]         else 0.0,
@@ -250,11 +302,22 @@ class BudgetManager:
 
     async def get_status_summary(self) -> BudgetSummary:
         """Ritorna snapshot completo — usato da /status e /budget."""
-        limits      = await self.get_limits()
-        llm_today   = await self.today_llm_cost()
-        image_today = await self.today_image_cost()
-        fee_today   = await self.today_listing_fee_cost()
-        status      = await self.check_budget()
+        limits = await self._load_limits_fast()
+        llm_today, image_today, fee_today = await self._load_today_costs()
+        warn = limits["warn_threshold"]
+
+        ratios = [
+            llm_today   / limits["daily_llm_usd"]         if limits["daily_llm_usd"]         else 0.0,
+            image_today / limits["daily_image_usd"]       if limits["daily_image_usd"]       else 0.0,
+            fee_today   / limits["daily_listing_fee_usd"] if limits["daily_listing_fee_usd"] else 0.0,
+        ]
+        worst = max(ratios)
+        if worst >= 1.0:
+            status = BudgetStatus.EXCEEDED
+        elif worst >= warn:
+            status = BudgetStatus.WARNING
+        else:
+            status = BudgetStatus.OK
 
         return BudgetSummary(
             llm_today      = llm_today,

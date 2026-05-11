@@ -1,6 +1,7 @@
 """Base class, schema, helpers and crypto for MemoryManager."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -464,6 +465,7 @@ class MemoryBase:
         self._ws_broadcaster = None             # callable(event: dict) — impostato da lifespan
         self._bridge_callback = None            # callable(text, domain) — impostato da lifespan
         self.mock_mode: bool = False            # flag globale — sincronizzato da pepe.set_mock_mode()
+        self._chroma_lock = asyncio.Lock()      # serializza accesso al client ChromaDB non thread-safe
 
     # ------------------------------------------------------------------
     # Crypto helpers (OAuth token encryption)
@@ -486,6 +488,7 @@ class MemoryBase:
         # (AutopilotLoop + Scheduler + API scrivono in parallelo)
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA synchronous=NORMAL")  # WAL-safe, più veloce di FULL
+        await self._db.execute("PRAGMA busy_timeout = 5000")  # previene "database is locked" sotto concorrenza
         await self._db.commit()
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
@@ -674,6 +677,17 @@ class MemoryBase:
         La connessione è garantita aperta dopo initialize().
         """
         return self._db
+
+    async def close(self) -> None:
+        """Graceful shutdown: WAL checkpoint + chiusura connessione SQLite."""
+        if self._db is not None:
+            try:
+                await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception as exc:
+                logger.warning("MemoryManager.close: WAL checkpoint fallito: %s", exc)
+            await self._db.close()
+            self._db = None
+            logger.info("MemoryManager: connessione SQLite chiusa")
 
     # ------------------------------------------------------------------
     # Memory query tracking (neural brain)

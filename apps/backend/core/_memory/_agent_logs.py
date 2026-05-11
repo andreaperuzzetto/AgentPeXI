@@ -149,24 +149,28 @@ class AgentLogsMixin:
         output_data: Any = None,
         duration_ms: int = 0,
     ) -> int:
-        cursor = await self._db.execute(
-            """INSERT INTO agent_steps
-               (task_id, agent_name, step_number, step_type, description,
-                input_data, output_data, duration_ms)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                task_id,
-                agent_name,
-                step_number,
-                step_type,
-                description,
-                _json_dumps(input_data),
-                _json_dumps(output_data),
-                duration_ms,
-            ),
-        )
-        await self._db.commit()
-        return cursor.lastrowid
+        try:
+            cursor = await self._db.execute(
+                """INSERT INTO agent_steps
+                   (task_id, agent_name, step_number, step_type, description,
+                    input_data, output_data, duration_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    task_id,
+                    agent_name,
+                    step_number,
+                    step_type,
+                    description,
+                    _json_dumps(input_data),
+                    _json_dumps(output_data),
+                    duration_ms,
+                ),
+            )
+            await self._db.commit()
+            return cursor.lastrowid
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def log_llm_call(
         self,
@@ -190,31 +194,35 @@ class AgentLogsMixin:
         Args:
             provider: 'anthropic' o 'ollama'. Default 'anthropic' per backward compat.
         """
-        cursor = await self._db.execute(
-            """INSERT INTO llm_calls
-               (task_id, step_id, agent_name, model, provider, system_prompt, messages,
-                response, input_tokens, output_tokens, cache_read_tokens,
-                cache_write_tokens, cost_usd, duration_ms)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                task_id,
-                step_id,
-                agent_name,
-                model,
-                provider,
-                system_prompt,
-                _json_dumps(messages),
-                response,
-                input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cache_write_tokens,
-                cost_usd,
-                duration_ms,
-            ),
-        )
-        await self._db.commit()
-        return cursor.lastrowid
+        try:
+            cursor = await self._db.execute(
+                """INSERT INTO llm_calls
+                   (task_id, step_id, agent_name, model, provider, system_prompt, messages,
+                    response, input_tokens, output_tokens, cache_read_tokens,
+                    cache_write_tokens, cost_usd, duration_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    task_id,
+                    step_id,
+                    agent_name,
+                    model,
+                    provider,
+                    system_prompt,
+                    _json_dumps(messages),
+                    response,
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_write_tokens,
+                    cost_usd,
+                    duration_ms,
+                ),
+            )
+            await self._db.commit()
+            return cursor.lastrowid
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def log_tool_call(
         self,
@@ -229,26 +237,30 @@ class AgentLogsMixin:
         duration_ms: int = 0,
         cost_usd: float | None = None,
     ) -> int:
-        cursor = await self._db.execute(
-            """INSERT INTO tool_calls
-               (task_id, step_id, agent_name, tool_name, action,
-                input_params, output_result, status, duration_ms, cost_usd)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                task_id,
-                step_id,
-                agent_name,
-                tool_name,
-                action,
-                _json_dumps(input_params),
-                _json_dumps(output_result),
-                status,
-                duration_ms,
-                cost_usd,
-            ),
-        )
-        await self._db.commit()
-        return cursor.lastrowid
+        try:
+            cursor = await self._db.execute(
+                """INSERT INTO tool_calls
+                   (task_id, step_id, agent_name, tool_name, action,
+                    input_params, output_result, status, duration_ms, cost_usd)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    task_id,
+                    step_id,
+                    agent_name,
+                    tool_name,
+                    action,
+                    _json_dumps(input_params),
+                    _json_dumps(output_result),
+                    status,
+                    duration_ms,
+                    cost_usd,
+                ),
+            )
+            await self._db.commit()
+            return cursor.lastrowid
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def get_task_timeline(self, task_id: str) -> list[dict]:
         """Restituisce tutti gli step + llm_calls + tool_calls per un task, ordinati per timestamp."""

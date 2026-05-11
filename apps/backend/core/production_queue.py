@@ -15,9 +15,20 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 import aiosqlite
+
+# ---------------------------------------------------------------------------
+# Literal types for status and product_tier
+# ---------------------------------------------------------------------------
+
+QueueStatus = Literal[
+    "pending_design", "pending_approval", "approved",
+    "scheduled", "published", "failed", "skipped", "discarded",
+]
+
+ProductTier = Literal["tripwire", "core", "core_premium", "bundle"]
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -53,7 +64,7 @@ class ProductionQueueItem:
     entry_score: float
 
     # stato
-    status: str                  # pending_design | pending_approval | approved |
+    status: QueueStatus           # pending_design | pending_approval | approved |
                                  # scheduled | published | skipped | failed | discarded
 
     # design
@@ -87,7 +98,7 @@ class ProductionQueueItem:
     ads_paused: int              # [FE-0.1] 1 se campagna ads messa in pausa
 
     # product ladder (C.1)
-    product_tier: str             # tripwire | core | core_premium | bundle
+    product_tier: ProductTier     # tripwire | core | core_premium | bundle
 
     # cluster strategy (C.2)
     cluster_id: str | None        # sha256[:12] shared by all 6 items in a cluster
@@ -268,38 +279,42 @@ class ProductionQueueService:
         image_cost: float = 0.0,
     ) -> None:
         """pending_design → pending_approval. Raises ValueError if not in pending_design."""
-        row = await self._db.execute(
-            "SELECT status FROM production_queue WHERE id=?", (item_id,)
-        )
-        r = await row.fetchone()
-        if r is None:
-            raise ValueError(f"Item {item_id} not found in production_queue")
-        if r["status"] != "pending_design":
-            raise ValueError(
-                f"Cannot set_design_ready on item {item_id}: status is '{r['status']}', expected 'pending_design'"
+        try:
+            row = await self._db.execute(
+                "SELECT status FROM production_queue WHERE id=?", (item_id,)
             )
-        now = self._now()
-        await self._db.execute(
-            """
-            UPDATE production_queue SET
-                status              = 'pending_approval',
-                design_prompt       = ?,
-                image_url           = ?,
-                thumbnail_path      = ?,
-                listing_title       = ?,
-                listing_description = ?,
-                listing_tags        = ?,
-                listing_price       = ?,
-                llm_cost_usd        = ?,
-                image_cost_usd      = ?,
-                approval_sent_at    = ?,
-                updated_at          = ?
-            WHERE id = ?
-            """,
-            (design_prompt, image_url, thumbnail_path, title, description,
-             _dumps_list(tags), price, llm_cost, image_cost, now, now, item_id),
-        )
-        await self._db.commit()
+            r = await row.fetchone()
+            if r is None:
+                raise ValueError(f"Item {item_id} not found in production_queue")
+            if r["status"] != "pending_design":
+                raise ValueError(
+                    f"Cannot set_design_ready on item {item_id}: status is '{r['status']}', expected 'pending_design'"
+                )
+            now = self._now()
+            await self._db.execute(
+                """
+                UPDATE production_queue SET
+                    status              = 'pending_approval',
+                    design_prompt       = ?,
+                    image_url           = ?,
+                    thumbnail_path      = ?,
+                    listing_title       = ?,
+                    listing_description = ?,
+                    listing_tags        = ?,
+                    listing_price       = ?,
+                    llm_cost_usd        = ?,
+                    image_cost_usd      = ?,
+                    approval_sent_at    = ?,
+                    updated_at          = ?
+                WHERE id = ?
+                """,
+                (design_prompt, image_url, thumbnail_path, title, description,
+                 _dumps_list(tags), price, llm_cost, image_cost, now, now, item_id),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def set_approved(
         self,
@@ -308,28 +323,32 @@ class ProductionQueueService:
         chat_id: int | None = None,
     ) -> None:
         """pending_approval → approved. Raises ValueError if not in pending_approval."""
-        row = await self._db.execute(
-            "SELECT status FROM production_queue WHERE id=?", (item_id,)
-        )
-        r = await row.fetchone()
-        if r is None:
-            raise ValueError(f"Item {item_id} not found in production_queue")
-        if r["status"] != "pending_approval":
-            raise ValueError(
-                f"Cannot set_approved on item {item_id}: status is '{r['status']}', expected 'pending_approval'"
+        try:
+            row = await self._db.execute(
+                "SELECT status FROM production_queue WHERE id=?", (item_id,)
             )
-        await self._db.execute(
-            """
-            UPDATE production_queue SET
-                status              = 'approved',
-                approval_message_id = ?,
-                approval_chat_id    = ?,
-                updated_at          = ?
-            WHERE id = ?
-            """,
-            (message_id, chat_id, self._now(), item_id),
-        )
-        await self._db.commit()
+            r = await row.fetchone()
+            if r is None:
+                raise ValueError(f"Item {item_id} not found in production_queue")
+            if r["status"] != "pending_approval":
+                raise ValueError(
+                    f"Cannot set_approved on item {item_id}: status is '{r['status']}', expected 'pending_approval'"
+                )
+            await self._db.execute(
+                """
+                UPDATE production_queue SET
+                    status              = 'approved',
+                    approval_message_id = ?,
+                    approval_chat_id    = ?,
+                    updated_at          = ?
+                WHERE id = ?
+                """,
+                (message_id, chat_id, self._now(), item_id),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def set_skipped(self, item_id: int, reason: str) -> None:
         """→ skipped; aggiorna il contatore appropriato."""
@@ -358,55 +377,63 @@ class ProductionQueueService:
 
     async def assign_slot(self, item_id: int, publish_at: float) -> None:
         """approved → scheduled. Raises ValueError if not in approved."""
-        row = await self._db.execute(
-            "SELECT status FROM production_queue WHERE id=?", (item_id,)
-        )
-        r = await row.fetchone()
-        if r is None:
-            raise ValueError(f"Item {item_id} not found in production_queue")
-        if r["status"] != "approved":
-            raise ValueError(
-                f"Cannot assign_slot on item {item_id}: status is '{r['status']}', expected 'approved'"
+        try:
+            row = await self._db.execute(
+                "SELECT status FROM production_queue WHERE id=?", (item_id,)
             )
-        await self._db.execute(
-            """
-            UPDATE production_queue SET
-                status               = 'scheduled',
-                scheduled_publish_at = ?,
-                updated_at           = ?
-            WHERE id = ?
-            """,
-            (publish_at, self._now(), item_id),
-        )
-        await self._db.commit()
+            r = await row.fetchone()
+            if r is None:
+                raise ValueError(f"Item {item_id} not found in production_queue")
+            if r["status"] != "approved":
+                raise ValueError(
+                    f"Cannot assign_slot on item {item_id}: status is '{r['status']}', expected 'approved'"
+                )
+            await self._db.execute(
+                """
+                UPDATE production_queue SET
+                    status               = 'scheduled',
+                    scheduled_publish_at = ?,
+                    updated_at           = ?
+                WHERE id = ?
+                """,
+                (publish_at, self._now(), item_id),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def set_published(
         self, item_id: int, etsy_listing_id: str
     ) -> None:
         """scheduled → published. Raises ValueError if current status is not 'scheduled'."""
-        row = await self._db.execute(
-            "SELECT status FROM production_queue WHERE id=?", (item_id,)
-        )
-        r = await row.fetchone()
-        if r is None:
-            raise ValueError(f"Item {item_id} not found in production_queue")
-        if r["status"] != "scheduled":
-            raise ValueError(
-                f"Cannot publish item {item_id}: status is '{r['status']}', expected 'scheduled'"
+        try:
+            row = await self._db.execute(
+                "SELECT status FROM production_queue WHERE id=?", (item_id,)
             )
-        now = self._now()
-        await self._db.execute(
-            """
-            UPDATE production_queue SET
-                status          = 'published',
-                etsy_listing_id = ?,
-                published_at    = ?,
-                updated_at      = ?
-            WHERE id = ?
-            """,
-            (etsy_listing_id, now, now, item_id),
-        )
-        await self._db.commit()
+            r = await row.fetchone()
+            if r is None:
+                raise ValueError(f"Item {item_id} not found in production_queue")
+            if r["status"] != "scheduled":
+                raise ValueError(
+                    f"Cannot publish item {item_id}: status is '{r['status']}', expected 'scheduled'"
+                )
+            now = self._now()
+            await self._db.execute(
+                """
+                UPDATE production_queue SET
+                    status          = 'published',
+                    etsy_listing_id = ?,
+                    published_at    = ?,
+                    updated_at      = ?
+                WHERE id = ?
+                """,
+                (etsy_listing_id, now, now, item_id),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def set_failed(self, item_id: int, error: str) -> None:
         """→ failed."""

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -9,6 +10,13 @@ logger = logging.getLogger("agentpexi.memory")
 
 
 class ChromaDbMixin:
+    # Lazily-created lock serializing ChromaDB client access.
+    # When used inside MemoryBase, MemoryBase.__init__ overrides this with a
+    # dedicated instance-level lock. This cached_property is a fallback so
+    # that the mixin can be instantiated standalone (e.g. in unit tests).
+    @functools.cached_property
+    def _chroma_lock(self) -> asyncio.Lock:  # type: ignore[override]
+        return asyncio.Lock()
     # ------------------------------------------------------------------
     # Background task tracking — prevents GC of fire-and-forget tasks
     # ------------------------------------------------------------------
@@ -32,12 +40,13 @@ class ChromaDbMixin:
         import uuid
 
         doc_id = str(uuid.uuid4())
-        await asyncio.to_thread(
-            self._chroma_collection.add,
-            documents=[text],
-            metadatas=[metadata or {}],
-            ids=[doc_id],
-        )
+        async with self._chroma_lock:
+            await asyncio.to_thread(
+                self._chroma_collection.add,
+                documents=[text],
+                metadatas=[metadata or {}],
+                ids=[doc_id],
+            )
         # Fire-and-forget: notifica il KnowledgeBridge per analisi cross-domain
         if self._bridge_callback and text:
             self._fire_bg(self._bridge_callback(text, "etsy"))
@@ -48,11 +57,12 @@ class ChromaDbMixin:
         if self._chroma_collection is None:
             return False
         try:
-            await asyncio.to_thread(
-                self._chroma_collection.update,
-                ids=[doc_id],
-                metadatas=[metadata],
-            )
+            async with self._chroma_lock:
+                await asyncio.to_thread(
+                    self._chroma_collection.update,
+                    ids=[doc_id],
+                    metadatas=[metadata],
+                )
             return True
         except Exception:
             logger.warning("update_insight_metadata failed for doc_id=%s", doc_id)
@@ -61,11 +71,12 @@ class ChromaDbMixin:
     async def query_insights(self, query: str, n_results: int = 5) -> list[dict]:
         if self._chroma_collection is None:
             return []
-        results = await asyncio.to_thread(
-            self._chroma_collection.query,
-            query_texts=[query],
-            n_results=n_results,
-        )
+        async with self._chroma_lock:
+            results = await asyncio.to_thread(
+                self._chroma_collection.query,
+                query_texts=[query],
+                n_results=n_results,
+            )
         out = []
         for i, doc in enumerate(results.get("documents", [[]])[0]):
             meta = (results.get("metadatas", [[]])[0][i]) if results.get("metadatas") else {}
@@ -77,11 +88,12 @@ class ChromaDbMixin:
         if self._chroma_collection is None:
             return []
         try:
-            results = await asyncio.to_thread(
-                self._chroma_collection.get,
-                where={"type": type_val},
-                limit=limit,
-            )
+            async with self._chroma_lock:
+                results = await asyncio.to_thread(
+                    self._chroma_collection.get,
+                    where={"type": type_val},
+                    limit=limit,
+                )
             out = []
             ids = results.get("ids", [])
             documents = results.get("documents", [])
@@ -111,7 +123,8 @@ class ChromaDbMixin:
         kwargs: dict = {"query_texts": [query], "n_results": n_results}
         if where:
             kwargs["where"] = where
-        results = await asyncio.to_thread(lambda: self._chroma_collection.query(**kwargs))
+        async with self._chroma_lock:
+            results = await asyncio.to_thread(lambda: self._chroma_collection.query(**kwargs))
         out = []
         accessed_ids: list[str] = []
         for i, doc in enumerate(results.get("documents", [[]])[0]):
@@ -209,12 +222,13 @@ class ChromaDbMixin:
         if self._screen_memory_collection is None:
             return False
         try:
-            await asyncio.to_thread(
-                self._screen_memory_collection.add,
-                documents=chunks,
-                metadatas=metadatas,
-                ids=ids,
-            )
+            async with self._chroma_lock:
+                await asyncio.to_thread(
+                    self._screen_memory_collection.add,
+                    documents=chunks,
+                    metadatas=metadatas,
+                    ids=ids,
+                )
             return True
         except Exception as exc:
             logger.warning("add_screen_memory fallito: %s", exc)
@@ -241,14 +255,16 @@ class ChromaDbMixin:
             return []
         try:
             # ChromaDB richiede n_results <= count collection
-            count = await asyncio.to_thread(self._screen_memory_collection.count)
+            async with self._chroma_lock:
+                count = await asyncio.to_thread(self._screen_memory_collection.count)
             if count == 0:
                 return []
             n = min(n_results, count)
             kwargs: dict = {"query_texts": [query], "n_results": n}
             if where:
                 kwargs["where"] = where
-            results = await asyncio.to_thread(lambda: self._screen_memory_collection.query(**kwargs))
+            async with self._chroma_lock:
+                results = await asyncio.to_thread(lambda: self._screen_memory_collection.query(**kwargs))
             out = []
             docs = results.get("documents", [[]])[0]
             metas = results.get("metadatas", [[]])[0] if results.get("metadatas") else []
@@ -286,14 +302,17 @@ class ChromaDbMixin:
         if self._screen_memory_collection is None:
             return 0
         try:
-            results = self._screen_memory_collection.get(
-                where={"timestamp": {"$lt": older_than_iso}},
-                include=[],
-            )
+            async with self._chroma_lock:
+                results = await asyncio.to_thread(
+                    self._screen_memory_collection.get,
+                    where={"timestamp": {"$lt": older_than_iso}},
+                    include=[],
+                )
             ids_to_delete = results.get("ids", [])
             if not ids_to_delete:
                 return 0
-            self._screen_memory_collection.delete(ids=ids_to_delete)
+            async with self._chroma_lock:
+                await asyncio.to_thread(self._screen_memory_collection.delete, ids=ids_to_delete)
             logger.info("screen_memory cleanup: eliminati %d chunk prima di %s", len(ids_to_delete), older_than_iso)
             return len(ids_to_delete)
         except Exception as exc:
@@ -305,7 +324,8 @@ class ChromaDbMixin:
         if self._screen_memory_collection is None:
             return {"available": False, "count": 0}
         try:
-            count = self._screen_memory_collection.count()
+            async with self._chroma_lock:
+                count = await asyncio.to_thread(self._screen_memory_collection.count)
             return {"available": True, "count": count}
         except Exception as exc:
             return {"available": False, "count": 0, "error": str(exc)}
@@ -339,12 +359,13 @@ class ChromaDbMixin:
             return None
         import uuid
         doc_id = str(uuid.uuid4())
-        await asyncio.to_thread(
-            self._personal_memory_collection.add,
-            documents=[text],
-            metadatas=[metadata or {}],
-            ids=[doc_id],
-        )
+        async with self._chroma_lock:
+            await asyncio.to_thread(
+                self._personal_memory_collection.add,
+                documents=[text],
+                metadatas=[metadata or {}],
+                ids=[doc_id],
+            )
         # Fire-and-forget: notifica il KnowledgeBridge per analisi cross-domain
         if self._bridge_callback and text:
             self._fire_bg(self._bridge_callback(text, "personal"))
@@ -367,16 +388,18 @@ class ChromaDbMixin:
         if self._personal_memory_collection is None:
             return []
         try:
-            count = await asyncio.to_thread(self._personal_memory_collection.count)
+            async with self._chroma_lock:
+                count = await asyncio.to_thread(self._personal_memory_collection.count)
             if count == 0:
                 return []
             n = min(n_results, count)
             kwargs: dict = {"query_texts": [query], "n_results": n}
             if where:
                 kwargs["where"] = where
-            results = await asyncio.to_thread(
-                lambda: self._personal_memory_collection.query(**kwargs)
-            )
+            async with self._chroma_lock:
+                results = await asyncio.to_thread(
+                    lambda: self._personal_memory_collection.query(**kwargs)
+                )
             out = []
             accessed_ids: list[str] = []
             for i, doc in enumerate(results.get("documents", [[]])[0]):
@@ -462,7 +485,8 @@ class ChromaDbMixin:
         if self._personal_memory_collection is None:
             return {"available": False, "count": 0}
         try:
-            count = self._personal_memory_collection.count()
+            async with self._chroma_lock:
+                count = await asyncio.to_thread(self._personal_memory_collection.count)
             return {"available": True, "count": count}
         except Exception as exc:
             return {"available": False, "count": 0, "error": str(exc)}
@@ -497,12 +521,13 @@ class ChromaDbMixin:
             return None
         import uuid
         doc_id = str(uuid.uuid4())
-        await asyncio.to_thread(
-            self._shared_memory_collection.add,
-            documents=[text],
-            metadatas=[metadata or {}],
-            ids=[doc_id],
-        )
+        async with self._chroma_lock:
+            await asyncio.to_thread(
+                self._shared_memory_collection.add,
+                documents=[text],
+                metadatas=[metadata or {}],
+                ids=[doc_id],
+            )
         return doc_id
 
     async def query_shared_memory(
@@ -523,16 +548,18 @@ class ChromaDbMixin:
         if self._shared_memory_collection is None:
             return []
         try:
-            count = await asyncio.to_thread(self._shared_memory_collection.count)
+            async with self._chroma_lock:
+                count = await asyncio.to_thread(self._shared_memory_collection.count)
             if count == 0:
                 return []
             n = min(n_results, count)
             kwargs: dict = {"query_texts": [query], "n_results": n}
             if where:
                 kwargs["where"] = where
-            results = await asyncio.to_thread(
-                lambda: self._shared_memory_collection.query(**kwargs)
-            )
+            async with self._chroma_lock:
+                results = await asyncio.to_thread(
+                    lambda: self._shared_memory_collection.query(**kwargs)
+                )
             out = []
             accessed_ids: list[str] = []
             for i, doc in enumerate(results.get("documents", [[]])[0]):
@@ -557,7 +584,8 @@ class ChromaDbMixin:
         if self._shared_memory_collection is None:
             return {"available": False, "count": 0}
         try:
-            count = self._shared_memory_collection.count()
+            async with self._chroma_lock:
+                count = await asyncio.to_thread(self._shared_memory_collection.count)
             return {"available": True, "count": count}
         except Exception as exc:
             return {"available": False, "count": 0, "error": str(exc)}
@@ -579,19 +607,21 @@ class ChromaDbMixin:
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         cutoff = (_dt.now(_tz.utc) - _td(days=older_than_days)).strftime("%Y-%m-%d")
         try:
-            results = await asyncio.to_thread(
-                lambda: self._shared_memory_collection.get(
-                    where={"date": {"$lt": cutoff}},
-                    include=[],
+            async with self._chroma_lock:
+                results = await asyncio.to_thread(
+                    lambda: self._shared_memory_collection.get(
+                        where={"date": {"$lt": cutoff}},
+                        include=[],
+                    )
                 )
-            )
             ids_to_delete = results.get("ids", [])
             if not ids_to_delete:
                 return 0
-            await asyncio.to_thread(
-                self._shared_memory_collection.delete,
-                ids=ids_to_delete,
-            )
+            async with self._chroma_lock:
+                await asyncio.to_thread(
+                    self._shared_memory_collection.delete,
+                    ids=ids_to_delete,
+                )
             logger.info(
                 "shared_memory decay: eliminati %d insight anteriori al %s",
                 len(ids_to_delete), cutoff,
