@@ -143,55 +143,49 @@ def _fake_publish_single_no_listing():
 # ---------------------------------------------------------------------------
 
 async def test_cp1_concurrent_publishers_double_publication(tmp_path):
-    """CP1 — worst-case race condition (no lock present in publisher code).
+    """CP1 — lock prevents double-publication: concurrent run() calls publish each item exactly once.
 
-    NOTE: concurrency safety is delegated to APScheduler max_instances=1.
-    If that protection is bypassed, BOTH publishers reach storage.move_to_uploaded
-    for the same file, causing a duplicate Etsy listing.
+    A per-instance asyncio.Lock serializes concurrent run() calls on the same
+    PublisherAgent instance. The first run acquires the lock, publishes the file,
+    and moves it via storage (side-effect: actual deletion). The second run acquires
+    the lock only after the first completes; by then the file is gone, so it raises
+    RuntimeError (no valid files) — move_to_uploaded is never reached a second time.
 
-    This test DOCUMENTS the vulnerability: it asserts call_count == 2 (current
-    behaviour).  When a lock is added, update the assertion to ``== 1``.
+    asyncio.sleep(0) in the mock forces a context-switch at the most dangerous point,
+    proving the lock — not scheduling luck — provides the guarantee.
     """
     pdf = _tiny_pdf(tmp_path / "product.pdf")
     storage = _storage_mock()
+    storage.move_to_uploaded.side_effect = lambda path: path.unlink(missing_ok=True)
 
     memory = _make_memory_manager(tmp_path)
     await memory.init()
     try:
-        pub1 = _make_publisher(memory, storage)
-        pub2 = _make_publisher(memory, storage)
+        pub = _make_publisher(memory, storage)
 
         task = _make_task(pdf)
         fake_publish = _fake_publish_single_factory("cp1_listing")
 
         with patch.object(PublisherAgent, "_publish_single", fake_publish):
             results = await asyncio.wait_for(
-                asyncio.gather(pub1.run(task), pub2.run(task), return_exceptions=True),
+                asyncio.gather(pub.run(task), pub.run(task), return_exceptions=True),
                 timeout=10,
             )
 
-        # Expect both publishers to complete (no unhandled exceptions)
-        for r in results:
-            assert not isinstance(r, BaseException), (
-                f"Publisher.run() raised unexpectedly: {r}"
-            )
-
-        # --- CURRENT BEHAVIOUR (vulnerability documented) ---
-        # Both publishers checked is_file() synchronously before the first `await`
-        # (memory.get_etsy_listings_count at line ~101 of publisher.py).  With
-        # storage mocked (file never actually moved), both saw the file as valid and
-        # both proceeded through _publish_single → move_to_uploaded.
-        #
-        # TODO security: add an asyncio.Lock (or an atomic DB UPDATE WHERE status='approved')
-        # before calling _publish_single to prevent this race.
-        assert storage.move_to_uploaded.call_count == 2, (
-            f"Expected 2 calls (vulnerability documented), got {storage.move_to_uploaded.call_count}. "
-            "If this assertion fails with 1, a lock was added — update this test to assert == 1."
+        # With the lock: first run succeeds; second run finds no valid file
+        successes = [r for r in results if not isinstance(r, BaseException)]
+        assert len(successes) == 1, (
+            f"Expected exactly one successful run, got {len(successes)}: {results}"
         )
 
-        # Both calls target the same file path
+        # File was moved exactly once (lock prevents double-publication)
+        assert storage.move_to_uploaded.call_count == 1, (
+            f"Expected 1 call (lock prevents double-publication), got {storage.move_to_uploaded.call_count}"
+        )
+
+        # The single call targeted the correct file
         called_paths = {call.args[0] for call in storage.move_to_uploaded.call_args_list}
-        assert called_paths == {pdf}, "Both publishers should reference the same file"
+        assert called_paths == {pdf}, "Publisher should reference the correct file"
     finally:
         await memory.close()
 
