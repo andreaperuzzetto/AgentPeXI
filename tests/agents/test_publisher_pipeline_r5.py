@@ -67,6 +67,7 @@ def agent():
     })
     a._calculate_publish_confidence = MagicMock(return_value=(0.9, []))
     a._calculate_status = MagicMock(return_value=TaskStatus.COMPLETED)
+    a._publish_lock = asyncio.Lock()
     return a
 
 
